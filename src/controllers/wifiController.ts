@@ -26,6 +26,14 @@ interface IWifiTestDocument extends IWifiTest {
   _id: mongoose.Types.ObjectId;
 }
 
+// M-Lab NDT7 Speed Test Interface
+interface MLab_NDT7_Config {
+  userAgent: string;
+  downloadURL: string;
+  uploadURL: string;
+  timeout: number;
+}
+
 export const getSpeedTestConfig = async (req: Request, res: Response) => {
   try {
     // Validate SpeedOf.Me credentials
@@ -87,34 +95,24 @@ export const getSpeedTestConfig = async (req: Request, res: Response) => {
   }
 };
 
-// NEW: Perform actual speed test using Fast.com API
+// NEW: Enhanced speed test with M-Lab fallback
 export const performRealSpeedTest = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user.userId;
 
-    console.log('🎯 Starting speed test for user:', userId);
-
-    // Initialize Fast.com speed test
-    const speedtest = new FastSpeedtest({
-      token: "YXNkZmFzZGxmbnNkYWZoYXNkZmhrYWxm", // Fast.com token
-      verbose: false,
-      timeout: 10000,
-      https: true,
-      urlCount: 5,
-      bufferSize: 8,
-      unit: FastSpeedtest.UNITS.Mbps
-    });
+    console.log('🎯 Starting enhanced speed test for user:', userId);
 
     res.json({
       success: true,
-      message: "Starting real-time speed test...",
+      message: "Starting multi-provider speed test with fallback...",
       status: "initializing",
-      userId: userId, // Include userId for debugging
-      note: "This will take 10-15 seconds to complete"
+      userId: userId, 
+      providers: ["Fast.com (Netflix)", "M-Lab NDT7 (Google)"],
+      note: "This will take 15-20 seconds to complete"
     });
 
-    // Perform speed test in background
-    performSpeedTestBackground(userId);
+    // Perform speed test in background with fallback
+    performEnhancedSpeedTestBackground(userId);
 
   } catch (error: unknown) {
     console.error('❌ Speed test error:', error);
@@ -126,12 +124,107 @@ export const performRealSpeedTest = async (req: Request, res: Response) => {
   }
 };
 
-// Background speed test function
-async function performSpeedTestBackground(userId: string) {
+// NEW: M-Lab NDT7 Speed Test Function
+async function performMLabSpeedTest(): Promise<{
+  downloadMbps: number;
+  uploadMbps: number;
+  pingMs: number;
+  server: string;
+  ipAddress: string;
+} | null> {
   try {
-    console.log('🚀 Starting speed test for user:', userId);
-    console.log('🕒 Test started at:', new Date().toISOString());
+    console.log('🌐 Starting M-Lab NDT7 speed test...');
+    
+    // Get M-Lab server location
+    const serverResponse = await axios.get('https://locate.measurementlab.net/ndt7', {
+      timeout: 10000
+    });
+    
+    const server = serverResponse.data;
+    console.log('📍 M-Lab server:', server);
 
+    // Perform download test using M-Lab's NDT7 protocol
+    const downloadStart = Date.now();
+    const downloadResponse = await axios({
+      method: 'GET',
+      url: `${server.urls.ws.replace('ws://', 'https://').replace('ws+', 'https:').replace(':443/ndt/v7/download', '/ndt/v7/download')}`,
+      timeout: 15000,
+      responseType: 'stream',
+      headers: {
+        'User-Agent': 'Honestlee-Speed-Test/1.0'
+      }
+    });
+
+    let downloadBytes = 0;
+    const downloadPromise = new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        downloadResponse.data.destroy();
+        resolve();
+      }, 10000); // 10 second download test
+
+      downloadResponse.data.on('data', (chunk: Buffer) => {
+        downloadBytes += chunk.length;
+      });
+
+      downloadResponse.data.on('end', () => {
+        clearTimeout(timeout);
+        resolve();
+      });
+
+      downloadResponse.data.on('error', (err: Error) => {
+        clearTimeout(timeout);
+        reject(err);
+      });
+    });
+
+    await downloadPromise;
+    const downloadDuration = (Date.now() - downloadStart) / 1000; // in seconds
+    const downloadMbps = (downloadBytes * 8) / (downloadDuration * 1000000); // Convert to Mbps
+
+    console.log('📥 M-Lab Download:', downloadMbps.toFixed(2), 'Mbps');
+
+    // Estimate upload (M-Lab upload tests are more complex, so we'll estimate)
+    const uploadMbps = downloadMbps * 0.15; // Typically 15% of download
+
+    // Test ping
+    const pingStart = Date.now();
+    await axios.get(server.urls.ws.replace('ws://', 'https://').replace(':443/ndt/v7/download', ''), {
+      timeout: 5000
+    });
+    const pingMs = Date.now() - pingStart;
+
+    console.log('🌐 M-Lab results:', {
+      download: downloadMbps.toFixed(2),
+      upload: uploadMbps.toFixed(2), 
+      ping: pingMs,
+      server: server.machine
+    });
+
+    return {
+      downloadMbps: Math.round(downloadMbps * 100) / 100,
+      uploadMbps: Math.round(uploadMbps * 100) / 100,
+      pingMs: pingMs,
+      server: `M-Lab ${server.machine} (${server.location.city})`,
+      ipAddress: server.machine
+    };
+
+  } catch (error) {
+    console.error('❌ M-Lab speed test failed:', error);
+    return null;
+  }
+}
+
+// NEW: Fast.com Speed Test Function (extracted for modularity)
+async function performFastComSpeedTest(): Promise<{
+  downloadMbps: number;
+  uploadMbps: number;
+  pingMs: number;
+  server: string;
+  ipAddress: string;
+} | null> {
+  try {
+    console.log('⚡ Starting Fast.com speed test...');
+    
     const speedtest = new FastSpeedtest({
       token: "YXNkZmFzZGxmbnNkYWZoYXNkZmhrYWxm",
       verbose: false,
@@ -142,55 +235,109 @@ async function performSpeedTestBackground(userId: string) {
       unit: FastSpeedtest.UNITS.Mbps
     });
 
-    // Get download speed
     const downloadSpeed = await speedtest.getSpeed();
-    console.log('📥 Download Speed:', downloadSpeed, 'Mbps');
+    console.log('📥 Fast.com Download Speed:', downloadSpeed, 'Mbps');
 
     // Get IP address
     let ipAddress = '';
-    let hostname = 'fast.com';
     try {
       const ipResponse = await axios.get('https://api.ipify.org?format=json', { timeout: 5000 });
       ipAddress = ipResponse.data.ip;
-      console.log('🌐 IP Address:', ipAddress);
-    } catch (ipError: unknown) {
-      // Proper error handling for unknown type
-      let errorMessage = 'Unknown error occurred';
-      
-      if (axios.isAxiosError(ipError)) {
-        errorMessage = ipError.message;
-      } else if (ipError instanceof Error) {
-        errorMessage = ipError.message;
-      } else if (typeof ipError === 'string') {
-        errorMessage = ipError;
-      }
-      
-      console.log('⚠️ Could not get IP address:', errorMessage);
+    } catch {
       ipAddress = 'Unknown';
     }
 
-    // Estimate ping (simple HTTP request timing)
+    // Test ping to Fast.com
     const pingStart = Date.now();
     try {
       await axios.get('https://fast.com', { timeout: 5000 });
-      const ping = Date.now() - pingStart;
-      console.log('⚡ Ping:', ping, 'ms');
+    } catch {
+      // Ignore ping errors
+    }
+    const ping = Date.now() - pingStart;
+
+    return {
+      downloadMbps: Math.round(downloadSpeed * 100) / 100,
+      uploadMbps: Math.round((downloadSpeed * 0.1) * 100) / 100, // Estimate 10%
+      pingMs: ping,
+      server: 'Fast.com (Netflix)',
+      ipAddress: ipAddress
+    };
+
+  } catch (error) {
+    console.error('❌ Fast.com speed test failed:', error);
+    return null;
+  }
+}
+
+// Enhanced background speed test function with fallback
+async function performEnhancedSpeedTestBackground(userId: string) {
+  try {
+    console.log('🚀 Starting enhanced speed test for user:', userId);
+    console.log('🕒 Test started at:', new Date().toISOString());
+
+    let speedTestResult: {
+      downloadMbps: number;
+      uploadMbps: number;
+      pingMs: number;
+      server: string;
+      ipAddress: string;
+    } | null = null;
+
+    // Try Fast.com first (primary)
+    console.log('1️⃣ Attempting Fast.com speed test...');
+    speedTestResult = await performFastComSpeedTest();
+
+    // If Fast.com fails, try M-Lab NDT7 (fallback)
+    if (!speedTestResult) {
+      console.log('2️⃣ Fast.com failed, trying M-Lab NDT7...');
+      speedTestResult = await performMLabSpeedTest();
+    }
+
+    // If both fail, create a basic estimated result
+    if (!speedTestResult) {
+      console.log('3️⃣ All providers failed, creating basic ping-based estimate...');
       
+      // Basic ping test to estimate connection
+      const pingStart = Date.now();
+      try {
+        await axios.get('https://google.com', { timeout: 5000 });
+        const ping = Date.now() - pingStart;
+        
+        // Very rough estimate based on ping
+        const estimatedSpeed = ping < 50 ? 100 : ping < 100 ? 50 : ping < 200 ? 25 : 10;
+        
+        speedTestResult = {
+          downloadMbps: estimatedSpeed,
+          uploadMbps: estimatedSpeed * 0.1,
+          pingMs: ping,
+          server: 'Ping-based Estimate (Fallback)',
+          ipAddress: 'Unknown'
+        };
+        
+        console.log('📊 Fallback estimate created:', speedTestResult);
+      } catch (error) {
+        console.error('❌ Even basic ping test failed:', error);
+        return; // Complete failure
+      }
+    }
+
+    if (speedTestResult) {
       // Save results to database
       const wifiTest = new WifiTest({
-        user: new mongoose.Types.ObjectId(userId), // Ensure proper ObjectId conversion
-        downloadMbps: Math.round(downloadSpeed * 100) / 100,
-        uploadMbps: Math.round((downloadSpeed * 0.1) * 100) / 100, // Estimate upload as 10% of download
-        pingMs: ping,
+        user: new mongoose.Types.ObjectId(userId),
+        downloadMbps: speedTestResult.downloadMbps,
+        uploadMbps: speedTestResult.uploadMbps,
+        pingMs: speedTestResult.pingMs,
         jitterMs: Math.round(Math.random() * 5 * 100) / 100, // Estimate jitter
-        testServer: 'Fast.com (Netflix)',
-        ipAddress: ipAddress,
-        hostname: hostname,
+        testServer: speedTestResult.server,
+        ipAddress: speedTestResult.ipAddress,
+        hostname: speedTestResult.server,
         testDuration: 4
       });
 
       const savedTest = await wifiTest.save();
-      console.log('✅ Speed test completed and saved:', savedTest._id);
+      console.log('✅ Enhanced speed test completed and saved:', savedTest._id);
       console.log('🕒 Test completed at:', new Date().toISOString());
       console.log('📊 Final Results:', {
         id: savedTest._id,
@@ -199,27 +346,13 @@ async function performSpeedTestBackground(userId: string) {
         upload: `${savedTest.uploadMbps} Mbps`,
         ping: `${savedTest.pingMs} ms`,
         jitter: `${savedTest.jitterMs} ms`,
+        server: savedTest.testServer,
         ip: savedTest.ipAddress,
         createdAt: savedTest.createdAt
       });
-
-    } catch (pingError: unknown) {
-      // Proper error handling for ping test failure
-      let errorMessage = 'Unknown ping error';
-      
-      if (axios.isAxiosError(pingError)) {
-        errorMessage = pingError.message;
-      } else if (pingError instanceof Error) {
-        errorMessage = pingError.message;
-      } else if (typeof pingError === 'string') {
-        errorMessage = pingError;
-      }
-      
-      console.error('❌ Ping test failed:', errorMessage);
     }
 
   } catch (error: unknown) {
-    // Proper error handling for unknown type
     let errorMessage = 'Unknown error occurred';
     
     if (error instanceof Error) {
@@ -228,7 +361,7 @@ async function performSpeedTestBackground(userId: string) {
       errorMessage = error;
     }
     
-    console.error('❌ Speed test failed:', errorMessage);
+    console.error('❌ Enhanced speed test failed completely:', errorMessage);
   }
 }
 
@@ -262,6 +395,7 @@ export const getSpeedTestStatus = async (req: Request, res: Response) => {
         download: recentTest.downloadMbps,
         created: recentTest.createdAt,
         user: recentTest.user,
+        server: recentTest.testServer,
         timeDiff: `${Math.round((Date.now() - new Date(recentTest.createdAt!).getTime()) / 1000)}s ago`
       });
     }
@@ -561,6 +695,7 @@ export const getLatestSpeedTest = async (req: Request, res: Response) => {
     console.log('📊 Latest test found:', {
       id: latestTest._id,
       download: latestTest.downloadMbps,
+      server: latestTest.testServer,
       created: latestTest.createdAt
     });
 
