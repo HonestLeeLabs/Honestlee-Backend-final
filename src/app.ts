@@ -18,9 +18,35 @@ dotenv.config();
 
 const app = express();
 
-app.use(cors());
+// CORS Configuration for Frontend Access
+const corsOptions = {
+  origin: [
+    'http://localhost:3000',      // React development server
+    'http://localhost:3001',      // Alternative React/Next.js port
+    'https://honestlee.app',      // Production frontend
+    'https://www.honestlee.app',  // Production frontend with www
+    'https://api.honestlee.app',  // API domain
+  ],
+  credentials: true,              // Allow cookies and authentication headers
+  optionsSuccessStatus: 200,      // Support legacy browsers
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'X-Requested-With',
+    'Accept',
+    'Origin',
+    'Cache-Control',
+    'X-File-Name'
+  ]
+};
+
+app.use(cors(corsOptions));
 app.use(express.json());
 app.use(passport.initialize());
+
+// Add preflight handler for complex CORS requests
+app.options('*', cors(corsOptions));
 
 mongoose.connect(process.env.MONGODB_URI || '')
   .then(async () => {
@@ -60,6 +86,7 @@ mongoose.connect(process.env.MONGODB_URI || '')
 // Test email configuration
 testEmailConfig();
 
+// API Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/auth', googleAuthRoutes);
 app.use('/api/wifi', wifiRoutes);
@@ -67,6 +94,15 @@ app.use('/api/reviews', reviewRoutes);
 app.use('/api/venues', venueRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/admin', adminRoutes);
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'OK', 
+    timestamp: new Date().toISOString(),
+    cors: 'Enabled for ports 3000, 3001 and production domains'
+  });
+});
 
 app.use(errorHandler);
 
