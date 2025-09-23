@@ -6,9 +6,10 @@ import {
   getUserWifiTests,
   getLatestSpeedTest,
   deleteSpeedTest,
-  performRealSpeedTest,  // NEW
-  getSpeedTestStatus,    // NEW
-  debugUserTests         // NEW - for debugging
+  performRealSpeedTest,
+  getSpeedTestStatus,
+  debugUserTests,
+  startLiveSpeedTest  // NEW: Live speed test with Server-Sent Events
 } from '../controllers/wifiController';
 
 const router = express.Router();
@@ -17,15 +18,19 @@ const router = express.Router();
 // GET /api/wifi/config
 router.get('/config', authenticate, getSpeedTestConfig);
 
-// NEW: Perform real speed test using Fast.com
+// NEW: Live speed test with real-time updates via Server-Sent Events
+// GET /api/wifi/live-test
+router.get('/live-test', authenticate, startLiveSpeedTest);
+
+// Enhanced speed test with multiple providers (background processing)
 // POST /api/wifi/test-real
 router.post('/test-real', authenticate, performRealSpeedTest);
 
-// NEW: Get speed test status/results
+// Get speed test status/results
 // GET /api/wifi/test-status
 router.get('/test-status', authenticate, getSpeedTestStatus);
 
-// NEW: Debug endpoint to see all user tests
+// Debug endpoint to see all user tests
 // GET /api/wifi/debug
 router.get('/debug', authenticate, debugUserTests);
 
@@ -53,14 +58,22 @@ router.get('/health', (req, res) => {
     message: 'WiFi speed test module is running',
     endpoints: {
       config: 'GET /api/wifi/config - Get SpeedOf.Me configuration',
-      testReal: 'POST /api/wifi/test-real - Perform real speed test',  // NEW
-      testStatus: 'GET /api/wifi/test-status - Get speed test results', // NEW
-      debug: 'GET /api/wifi/debug - Debug user tests', // NEW
+      liveTest: 'GET /api/wifi/live-test - Start live speed test with real-time updates (Server-Sent Events)',
+      testReal: 'POST /api/wifi/test-real - Perform enhanced speed test with multiple providers',
+      testStatus: 'GET /api/wifi/test-status - Get speed test results',
+      debug: 'GET /api/wifi/debug - Debug user tests',
       test: 'POST /api/wifi/test - Submit speed test results', 
       history: 'GET /api/wifi/history - Get test history',
       latest: 'GET /api/wifi/latest - Get latest test',
       delete: 'DELETE /api/wifi/test/:testId - Delete specific test'
     },
+    features: [
+      'Real-time speed testing with live updates',
+      'Multiple provider fallback system',
+      'Server-Sent Events for live progress',
+      'Professional speedometer integration',
+      'Comprehensive test history and statistics'
+    ],
     timestamp: new Date().toISOString()
   });
 });

@@ -59,7 +59,7 @@ const WifiTestSchema = new Schema<IWifiTest>({
     type: Number, 
     default: 4,
     min: 1,
-    max: 8
+    max: 30  // FIXED: Increased from 8 to 30 to allow live speed tests
   }
 }, { 
   timestamps: { 
