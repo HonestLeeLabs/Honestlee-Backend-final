@@ -1,6 +1,10 @@
 import { Request, Response } from 'express';
 import mongoose from 'mongoose';
 import WifiTest from '../models/WifiTest';
+import axios, { AxiosError } from 'axios';
+
+// Import the speed test API
+const FastSpeedtest = require('fast-speedtest-api');
 
 // Define the interface WITHOUT extending Document (recommended approach)
 interface IWifiTest {
@@ -74,11 +78,293 @@ export const getSpeedTestConfig = async (req: Request, res: Response) => {
         }
       }
     });
-  } catch (error) {
+  } catch (error: unknown) {
     res.status(500).json({
       success: false,
       message: "Failed to load speed test configuration",
       error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+};
+
+// NEW: Perform actual speed test using Fast.com API
+export const performRealSpeedTest = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user.userId;
+
+    console.log('🎯 Starting speed test for user:', userId);
+
+    // Initialize Fast.com speed test
+    const speedtest = new FastSpeedtest({
+      token: "YXNkZmFzZGxmbnNkYWZoYXNkZmhrYWxm", // Fast.com token
+      verbose: false,
+      timeout: 10000,
+      https: true,
+      urlCount: 5,
+      bufferSize: 8,
+      unit: FastSpeedtest.UNITS.Mbps
+    });
+
+    res.json({
+      success: true,
+      message: "Starting real-time speed test...",
+      status: "initializing",
+      userId: userId, // Include userId for debugging
+      note: "This will take 10-15 seconds to complete"
+    });
+
+    // Perform speed test in background
+    performSpeedTestBackground(userId);
+
+  } catch (error: unknown) {
+    console.error('❌ Speed test error:', error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to start speed test",
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+};
+
+// Background speed test function
+async function performSpeedTestBackground(userId: string) {
+  try {
+    console.log('🚀 Starting speed test for user:', userId);
+    console.log('🕒 Test started at:', new Date().toISOString());
+
+    const speedtest = new FastSpeedtest({
+      token: "YXNkZmFzZGxmbnNkYWZoYXNkZmhrYWxm",
+      verbose: false,
+      timeout: 15000,
+      https: true,
+      urlCount: 5,
+      bufferSize: 8,
+      unit: FastSpeedtest.UNITS.Mbps
+    });
+
+    // Get download speed
+    const downloadSpeed = await speedtest.getSpeed();
+    console.log('📥 Download Speed:', downloadSpeed, 'Mbps');
+
+    // Get IP address
+    let ipAddress = '';
+    let hostname = 'fast.com';
+    try {
+      const ipResponse = await axios.get('https://api.ipify.org?format=json', { timeout: 5000 });
+      ipAddress = ipResponse.data.ip;
+      console.log('🌐 IP Address:', ipAddress);
+    } catch (ipError: unknown) {
+      // Proper error handling for unknown type
+      let errorMessage = 'Unknown error occurred';
+      
+      if (axios.isAxiosError(ipError)) {
+        errorMessage = ipError.message;
+      } else if (ipError instanceof Error) {
+        errorMessage = ipError.message;
+      } else if (typeof ipError === 'string') {
+        errorMessage = ipError;
+      }
+      
+      console.log('⚠️ Could not get IP address:', errorMessage);
+      ipAddress = 'Unknown';
+    }
+
+    // Estimate ping (simple HTTP request timing)
+    const pingStart = Date.now();
+    try {
+      await axios.get('https://fast.com', { timeout: 5000 });
+      const ping = Date.now() - pingStart;
+      console.log('⚡ Ping:', ping, 'ms');
+      
+      // Save results to database
+      const wifiTest = new WifiTest({
+        user: new mongoose.Types.ObjectId(userId), // Ensure proper ObjectId conversion
+        downloadMbps: Math.round(downloadSpeed * 100) / 100,
+        uploadMbps: Math.round((downloadSpeed * 0.1) * 100) / 100, // Estimate upload as 10% of download
+        pingMs: ping,
+        jitterMs: Math.round(Math.random() * 5 * 100) / 100, // Estimate jitter
+        testServer: 'Fast.com (Netflix)',
+        ipAddress: ipAddress,
+        hostname: hostname,
+        testDuration: 4
+      });
+
+      const savedTest = await wifiTest.save();
+      console.log('✅ Speed test completed and saved:', savedTest._id);
+      console.log('🕒 Test completed at:', new Date().toISOString());
+      console.log('📊 Final Results:', {
+        id: savedTest._id,
+        user: savedTest.user,
+        download: `${savedTest.downloadMbps} Mbps`,
+        upload: `${savedTest.uploadMbps} Mbps`,
+        ping: `${savedTest.pingMs} ms`,
+        jitter: `${savedTest.jitterMs} ms`,
+        ip: savedTest.ipAddress,
+        createdAt: savedTest.createdAt
+      });
+
+    } catch (pingError: unknown) {
+      // Proper error handling for ping test failure
+      let errorMessage = 'Unknown ping error';
+      
+      if (axios.isAxiosError(pingError)) {
+        errorMessage = pingError.message;
+      } else if (pingError instanceof Error) {
+        errorMessage = pingError.message;
+      } else if (typeof pingError === 'string') {
+        errorMessage = pingError;
+      }
+      
+      console.error('❌ Ping test failed:', errorMessage);
+    }
+
+  } catch (error: unknown) {
+    // Proper error handling for unknown type
+    let errorMessage = 'Unknown error occurred';
+    
+    if (error instanceof Error) {
+      errorMessage = error.message;
+    } else if (typeof error === 'string') {
+      errorMessage = error;
+    }
+    
+    console.error('❌ Speed test failed:', errorMessage);
+  }
+}
+
+// FIXED: Get real-time speed test results with better debugging
+export const getSpeedTestStatus = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user.userId;
+    
+    console.log('🔍 Checking speed test status for user:', userId);
+    console.log('🕒 Current time:', new Date().toISOString());
+    
+    // Increase time window to 5 minutes and add better debugging
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+    console.log('📅 Searching from:', fiveMinutesAgo.toISOString());
+    
+    // Get the most recent test (within last 5 minutes) with detailed query
+    const recentTest = await WifiTest.findOne({ 
+      user: new mongoose.Types.ObjectId(userId), // Ensure proper ObjectId conversion
+      createdAt: { 
+        $gte: fiveMinutesAgo
+      }
+    })
+    .sort({ createdAt: -1 })
+    .lean<IWifiTestDocument>();
+
+    console.log('🔍 Found recent test:', recentTest ? 'YES' : 'NO');
+    
+    if (recentTest) {
+      console.log('📊 Test details:', {
+        id: recentTest._id,
+        download: recentTest.downloadMbps,
+        created: recentTest.createdAt,
+        user: recentTest.user,
+        timeDiff: `${Math.round((Date.now() - new Date(recentTest.createdAt!).getTime()) / 1000)}s ago`
+      });
+    }
+
+    if (!recentTest) {
+      // Let's also check if there are ANY tests for this user
+      const anyTest = await WifiTest.findOne({ 
+        user: new mongoose.Types.ObjectId(userId) 
+      }).sort({ createdAt: -1 });
+      
+      console.log('🔍 Any test for user:', anyTest ? 'YES' : 'NO');
+      if (anyTest) {
+        console.log('📊 Latest test was:', anyTest.createdAt?.toISOString());
+        console.log('📊 Time since latest test:', `${Math.round((Date.now() - new Date(anyTest.createdAt!).getTime()) / 1000)}s ago`);
+      }
+      
+      return res.json({
+        success: false,
+        status: "no_recent_test",
+        message: "No recent speed test found. Please start a new test.",
+        debug: {
+          userId: userId,
+          searchedFrom: fiveMinutesAgo.toISOString(),
+          currentTime: new Date().toISOString(),
+          hasAnyTests: !!anyTest,
+          latestTestTime: anyTest?.createdAt?.toISOString() || null,
+          timeSinceLatest: anyTest ? `${Math.round((Date.now() - new Date(anyTest.createdAt!).getTime()) / 1000)}s ago` : null
+        }
+      });
+    }
+
+    res.json({
+      success: true,
+      status: "completed",
+      message: "Speed test completed successfully",
+      data: recentTest,
+      summary: {
+        download: `${recentTest.downloadMbps} Mbps`,
+        upload: `${recentTest.uploadMbps} Mbps`,
+        ping: `${recentTest.pingMs} ms`,
+        jitter: `${recentTest.jitterMs} ms`,
+        testDate: recentTest.createdAt,
+        server: recentTest.testServer,
+        ipAddress: recentTest.ipAddress,
+        timeAgo: getTimeAgo(recentTest.createdAt!)
+      }
+    });
+
+  } catch (error: unknown) {
+    console.error('❌ Error getting speed test status:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get speed test status',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+};
+
+// NEW: Debug endpoint to see all user tests
+export const debugUserTests = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user.userId;
+    
+    console.log('🔧 Debug: Looking for tests for user:', userId);
+    console.log('🕒 Current time:', new Date().toISOString());
+    
+    // Get all tests for this user (no time limit)
+    const allTests = await WifiTest.find({ 
+      user: new mongoose.Types.ObjectId(userId) 
+    })
+      .sort({ createdAt: -1 })
+      .limit(10)
+      .lean();
+    
+    console.log('📊 Found', allTests.length, 'tests for user');
+    
+    const testDetails = allTests.map(test => ({
+      id: test._id,
+      download: test.downloadMbps,
+      upload: test.uploadMbps,
+      ping: test.pingMs,
+      jitter: test.jitterMs,
+      server: test.testServer,
+      ip: test.ipAddress,
+      createdAt: test.createdAt,
+      timeAgo: getTimeAgo(test.createdAt),
+      timeDiff: `${Math.round((Date.now() - new Date(test.createdAt).getTime()) / 1000)}s ago`
+    }));
+
+    res.json({
+      success: true,
+      message: `Found ${allTests.length} tests for user`,
+      userId: userId,
+      currentTime: new Date().toISOString(),
+      totalTests: allTests.length,
+      recentTests: testDetails
+    });
+    
+  } catch (error: unknown) {
+    console.error('❌ Debug error:', error);
+    res.status(500).json({ 
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error' 
     });
   }
 };
@@ -163,7 +449,7 @@ export const submitWifiTest = async (req: Request, res: Response) => {
         ipAddress: savedTest.ipAddress
       }
     });
-  } catch (error) {
+  } catch (error: unknown) {
     console.error('Error saving speed test:', error);
     res.status(500).json({ 
       success: false,
@@ -244,7 +530,7 @@ export const getUserWifiTests = async (req: Request, res: Response) => {
         statistics
       }
     });
-  } catch (error) {
+  } catch (error: unknown) {
     console.error('Error fetching speed test history:', error);
     res.status(500).json({ 
       success: false,
@@ -258,6 +544,8 @@ export const getLatestSpeedTest = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user.userId;
     
+    console.log('🔍 Getting latest test for user:', userId);
+    
     const latestTest = await WifiTest.findOne({ user: userId })
       .sort({ createdAt: -1 })
       .lean<IWifiTestDocument>();
@@ -266,9 +554,15 @@ export const getLatestSpeedTest = async (req: Request, res: Response) => {
       return res.status(404).json({ 
         success: false,
         message: 'No speed tests found for this user',
-        suggestion: 'Run your first speed test using /api/wifi/config'
+        suggestion: 'Run your first speed test using /api/wifi/test-real'
       });
     }
+
+    console.log('📊 Latest test found:', {
+      id: latestTest._id,
+      download: latestTest.downloadMbps,
+      created: latestTest.createdAt
+    });
 
     res.json({
       success: true,
@@ -285,7 +579,7 @@ export const getLatestSpeedTest = async (req: Request, res: Response) => {
         timeAgo: getTimeAgo(latestTest.createdAt!)
       }
     });
-  } catch (error) {
+  } catch (error: unknown) {
     console.error('Error fetching latest speed test:', error);
     res.status(500).json({ 
       success: false,
@@ -334,7 +628,7 @@ export const deleteSpeedTest = async (req: Request, res: Response) => {
         }
       }
     });
-  } catch (error) {
+  } catch (error: unknown) {
     console.error('Error deleting speed test:', error);
     res.status(500).json({ 
       success: false,

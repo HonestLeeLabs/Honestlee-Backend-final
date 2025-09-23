@@ -5,7 +5,10 @@ import {
   submitWifiTest, 
   getUserWifiTests,
   getLatestSpeedTest,
-  deleteSpeedTest
+  deleteSpeedTest,
+  performRealSpeedTest,  // NEW
+  getSpeedTestStatus,    // NEW
+  debugUserTests         // NEW - for debugging
 } from '../controllers/wifiController';
 
 const router = express.Router();
@@ -13,6 +16,18 @@ const router = express.Router();
 // Get SpeedOf.Me API configuration
 // GET /api/wifi/config
 router.get('/config', authenticate, getSpeedTestConfig);
+
+// NEW: Perform real speed test using Fast.com
+// POST /api/wifi/test-real
+router.post('/test-real', authenticate, performRealSpeedTest);
+
+// NEW: Get speed test status/results
+// GET /api/wifi/test-status
+router.get('/test-status', authenticate, getSpeedTestStatus);
+
+// NEW: Debug endpoint to see all user tests
+// GET /api/wifi/debug
+router.get('/debug', authenticate, debugUserTests);
 
 // Submit speed test results from SpeedOf.Me API
 // POST /api/wifi/test
@@ -38,6 +53,9 @@ router.get('/health', (req, res) => {
     message: 'WiFi speed test module is running',
     endpoints: {
       config: 'GET /api/wifi/config - Get SpeedOf.Me configuration',
+      testReal: 'POST /api/wifi/test-real - Perform real speed test',  // NEW
+      testStatus: 'GET /api/wifi/test-status - Get speed test results', // NEW
+      debug: 'GET /api/wifi/debug - Debug user tests', // NEW
       test: 'POST /api/wifi/test - Submit speed test results', 
       history: 'GET /api/wifi/history - Get test history',
       latest: 'GET /api/wifi/latest - Get latest test',
