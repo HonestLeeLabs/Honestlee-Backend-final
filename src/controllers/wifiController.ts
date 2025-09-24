@@ -84,17 +84,24 @@ const testSessions = new Map<string, {
 
 export const startLiveSpeedTest = async (req: Request, res: Response) => {
   try {
-    // Handle both authenticated and guest users
+    // Require authentication - no guest access
     const user = (req as any).user;
-    const userId = user ? (user._id?.toString() || user.userId) : `guest-${Date.now()}`;
+    
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required to run speed tests'
+      });
+    }
+
+    const userId = user._id?.toString() || user.userId;
     const responseType = req.query.format as string;
     const sessionId = `${userId}-${Date.now()}`;
     
     logProgress('🎯 Starting speed test:', { 
       userId, 
       responseType, 
-      sessionId, 
-      isGuest: !user 
+      sessionId
     });
 
     // Streaming JSON Response with continuous logs
@@ -226,7 +233,7 @@ async function startStreamingJSONSpeedTest(req: Request, res: Response, userId: 
   }
 }
 
-// Enhanced streaming speed test execution with guest support
+// Enhanced streaming speed test execution (authenticated users only)
 async function performStreamingSpeedTest(
   userId: string,
   sessionId: string,
@@ -234,14 +241,11 @@ async function performStreamingSpeedTest(
   res: Response
 ) {
   try {
-    const isGuest = userId.startsWith('guest-');
-    
     sendUpdate('🎯 Starting speed test:', {
-      userId: isGuest ? 'Guest User' : userId,
+      userId,
       responseType: 'streaming-json',
       sessionId,
-      progress: 0,
-      isGuest
+      progress: 0
     });
 
     sendUpdate('🎯 Starting enhanced speed test', {
@@ -411,55 +415,47 @@ async function performStreamingSpeedTest(
 
     await new Promise(resolve => setTimeout(resolve, 500));
 
-    let savedTestId = '';
-    
-    // Only save to database if user is authenticated
-    if (!isGuest) {
-      sendUpdate('💾 Saving speed test results to database...', {
-        sessionId: sessionId.slice(-8),
-        progress: 98
-      });
+    // Save to database
+    sendUpdate('💾 Saving speed test results to database...', {
+      sessionId: sessionId.slice(-8),
+      progress: 98
+    });
 
-      try {
-        const wifiTest = new WifiTest({
-          user: new mongoose.Types.ObjectId(userId),
-          downloadMbps: Math.round(downloadSpeed * 100) / 100,
-          uploadMbps: Math.round(finalUploadSpeed * 100) / 100,
-          pingMs: pingMs,
-          jitterMs: Math.round(jitterMs * 100) / 100,
-          testServer: 'Fast.com (Netflix CDN)',
-          ipAddress: ipAddress,
-          hostname: location,
-          testDuration: 12
-        });
-        
-        const savedTest = await wifiTest.save();
-        savedTestId = savedTest._id.toString();
-        
-        sendUpdate(`✅ Speed test results saved successfully: ${savedTestId}`, {
-          sessionId: sessionId.slice(-8),
-          progress: 100
-        });
-      } catch (saveError) {
-        sendUpdate('❌ Failed to save speed test results to database', {
-          sessionId: sessionId.slice(-8),
-          error: 'Database save failed'
-        });
-      }
-    } else {
-      sendUpdate('ℹ️ Test completed (results not saved - guest user)', {
+    let savedTestId = '';
+    try {
+      const wifiTest = new WifiTest({
+        user: new mongoose.Types.ObjectId(userId),
+        downloadMbps: Math.round(downloadSpeed * 100) / 100,
+        uploadMbps: Math.round(finalUploadSpeed * 100) / 100,
+        pingMs: pingMs,
+        jitterMs: Math.round(jitterMs * 100) / 100,
+        testServer: 'Fast.com (Netflix CDN)',
+        ipAddress: ipAddress,
+        hostname: location,
+        testDuration: 12
+      });
+      
+      const savedTest = await wifiTest.save();
+      savedTestId = savedTest._id.toString();
+      
+      sendUpdate(`✅ Speed test results saved successfully: ${savedTestId}`, {
         sessionId: sessionId.slice(-8),
         progress: 100
+      });
+    } catch (saveError) {
+      sendUpdate('❌ Failed to save speed test results to database', {
+        sessionId: sessionId.slice(-8),
+        error: 'Database save failed'
       });
     }
 
     // Send final completion
     sendUpdate('🎉 Streaming JSON Speed test completed successfully', {
       sessionId: sessionId.slice(-8),
-      userId: isGuest ? 'guest' : userId.slice(-8),
+      userId: userId.slice(-8),
       progress: 100,
       results: {
-        id: savedTestId || null,
+        id: savedTestId,
         download: downloadSpeed.toFixed(2),
         upload: finalUploadSpeed.toFixed(2),
         ping: pingMs,
@@ -467,8 +463,7 @@ async function performStreamingSpeedTest(
         server: 'Fast.com (Netflix CDN)',
         ip: ipAddress,
         location: location,
-        quality: getConnectionQuality(downloadSpeed, finalUploadSpeed, pingMs),
-        isGuest: isGuest
+        quality: getConnectionQuality(downloadSpeed, finalUploadSpeed, pingMs)
       }
     }, true); // isComplete = true
 
@@ -484,7 +479,7 @@ async function performStreamingSpeedTest(
   }
 }
 
-// SSE Speed test execution (enhanced for guest support)
+// SSE Speed test execution (authenticated users only)
 async function performSpeedTest(
   userId: string,
   sessionId: string,
@@ -492,8 +487,7 @@ async function performSpeedTest(
   res: Response
 ) {
   try {
-    const isGuest = userId.startsWith('guest-');
-    logProgress('🚀 Starting SSE speed test:', { userId, sessionId, isGuest });
+    logProgress('🚀 Starting SSE speed test:', { userId, sessionId });
     
     sendProgress({
       type: 'ping',
@@ -664,61 +658,30 @@ async function performSpeedTest(
       timestamp: Date.now()
     });
     
-    // Only save to database if user is authenticated
-    if (!isGuest) {
-      try {
-        logProgress('💾 Saving speed test results to database...');
-        
-        const wifiTest = new WifiTest({
-          user: new mongoose.Types.ObjectId(userId),
-          downloadMbps: Math.round(downloadSpeed * 100) / 100,
-          uploadMbps: Math.round(uploadSpeed * 100) / 100,
-          pingMs: pingMs,
-          jitterMs: Math.round(jitterMs * 100) / 100,
-          testServer: 'Fast.com (Netflix CDN)',
-          ipAddress: ipAddress,
-          hostname: location,
-          testDuration: 8
-        });
-        
-        const savedTest = await wifiTest.save();
-        logProgress('✅ Speed test results saved successfully:', savedTest._id);
-        
-        sendProgress({
-          type: 'completed',
-          phase: 'Speed test completed!',
-          progress: 100,
-          data: {
-            id: savedTest._id,
-            download: downloadSpeed.toFixed(2),
-            upload: uploadSpeed.toFixed(2),
-            ping: pingMs,
-            jitter: jitterMs.toFixed(2),
-            server: 'Fast.com (Netflix CDN)',
-            ip: ipAddress,
-            location: location,
-            quality: getConnectionQuality(downloadSpeed, uploadSpeed, pingMs)
-          },
-          timestamp: Date.now()
-        });
-        
-      } catch (saveError: unknown) {
-        logProgress('❌ Failed to save speed test results:', saveError);
-        sendProgress({
-          type: 'error',
-          phase: 'Failed to save results',
-          progress: 100,
-          data: { error: 'Could not save test results' },
-          timestamp: Date.now()
-        });
-      }
-    } else {
+    try {
+      logProgress('💾 Saving speed test results to database...');
+      
+      const wifiTest = new WifiTest({
+        user: new mongoose.Types.ObjectId(userId),
+        downloadMbps: Math.round(downloadSpeed * 100) / 100,
+        uploadMbps: Math.round(uploadSpeed * 100) / 100,
+        pingMs: pingMs,
+        jitterMs: Math.round(jitterMs * 100) / 100,
+        testServer: 'Fast.com (Netflix CDN)',
+        ipAddress: ipAddress,
+        hostname: location,
+        testDuration: 8
+      });
+      
+      const savedTest = await wifiTest.save();
+      logProgress('✅ Speed test results saved successfully:', savedTest._id);
+      
       sendProgress({
         type: 'completed',
-        phase: 'Speed test completed! (Guest mode)',
+        phase: 'Speed test completed!',
         progress: 100,
         data: {
-          id: null,
+          id: savedTest._id,
           download: downloadSpeed.toFixed(2),
           upload: uploadSpeed.toFixed(2),
           ping: pingMs,
@@ -726,9 +689,18 @@ async function performSpeedTest(
           server: 'Fast.com (Netflix CDN)',
           ip: ipAddress,
           location: location,
-          quality: getConnectionQuality(downloadSpeed, uploadSpeed, pingMs),
-          isGuest: true
+          quality: getConnectionQuality(downloadSpeed, uploadSpeed, pingMs)
         },
+        timestamp: Date.now()
+      });
+      
+    } catch (saveError: unknown) {
+      logProgress('❌ Failed to save speed test results:', saveError);
+      sendProgress({
+        type: 'error',
+        phase: 'Failed to save results',
+        progress: 100,
+        data: { error: 'Could not save test results' },
         timestamp: Date.now()
       });
     }
@@ -759,12 +731,12 @@ async function performSpeedTest(
   }
 }
 
-// Get session status with progress (enhanced for guest support)
+// Get session status with progress (authentication required)
 export const getSpeedTestStatus = async (req: Request, res: Response) => {
   try {
     const { sessionId } = req.params;
     const user = (req as any).user;
-    const userId = user ? (user._id?.toString() || user.userId) : null;
+    const userId = user._id?.toString() || user.userId;
     
     const session = testSessions.get(sessionId);
     
@@ -776,8 +748,8 @@ export const getSpeedTestStatus = async (req: Request, res: Response) => {
       });
     }
     
-    // Allow access for guests or session owners
-    if (userId && session.userId !== userId && !session.userId.startsWith('guest-')) {
+    // Check if user owns this session
+    if (session.userId !== userId) {
       return res.status(403).json({
         success: false,
         message: 'Unauthorized access to speed test session'
@@ -810,12 +782,12 @@ export const getSpeedTestStatus = async (req: Request, res: Response) => {
   }
 };
 
-// Get detailed session logs (enhanced for guest support)
+// Get detailed session logs (authentication required)
 export const getSessionLogs = async (req: Request, res: Response) => {
   try {
     const { sessionId } = req.params;
     const user = (req as any).user;
-    const userId = user ? (user._id?.toString() || user.userId) : null;
+    const userId = user._id?.toString() || user.userId;
     
     const session = testSessions.get(sessionId);
     
@@ -827,8 +799,8 @@ export const getSessionLogs = async (req: Request, res: Response) => {
       });
     }
     
-    // Allow access for guests or session owners
-    if (userId && session.userId !== userId && !session.userId.startsWith('guest-')) {
+    // Check if user owns this session
+    if (session.userId !== userId) {
       return res.status(403).json({
         success: false,
         message: 'Unauthorized access to speed test session'
@@ -856,12 +828,12 @@ export const getSessionLogs = async (req: Request, res: Response) => {
   }
 };
 
-// Stream console-like logs (enhanced for guest support)
+// Stream console-like logs (authentication required)
 export const streamSessionLogs = async (req: Request, res: Response) => {
   try {
     const { sessionId } = req.params;
     const user = (req as any).user;
-    const userId = user ? (user._id?.toString() || user.userId) : null;
+    const userId = user._id?.toString() || user.userId;
     
     const session = testSessions.get(sessionId);
     
@@ -873,8 +845,8 @@ export const streamSessionLogs = async (req: Request, res: Response) => {
       });
     }
     
-    // Allow access for guests or session owners
-    if (userId && session.userId !== userId && !session.userId.startsWith('guest-')) {
+    // Check if user owns this session
+    if (session.userId !== userId) {
       return res.status(403).json({
         success: false,
         message: 'Unauthorized access to speed test session'
@@ -920,14 +892,7 @@ const getConnectionQuality = (download: number, upload: number, ping: number): s
 export const getUserWifiTests = async (req: Request, res: Response) => {
   try {
     const user = (req as any).user;
-    const userId = user ? (user._id?.toString() || user.userId) : null;
-    
-    if (!userId) {
-      return res.status(401).json({
-        success: false,
-        message: 'Authentication required to access test history'
-      });
-    }
+    const userId = user._id?.toString() || user.userId;
     
     const { limit = 10, page = 1 } = req.query;
     
@@ -967,14 +932,7 @@ export const getUserWifiTests = async (req: Request, res: Response) => {
 export const getLatestSpeedTest = async (req: Request, res: Response) => {
   try {
     const user = (req as any).user;
-    const userId = user ? (user._id?.toString() || user.userId) : null;
-    
-    if (!userId) {
-      return res.status(401).json({
-        success: false,
-        message: 'Authentication required to access test history'
-      });
-    }
+    const userId = user._id?.toString() || user.userId;
     
     const latestTest = await WifiTest.findOne({ user: userId })
       .sort({ createdAt: -1 })
@@ -1003,15 +961,8 @@ export const getLatestSpeedTest = async (req: Request, res: Response) => {
 export const deleteSpeedTest = async (req: Request, res: Response) => {
   try {
     const user = (req as any).user;
-    const userId = user ? (user._id?.toString() || user.userId) : null;
+    const userId = user._id?.toString() || user.userId;
     const { testId } = req.params;
-    
-    if (!userId) {
-      return res.status(401).json({
-        success: false,
-        message: 'Authentication required to delete tests'
-      });
-    }
     
     if (!mongoose.Types.ObjectId.isValid(testId)) {
       return res.status(400).json({
