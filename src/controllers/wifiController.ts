@@ -90,9 +90,9 @@ export const startLiveSpeedTest = async (req: Request, res: Response) => {
     
     logProgress('🎯 Starting speed test:', { userId, responseType, sessionId });
 
-    // NEW: Live JSON Response with embedded logs
+    // NEW: Streaming JSON Response with continuous logs
     if (responseType === 'json') {
-      return await performLiveJSONSpeedTest(req, res, userId, sessionId);
+      return await startStreamingJSONSpeedTest(req, res, userId, sessionId);
     }
 
     // Default: Server-Sent Events
@@ -154,48 +154,96 @@ export const startLiveSpeedTest = async (req: Request, res: Response) => {
   }
 };
 
-// NEW: Live JSON Speed Test with ALL logs in single response
-async function performLiveJSONSpeedTest(req: Request, res: Response, userId: string, sessionId: string) {
-  const logs: string[] = [];
-  const rawLogs: any[] = [];
-  
-  // Helper function to add logs
-  const addLog = (message: string, data?: any) => {
-    const timestamp = new Date().toISOString();
-    const dataStr = data ? ` ${JSON.stringify(data, null, 2)}` : '';
-    const formattedLog = `[${timestamp}] ${message}${dataStr}`;
-    
-    logs.push(formattedLog);
-    rawLogs.push({
-      timestamp,
-      message,
-      data: data || null
-    });
-    
-    // Also log to console
-    console.log(formattedLog);
-  };
-
+// NEW: Streaming JSON with continuous updates (Option 2)
+async function startStreamingJSONSpeedTest(req: Request, res: Response, userId: string, sessionId: string) {
   try {
-    addLog('🎯 Starting speed test:', {
-      userId,
-      responseType: 'json',
-      sessionId
+    logProgress('🎯 Starting streaming JSON speed test:', { userId, sessionId });
+
+    // Set headers for streaming JSON
+    res.writeHead(200, {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'Access-Control-Allow-Origin': '*',
+      'Transfer-Encoding': 'chunked'
     });
 
-    addLog('🎯 Starting enhanced speed test', {
+    const logs: string[] = [];
+    const rawLogs: any[] = [];
+    
+    // Helper function to send progressive updates
+    const sendUpdate = (message: string, data?: any, isComplete: boolean = false) => {
+      const timestamp = new Date().toISOString();
+      const dataStr = data ? ` ${JSON.stringify(data, null, 2)}` : '';
+      const formattedLog = `[${timestamp}] ${message}${dataStr}`;
+      
+      logs.push(formattedLog);
+      rawLogs.push({
+        timestamp,
+        message,
+        data: data || null
+      });
+      
+      // Send progressive JSON update
+      const update = {
+        timestamp,
+        sessionId: sessionId.slice(-8),
+        message,
+        data: data || null,
+        totalLogs: logs.length,
+        progress: data?.progress || 0,
+        isComplete,
+        currentLog: formattedLog, // Current log entry
+        allLogs: logs.slice(-5) // Last 5 logs for context
+      };
+      
+      // Send as JSON chunk with newline separator
+      res.write(JSON.stringify(update) + '\n');
+      
+      // Also log to console
+      console.log(formattedLog);
+    };
+
+    await performStreamingSpeedTest(userId, sessionId, sendUpdate, res);
+
+  } catch (error: unknown) {
+    logProgress('❌ Streaming JSON speed test error:', error);
+    res.write(JSON.stringify({
+      error: error instanceof Error ? error.message : 'Unknown error',
+      timestamp: new Date().toISOString(),
+      isComplete: true
+    }) + '\n');
+    res.end();
+  }
+}
+
+// Streaming speed test execution
+async function performStreamingSpeedTest(
+  userId: string,
+  sessionId: string,
+  sendUpdate: (message: string, data?: any, isComplete?: boolean) => void,
+  res: Response
+) {
+  try {
+    sendUpdate('🎯 Starting speed test:', {
+      userId,
+      responseType: 'streaming-json',
+      sessionId,
+      progress: 0
+    });
+
+    sendUpdate('🎯 Starting enhanced speed test', {
       sessionId: sessionId.slice(-8),
       progress: 5
     });
 
-    // Simulate delay
     await new Promise(resolve => setTimeout(resolve, 1000));
 
     // Step 1: Get IP and location
     let ipAddress = 'Unknown';
     let location = 'Unknown';
     
-    addLog('🌐 Getting IP address...', {
+    sendUpdate('🌐 Getting IP address...', {
       sessionId: sessionId.slice(-8),
       progress: 10
     });
@@ -204,7 +252,7 @@ async function performLiveJSONSpeedTest(req: Request, res: Response, userId: str
       const ipResponse = await axios.get('https://api.ipify.org?format=json', { timeout: 5000 });
       ipAddress = ipResponse.data.ip;
       
-      addLog(`✅ IP Address obtained: ${ipAddress}`, {
+      sendUpdate(`✅ IP Address obtained: ${ipAddress}`, {
         sessionId: sessionId.slice(-8),
         progress: 12
       });
@@ -213,18 +261,18 @@ async function performLiveJSONSpeedTest(req: Request, res: Response, userId: str
         const locationResponse = await axios.get(`https://ipapi.co/${ipAddress}/json/`, { timeout: 5000 });
         location = `${locationResponse.data.city}, ${locationResponse.data.country_name}`;
         
-        addLog(`📍 Location obtained: ${location}`, {
+        sendUpdate(`📍 Location obtained: ${location}`, {
           sessionId: sessionId.slice(-8),
           progress: 15
         });
       } catch (locationError) {
-        addLog('⚠️ Could not get location, using IP only', {
+        sendUpdate('⚠️ Could not get location, using IP only', {
           sessionId: sessionId.slice(-8),
           progress: 15
         });
       }
     } catch (error) {
-      addLog('⚠️ IP/Location lookup failed, using fallback', {
+      sendUpdate('⚠️ IP/Location lookup failed, using fallback', {
         sessionId: sessionId.slice(-8),
         progress: 15
       });
@@ -233,7 +281,7 @@ async function performLiveJSONSpeedTest(req: Request, res: Response, userId: str
     await new Promise(resolve => setTimeout(resolve, 500));
 
     // Step 2: Ping test
-    addLog('⚡ Starting ping test...', {
+    sendUpdate('⚡ Starting ping test...', {
       sessionId: sessionId.slice(-8),
       progress: 20
     });
@@ -244,14 +292,14 @@ async function performLiveJSONSpeedTest(req: Request, res: Response, userId: str
       await axios.get('https://www.google.com', { timeout: 5000 });
       pingMs = Date.now() - pingStart;
       
-      addLog(`✅ Ping test completed: ${pingMs}ms`, {
+      sendUpdate(`✅ Ping test completed: ${pingMs}ms`, {
         sessionId: sessionId.slice(-8),
         progress: 25,
         speed: pingMs
       });
     } catch (error) {
       pingMs = 999;
-      addLog('❌ Ping test failed, using fallback', {
+      sendUpdate('❌ Ping test failed, using fallback', {
         sessionId: sessionId.slice(-8),
         progress: 25,
         speed: pingMs
@@ -261,7 +309,7 @@ async function performLiveJSONSpeedTest(req: Request, res: Response, userId: str
     await new Promise(resolve => setTimeout(resolve, 500));
 
     // Step 3: Download test
-    addLog('📥 Starting download test with Fast.com...', {
+    sendUpdate('📥 Starting download test with Fast.com...', {
       sessionId: sessionId.slice(-8),
       progress: 30
     });
@@ -274,7 +322,7 @@ async function performLiveJSONSpeedTest(req: Request, res: Response, userId: str
       const speed = Math.random() * 50 + 10;
       speeds.push(speed);
       
-      addLog(`📥 Download progress: ${downloadSteps[i]}% - ${speed.toFixed(2)} Mbps`, {
+      sendUpdate(`📥 Download progress: ${downloadSteps[i]}% - ${speed.toFixed(2)} Mbps`, {
         sessionId: sessionId.slice(-8),
         progress: downloadSteps[i],
         speed: speed
@@ -294,14 +342,14 @@ async function performLiveJSONSpeedTest(req: Request, res: Response, userId: str
       
       downloadSpeed = await speedtest.getSpeed();
       
-      addLog(`✅ Download speed test completed: ${downloadSpeed.toFixed(2)} Mbps`, {
+      sendUpdate(`✅ Download speed test completed: ${downloadSpeed.toFixed(2)} Mbps`, {
         sessionId: sessionId.slice(-8),
         progress: 60,
         speed: downloadSpeed
       });
     } catch (error) {
       downloadSpeed = speeds.reduce((a, b) => a + b, 0) / speeds.length;
-      addLog(`🔄 Using estimated download speed: ${downloadSpeed.toFixed(2)} Mbps`, {
+      sendUpdate(`🔄 Using estimated download speed: ${downloadSpeed.toFixed(2)} Mbps`, {
         sessionId: sessionId.slice(-8),
         progress: 60,
         speed: downloadSpeed
@@ -311,7 +359,7 @@ async function performLiveJSONSpeedTest(req: Request, res: Response, userId: str
     await new Promise(resolve => setTimeout(resolve, 500));
 
     // Step 4: Upload test
-    addLog('📤 Starting upload speed test...', {
+    sendUpdate('📤 Starting upload speed test...', {
       sessionId: sessionId.slice(-8),
       progress: 65
     });
@@ -324,7 +372,7 @@ async function performLiveJSONSpeedTest(req: Request, res: Response, userId: str
       const uploadSpeed = downloadSpeed * (0.1 + Math.random() * 0.2);
       uploadSpeeds.push(uploadSpeed);
       
-      addLog(`📤 Upload progress: ${uploadSteps[i]}% - ${uploadSpeed.toFixed(2)} Mbps`, {
+      sendUpdate(`📤 Upload progress: ${uploadSteps[i]}% - ${uploadSpeed.toFixed(2)} Mbps`, {
         sessionId: sessionId.slice(-8),
         progress: uploadSteps[i],
         speed: uploadSpeed
@@ -333,7 +381,7 @@ async function performLiveJSONSpeedTest(req: Request, res: Response, userId: str
 
     const finalUploadSpeed = uploadSpeeds.reduce((a, b) => a + b, 0) / uploadSpeeds.length;
     
-    addLog(`✅ Upload speed test completed: ${finalUploadSpeed.toFixed(2)} Mbps`, {
+    sendUpdate(`✅ Upload speed test completed: ${finalUploadSpeed.toFixed(2)} Mbps`, {
       sessionId: sessionId.slice(-8),
       progress: 92,
       speed: finalUploadSpeed
@@ -341,22 +389,22 @@ async function performLiveJSONSpeedTest(req: Request, res: Response, userId: str
 
     await new Promise(resolve => setTimeout(resolve, 500));
 
-    // Step 5: Final calculations
+    // Step 5: Final steps
     const jitterMs = Math.random() * 10 + 1;
     
-    addLog('📊 Calculating final metrics...', {
+    sendUpdate('📊 Calculating final metrics...', {
       sessionId: sessionId.slice(-8),
       progress: 95
     });
 
     await new Promise(resolve => setTimeout(resolve, 500));
 
-    // Step 6: Save to database
-    addLog('💾 Saving speed test results to database...', {
+    sendUpdate('💾 Saving speed test results to database...', {
       sessionId: sessionId.slice(-8),
       progress: 98
     });
 
+    // Save to database
     let savedTestId = '';
     try {
       const wifiTest = new WifiTest({
@@ -374,97 +422,49 @@ async function performLiveJSONSpeedTest(req: Request, res: Response, userId: str
       const savedTest = await wifiTest.save();
       savedTestId = savedTest._id.toString();
       
-      addLog(`✅ Speed test results saved successfully: ${savedTestId}`, {
+      sendUpdate(`✅ Speed test results saved successfully: ${savedTestId}`, {
         sessionId: sessionId.slice(-8),
         progress: 100
       });
 
-      addLog('🎉 JSON Speed test completed successfully', {
+      // Send final completion
+      sendUpdate('🎉 Streaming JSON Speed test completed successfully', {
         sessionId: sessionId.slice(-8),
-        userId: userId.slice(-8)
-      });
+        userId: userId.slice(-8),
+        progress: 100,
+        results: {
+          id: savedTestId,
+          download: downloadSpeed.toFixed(2),
+          upload: finalUploadSpeed.toFixed(2),
+          ping: pingMs,
+          jitter: jitterMs.toFixed(2),
+          server: 'Fast.com (Netflix CDN)',
+          ip: ipAddress,
+          location: location,
+          quality: getConnectionQuality(downloadSpeed, finalUploadSpeed, pingMs)
+        }
+      }, true); // isComplete = true
 
-      // Return complete response with ALL logs
-      res.json({
-        success: true,
-        message: 'Speed test completed successfully',
-        data: {
-          sessionId,
-          userId,
-          status: 'completed',
-          progress: 100,
-          results: {
-            id: savedTestId,
-            download: downloadSpeed.toFixed(2),
-            upload: finalUploadSpeed.toFixed(2),
-            ping: pingMs,
-            jitter: jitterMs.toFixed(2),
-            server: 'Fast.com (Netflix CDN)',
-            ip: ipAddress,
-            location: location,
-            quality: getConnectionQuality(downloadSpeed, finalUploadSpeed, pingMs)
-          },
-          totalLogs: logs.length,
-          executionTime: `${Math.round((Date.now() - parseInt(sessionId.split('-')[1])) / 1000)}s`,
-          // ALL the live logs in the response
-          logs: logs,
-          rawLogs: rawLogs
-        },
-        timestamp: new Date().toISOString()
-      });
-      
     } catch (saveError) {
-      addLog('❌ Failed to save speed test results to database', {
+      sendUpdate('❌ Failed to save speed test results to database', {
         sessionId: sessionId.slice(-8),
         error: 'Database save failed'
-      });
-
-      res.status(500).json({
-        success: false,
-        message: 'Speed test completed but failed to save results',
-        data: {
-          sessionId,
-          userId,
-          status: 'error',
-          results: {
-            download: downloadSpeed.toFixed(2),
-            upload: finalUploadSpeed.toFixed(2),
-            ping: pingMs,
-            jitter: jitterMs.toFixed(2),
-            ip: ipAddress,
-            location: location
-          },
-          logs: logs,
-          rawLogs: rawLogs,
-          error: 'Failed to save to database'
-        },
-        timestamp: new Date().toISOString()
-      });
+      }, true);
     }
-
+    
+    res.end();
+    
   } catch (error: unknown) {
-    addLog(`❌ JSON Speed test failed: ${error instanceof Error ? error.message : 'Unknown error'}`, {
+    sendUpdate(`❌ Streaming JSON Speed test failed: ${error instanceof Error ? error.message : 'Unknown error'}`, {
       sessionId: sessionId.slice(-8),
       error: error instanceof Error ? error.message : 'Unknown error'
-    });
-
-    res.status(500).json({
-      success: false,
-      message: 'Speed test failed',
-      data: {
-        sessionId,
-        userId,
-        status: 'error',
-        logs: logs,
-        rawLogs: rawLogs,
-        error: error instanceof Error ? error.message : 'Unknown error'
-      },
-      timestamp: new Date().toISOString()
-    });
+    }, true);
+    
+    res.end();
   }
 }
 
-// SSE Speed test execution
+// SSE Speed test execution (unchanged)
 async function performSpeedTest(
   userId: string,
   sessionId: string,
