@@ -1,10 +1,11 @@
 import express from 'express';
 import { authenticate } from '../middlewares/authMiddleware';
+import { optionalAuthenticate } from '../middlewares/optionalAuthMiddleware';
 import { 
   startLiveSpeedTest,
   getSpeedTestStatus,
   getSessionLogs,      
-  streamSessionLogs,    // NEW: Console-like streaming logs
+  streamSessionLogs,
   getUserWifiTests,
   getLatestSpeedTest,
   deleteSpeedTest,
@@ -13,8 +14,8 @@ import {
 
 const router = express.Router();
 
-// Main live speed test
-router.get('/live-test', authenticate, startLiveSpeedTest);
+// Main live speed test - make authentication optional
+router.get('/live-test', optionalAuthenticate, startLiveSpeedTest);
 
 // Get JSON speed test status by session ID
 router.get('/status/:sessionId', authenticate, getSpeedTestStatus);
@@ -22,7 +23,7 @@ router.get('/status/:sessionId', authenticate, getSpeedTestStatus);
 // Get detailed session logs (structured)
 router.get('/logs/:sessionId', authenticate, getSessionLogs);
 
-// NEW: Get console-like streaming logs (formatted like your server logs)
+// Get console-like streaming logs
 router.get('/stream/:sessionId', authenticate, streamSessionLogs);
 
 // Other endpoints...
@@ -41,7 +42,7 @@ router.get('/health', (req, res) => {
       liveTestJSON: 'GET /api/wifi/live-test?format=json - JSON polling',
       status: 'GET /api/wifi/status/:sessionId - Get test status',
       sessionLogs: 'GET /api/wifi/logs/:sessionId - Get structured logs',
-      streamLogs: 'GET /api/wifi/stream/:sessionId - Get console-like logs', // NEW
+      streamLogs: 'GET /api/wifi/stream/:sessionId - Get console-like logs',
       history: 'GET /api/wifi/history - Get test history',
       latest: 'GET /api/wifi/latest - Get latest test',
       delete: 'DELETE /api/wifi/test/:testId - Delete test'

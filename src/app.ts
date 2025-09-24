@@ -37,7 +37,9 @@ const corsOptions = {
     'Accept',
     'Origin',
     'Cache-Control',
-    'X-File-Name'
+    'X-File-Name',
+    'x-region',                   // Add this for your custom header
+    'X-Region'                    // Add both cases to be safe
   ]
 };
 
@@ -47,6 +49,15 @@ app.use(passport.initialize());
 
 // Add preflight handler for complex CORS requests
 app.options('*', cors(corsOptions));
+
+// Add additional headers for streaming responses
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, Cache-Control, X-File-Name, x-region, X-Region');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  next();
+});
 
 mongoose.connect(process.env.MONGODB_URI || '')
   .then(async () => {
