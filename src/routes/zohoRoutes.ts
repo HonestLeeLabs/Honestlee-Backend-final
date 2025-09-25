@@ -1,33 +1,35 @@
 import express from 'express';
-import { healthCheck, getVenues, searchVenues, getVenueById } from '../controllers/zohoController';
+import { healthCheck, getVenues, searchVenues, getVenueById, getCachedVenues } from '../controllers/zohoController';
 import { authenticate } from '../middlewares/authMiddleware';
 
 const router = express.Router();
 
-// Apply your existing authentication middleware
+// Apply authentication middleware
 router.use(authenticate);
 
 /**
  * Health check endpoint
- * GET /api/zoho/health
  */
 router.get('/health', healthCheck);
 
 /**
- * Get all venues with pagination
- * GET /api/zoho/venues?page=1&per_page=50
+ * Get all venues with pagination (direct from Zoho)
  */
 router.get('/venues', getVenues);
 
 /**
- * Search venues by name, city, or industry
- * GET /api/zoho/venues/search?q=restaurant
+ * IMPORTANT: Specific routes MUST come before parameterized routes
+ * Get cached venues - MUST be before /:venueId route
+ */
+router.get('/venues/cached', getCachedVenues);
+
+/**
+ * Search venues - MUST be before /:venueId route
  */
 router.get('/venues/search', searchVenues);
 
 /**
- * Get venue details by ID
- * GET /api/zoho/venues/:venueId
+ * Get venue by ID - MUST be LAST (catches everything else)
  */
 router.get('/venues/:venueId', getVenueById);
 

@@ -376,35 +376,35 @@ public async healthCheck(): Promise<ZohoHealthResponse> {
   /**
    * Advanced search using COQL (Composite Query Language)
    */
-  public async searchVenuesByCOQL(query: string): Promise<VenueSearchResponse> {
-    try {
-      console.log(`🔍 Executing COQL query: ${query}`);
+public async searchVenuesByCOQL(query: string): Promise<VenueSearchResponse> {
+  try {
+    console.log(`🔍 Executing COQL query: ${query}`);
 
-      const payload = {
-        select_query: query
-      };
+    const payload = {
+      select_query: query
+    };
 
-      const response = await this.apiRequest<ZohoAPIResponse<ZohoVenue>>('POST', '/coql', payload);
-      
-      console.log(`✅ COQL query returned ${response.data?.length || 0} results`);
-      
-      return {
-        success: true,
-        message: 'COQL search completed successfully',
-        data: response.data || [],
-        count: response.data?.length || 0
-      };
+    const response = await this.apiRequest<ZohoAPIResponse<ZohoVenue>>('POST', '/coql', payload);
+    
+    console.log(`✅ COQL query returned ${response.data?.length || 0} results`);
+    
+    return {
+      success: true,
+      message: 'COQL search completed successfully',
+      data: response.data || [],
+      count: response.data?.length || 0
+    };
 
-    } catch (error: any) {
-      console.error('❌ Error executing COQL query:', error);
-      return {
-        success: false,
-        message: `COQL query failed: ${error.message}`,
-        data: [],
-        count: 0
-      };
-    }
+  } catch (error: any) {
+    console.error('❌ Error executing COQL query:', error);
+    return {
+      success: false,
+      message: `COQL query failed: ${error.message}`,
+      data: [],
+      count: 0
+    };
   }
+}
 
   /**
    * Get venues by city using COQL
