@@ -11,6 +11,7 @@ import reviewRoutes from './routes/reviewRoutes';
 import venueRoutes from './routes/venueRoutes';
 import userRoutes from './routes/userRoutes';
 import adminRoutes from './routes/adminRoutes';
+import zohoRoutes from './routes/zohoRoutes';
 import { errorHandler } from './utils/errorHandler';
 import { testEmailConfig } from './services/emailService';
 
@@ -105,6 +106,7 @@ app.use('/api/reviews', reviewRoutes);
 app.use('/api/venues', venueRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/zoho', zohoRoutes);
 
 // Health check endpoint
 app.get('/health', (req, res) => {
