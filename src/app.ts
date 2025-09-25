@@ -12,6 +12,8 @@ import venueRoutes from './routes/venueRoutes';
 import userRoutes from './routes/userRoutes';
 import adminRoutes from './routes/adminRoutes';
 import zohoRoutes from './routes/zohoRoutes';
+import webhookRoutes from './routes/webhookRoutes';
+import { startSyncJobs } from './jobs/syncJob';
 import { errorHandler } from './utils/errorHandler';
 import { testEmailConfig } from './services/emailService';
 
@@ -97,6 +99,7 @@ mongoose.connect(process.env.MONGODB_URI || '')
 
 // Test email configuration
 testEmailConfig();
+startSyncJobs();
 
 // API Routes
 app.use('/api/auth', authRoutes);
@@ -107,6 +110,7 @@ app.use('/api/venues', venueRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/zoho', zohoRoutes);
+app.use('/webhooks', webhookRoutes);
 
 // Health check endpoint
 app.get('/health', (req, res) => {

@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import zohoService from '../services/zohoService';
+import venueSyncService from '../services/venueSyncService';
 
 export const healthCheck = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -145,6 +146,83 @@ export const getVenueById = async (req: Request, res: Response): Promise<void> =
     res.status(500).json({
       success: false,
       message: 'Server error',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * Get venues from cache (fast local queries)
+ */
+export const getCachedVenues = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = Math.min(parseInt(req.query.limit as string) || 20, 1000);
+    const city = req.query.city as string;
+    const industry = req.query.industry as string;
+    const search = req.query.search as string;
+
+    console.log(`📋 Fetching cached venues - Page: ${page}, Limit: ${limit}`);
+
+    // For now, let's use the direct Zoho service since cache might not be set up
+    // This will work with your existing setup
+    const directResult = await zohoService.getVenues(page, Math.min(limit, 200));
+    
+    if (!directResult.success) {
+      res.status(500).json({
+        success: false,
+        message: directResult.message,
+        error: 'Failed to fetch venues'
+      });
+      return;
+    }
+
+    // Filter data if search parameters are provided
+    let filteredData = directResult.data;
+    
+    if (search) {
+      filteredData = filteredData.filter(venue => 
+        venue.Account_Name?.toLowerCase().includes(search.toLowerCase()) ||
+        venue.Billing_City?.toLowerCase().includes(search.toLowerCase()) ||
+        venue.Industry?.toLowerCase().includes(search.toLowerCase())
+      );
+    }
+    
+    if (city) {
+      filteredData = filteredData.filter(venue => 
+        venue.Billing_City?.toLowerCase().includes(city.toLowerCase())
+      );
+    }
+    
+    if (industry) {
+      filteredData = filteredData.filter(venue => 
+        venue.Industry?.toLowerCase().includes(industry.toLowerCase())
+      );
+    }
+
+    res.json({
+      success: true,
+      message: 'Venues retrieved successfully (via Zoho API)',
+      data: filteredData,
+      pagination: {
+        page: page,
+        limit: limit,
+        total: filteredData.length,
+        hasMore: directResult.pagination.hasMore
+      },
+      meta: {
+        source: 'zoho_api', // Will change to 'cache' later
+        total_records: filteredData.length,
+        fetched_from: 'zoho_crm_direct',
+        timestamp: new Date().toISOString()
+      }
+    });
+
+  } catch (error: any) {
+    console.error('❌ Error fetching venues:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch venues',
       error: error.message
     });
   }
