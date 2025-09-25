@@ -29,6 +29,7 @@ const corsOptions = {
     'https://honestlee.app',      // Production frontend
     'https://www.honestlee.app',  // Production frontend with www
     'https://api.honestlee.app',  // API domain
+    'https://honestlee-frontend.netlify.app'
   ],
   credentials: true,              // Allow cookies and authentication headers
   optionsSuccessStatus: 200,      // Support legacy browsers
