@@ -745,4 +745,62 @@ export const getFieldUsageStats = async (req: Request, res: Response): Promise<v
       error: error.message
     });
   }
+  
 };
+
+/**
+ * 🆕 Get venues with ALL available fields (no 50-field limit)
+ */
+export const getVenuesAllFields = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const page = parseInt(req.query.page as string) || 1;
+    const perPage = Math.min(parseInt(req.query.per_page as string) || 5, 20); // Smaller limit for all fields
+    
+    console.log(`📋 All fields venues request - Page: ${page}, Per Page: ${perPage}`);
+    
+    const result = await zohoService.getVenuesAllFields(page, perPage);
+    
+    if (result.success && result.data.length > 0) {
+      const sampleVenue = result.data[0];
+      const fieldAnalysis = {
+        total_fields_per_venue: Object.keys(sampleVenue).length,
+        custom_fields: Object.keys(sampleVenue).filter(key => 
+          key.includes('HL_') || key.includes('Wifi') || key.includes('Charging') ||
+          key.includes('Mapsly') || key.includes('Payment')
+        ),
+        system_fields: Object.keys(sampleVenue).filter(key => key.startsWith('$')),
+        venue_specific_data: {
+          has_coordinates: !!(sampleVenue.Latitude || sampleVenue.Latitude_Mapsly_text_singleLine),
+          has_hours: !!sampleVenue.HL_Opening_Hours_Text,
+          has_ratings: !!sampleVenue.HL_Ratings_Count,
+          has_place_id: !!sampleVenue.HL_Place_ID,
+          data_completeness: sampleVenue._data_completeness || 0
+        }
+      };
+
+      res.json({
+        success: true,
+        message: result.message,
+        data: result.data,
+        pagination: result.pagination,
+        info: result.info,
+        meta: {
+          page: page,
+          per_page: perPage,
+          timestamp: new Date().toISOString(),
+          field_analysis: fieldAnalysis
+        }
+      });
+    } else {
+      res.json(result);
+    }
+  } catch (error: any) {
+    console.error('❌ Get all fields venues error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message
+    });
+  }
+};
+

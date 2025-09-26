@@ -853,6 +853,109 @@ public async debugFieldDiscovery(): Promise<any> {
     return { success: false, error: error.message };
   }
 }
+
+/**
+ * 🆕 SPECIAL: Get venues with ALL fields (no 50-field limit) by fetching individually
+ */
+public async getVenuesAllFields(page: number = 1, perPage: number = 10): Promise<VenuesListResponse> {
+  try {
+    console.log(`📋 Fetching venues with ALL FIELDS (no limit)...`);
+
+    const validPage = Math.max(1, Math.floor(page));
+    const validPerPage = Math.min(20, Math.max(1, Math.floor(perPage))); // Smaller limit for all fields
+
+    // First get venue IDs with minimal fields
+    const venueListResponse = await this.apiRequest<{
+      data: Array<{ id: string; Account_Name: string }>;
+      info: any;
+    }>('GET', `/Accounts?fields=id,Account_Name&page=${validPage}&per_page=${validPerPage}&sort_by=Modified_Time&sort_order=desc`);
+    
+    if (!venueListResponse.data || venueListResponse.data.length === 0) {
+      return {
+        success: true,
+        message: 'No venues found',
+        data: [],
+        pagination: { page: validPage, perPage: validPerPage, hasMore: false, count: 0 }
+      };
+    }
+
+    // Get each venue individually to get ALL fields
+    console.log(`🔍 Fetching ${venueListResponse.data.length} venues with ALL available fields...`);
+    
+    const venuesWithAllFields = [];
+    for (const venueInfo of venueListResponse.data) {
+      try {
+        const fullVenueResponse = await this.apiRequest<{
+          data: any[];
+        }>('GET', `/Accounts/${venueInfo.id}`);
+        
+        if (fullVenueResponse.data && fullVenueResponse.data.length > 0) {
+          const venue = fullVenueResponse.data[0];
+          
+          // Enhance with computed data
+          venue._field_count = Object.keys(venue).length;
+          venue._custom_fields = Object.keys(venue).filter(field => 
+            field.includes('HL_') || field.includes('Wifi') || field.includes('Charging') ||
+            field.includes('Mapsly') || field.includes('Payment')
+          );
+          venue._has_location = !!(venue.Latitude || venue.Latitude_Mapsly_text_singleLine);
+          venue._data_completeness = this.calculateVenueCompleteness(venue);
+          
+          venuesWithAllFields.push(venue);
+        }
+      } catch (error: any) {
+        console.warn(`⚠️ Failed to get full data for venue ${venueInfo.id}:`, error.message);
+        // Add basic venue info as fallback
+        venuesWithAllFields.push(venueInfo);
+      }
+    }
+
+    console.log(`✅ Retrieved ${venuesWithAllFields.length} venues with ALL available fields`);
+    
+    if (venuesWithAllFields.length > 0) {
+      const fieldCount = venuesWithAllFields[0]._field_count || Object.keys(venuesWithAllFields[0]).length;
+      console.log(`📊 Each venue has ${fieldCount} total fields`);
+    }
+    
+    return {
+      success: true,
+      message: `Venues retrieved with ALL available fields (${venuesWithAllFields.length} venues)`,
+      data: venuesWithAllFields,
+      info: venueListResponse.info,
+      pagination: {
+        page: validPage,
+        perPage: validPerPage,
+        hasMore: venueListResponse.info?.more_records || false,
+        count: venuesWithAllFields.length
+      }
+    };
+  } catch (error: any) {
+    return {
+      success: false,
+      message: `Failed to fetch venues with all fields: ${error.message}`,
+      data: [],
+      pagination: { page, perPage, hasMore: false, count: 0 }
+    };
+  }
+}
+
+/**
+ * 🆕 Helper method to calculate venue data completeness
+ */
+private calculateVenueCompleteness(venue: any): number {
+  const importantFields = [
+    'Account_Name', 'Phone', 'Website', 'Billing_City', 'Billing_State',
+    'Industry', 'Description', 'Latitude', 'Longitude', 'HL_Place_ID',
+    'HL_Opening_Hours_Text', 'HL_Ratings_Count'
+  ];
+
+  const filledFields = importantFields.filter(field => {
+    const value = venue[field];
+    return value !== null && value !== undefined && value !== '';
+  });
+
+  return Math.round((filledFields.length / importantFields.length) * 100);
+}
   
 }
 

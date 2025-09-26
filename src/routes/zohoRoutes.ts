@@ -6,6 +6,7 @@ import {
   getVenueById, 
   getCachedVenues,
   createVenue,
+  getVenuesAllFields,
   updateVenue,
   deleteVenue,
   createVenuesBulk,
@@ -30,7 +31,7 @@ router.get('/venues', getVenues);                    // 🆕 Now with dynamic fi
 router.get('/venues/cached', getCachedVenues);       // 🆕 Enhanced with dynamic fields
 router.get('/venues/search', searchVenues);          // 🆕 Enhanced search with all fields
 router.get('/venues/:venueId', getVenueById);        // 🆕 Full field analysis
-
+router.get('/venues/all-fields', getVenuesAllFields); // 🆕 All fields endpoint (no 50-field limit)
 /**
  * WRITE Operations (Enhanced with field tracking)
  */
