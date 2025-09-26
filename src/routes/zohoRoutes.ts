@@ -1,5 +1,21 @@
 import express from 'express';
-import { healthCheck, getVenues, searchVenues, getVenueById, getCachedVenues } from '../controllers/zohoController';
+import { 
+  healthCheck, 
+  getVenues, 
+  searchVenues, 
+  getVenueById, 
+  getCachedVenues,
+  createVenue,
+  getVenuesAllFields,
+  updateVenue,
+  deleteVenue,
+  createVenuesBulk,
+  // 🆕 Fixed field endpoints
+  getFields,           // ✅ Fixed name
+  refreshFields,       // ✅ Fixed name
+  getFieldUsageStats,
+  debugFieldDiscovery  // ✅ Debug endpoint
+} from '../controllers/zohoController';
 import { authenticate } from '../middlewares/authMiddleware';
 
 const router = express.Router();
@@ -8,29 +24,28 @@ const router = express.Router();
 router.use(authenticate);
 
 /**
- * Health check endpoint
+ * READ Operations (Enhanced with dynamic fields)
  */
 router.get('/health', healthCheck);
+router.get('/venues', getVenues);                    // 🆕 Now with dynamic field discovery
+router.get('/venues/cached', getCachedVenues);       // 🆕 Enhanced with dynamic fields
+router.get('/venues/search', searchVenues);          // 🆕 Enhanced search with all fields
+router.get('/venues/:venueId', getVenueById);        // 🆕 Full field analysis
+router.get('/venues/all-fields', getVenuesAllFields); // 🆕 All fields endpoint (no 50-field limit)
+/**
+ * WRITE Operations (Enhanced with field tracking)
+ */
+router.post('/venues', createVenue);                 // 🆕 Tracks custom fields used
+router.post('/venues/bulk', createVenuesBulk);       // 🆕 Analyzes bulk field data
+router.put('/venues/:venueId', updateVenue);         // 🆕 Tracks field updates
+router.delete('/venues/:venueId', deleteVenue);
 
 /**
- * Get all venues with pagination (direct from Zoho)
+ * 🆕 FIXED: DYNAMIC FIELD MANAGEMENT
  */
-router.get('/venues', getVenues);
-
-/**
- * IMPORTANT: Specific routes MUST come before parameterized routes
- * Get cached venues - MUST be before /:venueId route
- */
-router.get('/venues/cached', getCachedVenues);
-
-/**
- * Search venues - MUST be before /:venueId route
- */
-router.get('/venues/search', searchVenues);
-
-/**
- * Get venue by ID - MUST be LAST (catches everything else)
- */
-router.get('/venues/:venueId', getVenueById);
+router.get('/fields', getFields);                    // ✅ Get current available fields
+router.post('/fields/refresh', refreshFields);       // ✅ Force refresh field cache
+router.get('/fields/usage', getFieldUsageStats);     // Analyze field usage patterns
+router.get('/debug/field-discovery', debugFieldDiscovery); // 🔧 Debug endpoint
 
 export default router;

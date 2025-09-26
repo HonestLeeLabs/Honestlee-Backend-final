@@ -5,9 +5,38 @@ import { ZohoVenue } from '../models/ZohoTypes';
 class VenueSyncService {
   
   /**
-   * Transform Zoho venue data to our cache format
+   * 🆕 FIXED: Transform Zoho venue data with proper type conversion
    */
   private transformZohoVenue(zohoVenue: ZohoVenue): Partial<IVenueCache> {
+    // Helper function to safely convert to number
+    const toNumber = (value: string | number | undefined): number | undefined => {
+      if (value === undefined || value === null) return undefined;
+      if (typeof value === 'number') return value;
+      if (typeof value === 'string') {
+        const parsed = parseFloat(value);
+        return isNaN(parsed) ? undefined : parsed;
+      }
+      return undefined;
+    };
+
+    // Helper function to safely convert to string
+    const toString = (value: string | number | undefined): string | undefined => {
+      if (value === undefined || value === null) return undefined;
+      return String(value);
+    };
+
+    // Helper function to safely convert to boolean
+    const toBoolean = (value: string | boolean | undefined): boolean | undefined => {
+      if (value === undefined || value === null) return undefined;
+      if (typeof value === 'boolean') return value;
+      if (typeof value === 'string') {
+        const lower = value.toLowerCase();
+        if (lower === 'true' || lower === '1' || lower === 'yes') return true;
+        if (lower === 'false' || lower === '0' || lower === 'no') return false;
+      }
+      return undefined;
+    };
+
     return {
       zoho_id: zohoVenue.id,
       account_name: zohoVenue.Account_Name,
@@ -25,12 +54,83 @@ class VenueSyncService {
         code: zohoVenue.Billing_Code,
         country: zohoVenue.Billing_Country
       },
+      shipping_address: {
+        street: zohoVenue.Shipping_Street,
+        city: zohoVenue.Shipping_City,
+        state: zohoVenue.Shipping_State,
+        code: zohoVenue.Shipping_Code,
+        country: zohoVenue.Shipping_Country
+      },
       details: {
         description: zohoVenue.Description,
         industry: zohoVenue.Industry,
-        annual_revenue: zohoVenue.Annual_Revenue,
-        rating: zohoVenue.Rating,
-        employees: zohoVenue.Employees
+        // 🆕 FIXED: Proper type conversion
+        annual_revenue: toNumber(zohoVenue.Annual_Revenue),
+        rating: toString(zohoVenue.Rating),
+        employees: toNumber(zohoVenue.Employees)
+      },
+      // 🆕 ENHANCED: Add ALL custom venue fields with proper conversion
+      custom_fields: {
+        // Venue amenities
+        ac_fan: zohoVenue.AC_Fan,
+        charging_ports: zohoVenue.Charging_Ports,
+        pub_wifi: zohoVenue.Pub_Wifi,
+        
+        // Internet connectivity
+        wifi_ssid: zohoVenue.Wifi_SSID,
+        wifi_password: zohoVenue.PW,
+        dl_speed_mbps: toNumber(zohoVenue.DL_Speed_MBPS),
+        ul_speed_mbps: toNumber(zohoVenue.UL_Speed_MBPS),
+        
+        // Location data
+        latitude: toNumber(zohoVenue.Latitude),
+        longitude: toNumber(zohoVenue.Longitude),
+        distance_from_center: toNumber(zohoVenue.HL_Distance_km_from_center),
+        place_id: zohoVenue.HL_Place_ID,
+        
+        // Venue details
+        opening_hours: zohoVenue.HL_Opening_Hours_Text || zohoVenue.Operating_Hours,
+        noise_level: zohoVenue.Noise_Level,
+        payment_options: zohoVenue.Payment_options,
+        
+        // Ratings and photos
+        price_level: toNumber(zohoVenue.HL_Price_Level),
+        ratings_count: toNumber(zohoVenue.HL_Ratings_Count),
+        photo_count: toNumber(zohoVenue.HL_Photo_Count),
+        photo_ref: zohoVenue.HL_Photo_Ref,
+        
+        // Additional fields
+        account_image: zohoVenue.Account_Image,
+        connected_to: zohoVenue.Connected_To,
+        wifi_display_method: zohoVenue.Curr_Wifi_Display_Method,
+        charging_ports_photo: zohoVenue.Photo_of_charging_ports,
+
+        // Extended amenities - with full support
+        seating_capacity: toNumber(zohoVenue.Seating_Capacity),
+        private_rooms: toBoolean(zohoVenue.Private_Rooms),
+        meeting_rooms: toBoolean(zohoVenue.Meeting_Rooms),
+        presentation_equipment: toBoolean(zohoVenue.Presentation_Equipment),
+        kitchen_access: toBoolean(zohoVenue.Kitchen_Access),
+        coffee_available: toBoolean(zohoVenue.Coffee_Available),
+        food_options: zohoVenue.Food_Options,
+        alcohol_served: toBoolean(zohoVenue.Alcohol_Served),
+        
+        // Tech amenities
+        power_outlets: toNumber(zohoVenue.Power_Outlets),
+        charging_stations: toNumber(zohoVenue.Charging_Stations),
+        computer_access: toBoolean(zohoVenue.Computer_Access),
+        printer_access: toBoolean(zohoVenue.Printer_Access),
+        projector_available: toBoolean(zohoVenue.Projector_Available),
+        audio_system: toBoolean(zohoVenue.Audio_System),
+        video_conferencing: toBoolean(zohoVenue.Video_Conferencing),
+        
+        // Accessibility
+        accessibility_features: zohoVenue.Accessibility_Features,
+        parking_available: toBoolean(zohoVenue.Parking_Available),
+        public_transport_access: zohoVenue.Public_Transport_Access,
+        floor_number: toNumber(zohoVenue.Floor_Number),
+        building_name: zohoVenue.Building_Name,
+        landmark: zohoVenue.Landmark
       },
       timestamps: {
         created_time: new Date(zohoVenue.Created_Time),
@@ -39,6 +139,41 @@ class VenueSyncService {
       },
       sync_status: 'synced',
       raw_data: zohoVenue
+    };
+  }
+
+  /**
+   * 🆕 ADDED: Helper function for field analysis (since it's not in the interface)
+   */
+  private getFieldAnalysis(venue: IVenueCache): {
+    totalFields: number;
+    customFields: number;
+    populatedFields: number;
+    completeness: number;
+    customFieldNames: string[];
+    emptyFields: string[];
+  } {
+    const rawData = venue.raw_data || {};
+    const allFields = Object.keys(rawData);
+    const customFields = allFields.filter(field => 
+      field.includes('HL_') || field.includes('Wifi') || field.includes('Payment') ||
+      field.includes('Speed_MBPS') || field.includes('AC_') || field.includes('Charging')
+    );
+    const populatedFields = allFields.filter(field => {
+      const value = rawData[field];
+      return value !== null && value !== undefined && value !== '';
+    });
+
+    return {
+      totalFields: allFields.length,
+      customFields: customFields.length,
+      populatedFields: populatedFields.length,
+      completeness: allFields.length > 0 ? Math.round((populatedFields.length / allFields.length) * 100) : 0,
+      customFieldNames: customFields,
+      emptyFields: allFields.filter(field => {
+        const value = rawData[field];
+        return value === null || value === undefined || value === '';
+      })
     };
   }
 
@@ -59,7 +194,9 @@ class VenueSyncService {
           { zoho_id: zohoId },
           { 
             sync_status: 'error',
-            'timestamps.synced_at': new Date()
+            sync_error: 'Venue not found in Zoho',
+            'timestamps.synced_at': new Date(),
+            last_sync_attempt: new Date()
           }
         );
         return null;
@@ -89,7 +226,9 @@ class VenueSyncService {
         { zoho_id: zohoId },
         { 
           sync_status: 'error',
-          'timestamps.synced_at': new Date()
+          sync_error: error.message,
+          'timestamps.synced_at': new Date(),
+          last_sync_attempt: new Date()
         }
       );
       
@@ -98,17 +237,18 @@ class VenueSyncService {
   }
 
   /**
-   * Full sync of all venues - FIXED with better pagination handling
+   * 🆕 ENHANCED: Full sync with dynamic field support
    */
-  public async syncAllVenues(): Promise<{ synced: number; errors: number }> {
+  public async syncAllVenues(): Promise<{ synced: number; errors: number; fieldsDiscovered: number }> {
     try {
-      console.log('🔄 Starting full venue sync...');
+      console.log('🔄 Starting full venue sync with dynamic field discovery...');
       
       let page = 1;
       let hasMore = true;
       let syncedCount = 0;
       let errorCount = 0;
-      const maxPages = 20; // Safety limit to prevent infinite loops
+      let fieldsDiscovered = 0;
+      const maxPages = 50; // Increased for complete sync
 
       while (hasMore && page <= maxPages) {
         console.log(`📋 Syncing page ${page}...`);
@@ -127,6 +267,12 @@ class VenueSyncService {
           break;
         }
 
+        // Track fields discovered
+        if (result.data.length > 0 && page === 1) {
+          fieldsDiscovered = Object.keys(result.data[0]).length;
+          console.log(`🔍 Discovered ${fieldsDiscovered} fields in venue records`);
+        }
+
         // Process each venue
         for (const venue of result.data) {
           try {
@@ -143,6 +289,10 @@ class VenueSyncService {
             );
             
             syncedCount++;
+            
+            if (syncedCount % 50 === 0) {
+              console.log(`📊 Progress: ${syncedCount} venues synced`);
+            }
           } catch (error: any) {
             console.error(`❌ Error syncing venue ${venue.id}:`, error.message);
             errorCount++;
@@ -159,9 +309,9 @@ class VenueSyncService {
         }
       }
 
-      console.log(`✅ Full sync completed: ${syncedCount} synced, ${errorCount} errors`);
+      console.log(`✅ Full sync completed: ${syncedCount} synced, ${errorCount} errors, ${fieldsDiscovered} fields`);
       
-      return { synced: syncedCount, errors: errorCount };
+      return { synced: syncedCount, errors: errorCount, fieldsDiscovered };
 
     } catch (error: any) {
       console.error('❌ Full sync failed:', error.message);
@@ -170,11 +320,11 @@ class VenueSyncService {
   }
 
   /**
-   * Delta sync - COMPLETELY REWRITTEN to avoid COQL
+   * 🆕 ENHANCED: Delta sync with field discovery
    */
-  public async deltaSyncVenues(): Promise<{ synced: number; errors: number }> {
+  public async deltaSyncVenues(): Promise<{ synced: number; errors: number; checkedVenues: number }> {
     try {
-      console.log('🔄 Starting delta venue sync (NO COQL)...');
+      console.log('🔄 Starting delta venue sync with dynamic fields...');
 
       // Get last successful sync time
       const lastSync = await VenueCache.findOne(
@@ -225,7 +375,7 @@ class VenueSyncService {
 
       if (recentlyModified.length === 0) {
         console.log('✅ Delta sync completed: No recent changes detected');
-        return { synced: 0, errors: 0 };
+        return { synced: 0, errors: 0, checkedVenues: allRecentVenues.length };
       }
 
       let syncedCount = 0;
@@ -256,7 +406,7 @@ class VenueSyncService {
 
       console.log(`✅ Delta sync completed: ${syncedCount} synced, ${errorCount} errors`);
       
-      return { synced: syncedCount, errors: errorCount };
+      return { synced: syncedCount, errors: errorCount, checkedVenues: allRecentVenues.length };
 
     } catch (error: any) {
       console.error('❌ Delta sync failed:', error.message);
@@ -265,7 +415,7 @@ class VenueSyncService {
   }
 
   /**
-   * Get venues from cache (fast local queries)
+   * 🆕 FIXED: Get cached venues with fixed MongoDB queries
    */
   public async getCachedVenues(options: {
     page?: number;
@@ -273,11 +423,19 @@ class VenueSyncService {
     city?: string;
     industry?: string;
     search?: string;
+    hasWifi?: boolean;
+    hasCharging?: boolean;
+    hasLocation?: boolean;
+    minRating?: number;
+    hasParking?: boolean;
+    hasFood?: boolean;
+    hasMeetingRooms?: boolean;
   } = {}): Promise<{
     venues: IVenueCache[];
     total: number;
     page: number;
     hasMore: boolean;
+    filters_applied: string[];
   }> {
     try {
       const {
@@ -285,30 +443,100 @@ class VenueSyncService {
         limit = 20,
         city,
         industry,
-        search
+        search,
+        hasWifi,
+        hasCharging,
+        hasLocation,
+        minRating,
+        hasParking,
+        hasFood,
+        hasMeetingRooms
       } = options;
 
       console.log(`🔍 Fetching cached venues - Page: ${page}, Limit: ${limit}`, {
-        city, industry, search
+        city, industry, search, hasWifi, hasCharging, hasLocation, minRating, hasParking, hasFood, hasMeetingRooms
       });
 
       // Build query
       const query: any = { sync_status: 'synced' };
+      const filtersApplied: string[] = [];
 
       if (city) {
         query['billing_address.city'] = new RegExp(city, 'i');
+        filtersApplied.push('city');
       }
 
       if (industry) {
         query['details.industry'] = new RegExp(industry, 'i');
+        filtersApplied.push('industry');
       }
 
       if (search) {
         query.$or = [
           { account_name: new RegExp(search, 'i') },
           { 'billing_address.city': new RegExp(search, 'i') },
-          { 'details.industry': new RegExp(search, 'i') }
+          { 'details.industry': new RegExp(search, 'i') },
+          { 'custom_fields.payment_options': new RegExp(search, 'i') },
+          { 'details.description': new RegExp(search, 'i') }
         ];
+        filtersApplied.push('search');
+      }
+
+      // 🆕 FIXED: Enhanced filters with proper MongoDB syntax
+      if (hasWifi !== undefined) {
+        if (hasWifi) {
+          query['custom_fields.wifi_ssid'] = { $exists: true, $nin: [null, ''] };
+        } else {
+          query['custom_fields.wifi_ssid'] = { $exists: false };
+        }
+        filtersApplied.push('wifi');
+      }
+
+      if (hasCharging !== undefined) {
+        query['custom_fields.charging_ports'] = hasCharging;
+        filtersApplied.push('charging');
+      }
+
+      if (hasLocation !== undefined) {
+        if (hasLocation) {
+          query.$and = [
+            { 'custom_fields.latitude': { $exists: true, $ne: null } },
+            { 'custom_fields.longitude': { $exists: true, $ne: null } }
+          ];
+        } else {
+          query.$or = [
+            { 'custom_fields.latitude': { $exists: false } },
+            { 'custom_fields.longitude': { $exists: false } },
+            { 'custom_fields.latitude': null },
+            { 'custom_fields.longitude': null }
+          ];
+        }
+        filtersApplied.push('location');
+      }
+
+      if (minRating !== undefined) {
+        // Handle both string and numeric ratings
+        query.$or = [
+          { 'details.rating': { $gte: minRating.toString() } },
+          { 'details.rating': { $gte: minRating } }
+        ];
+        filtersApplied.push('rating');
+      }
+
+      // 🆕 FIXED: Additional amenity filters with proper syntax
+      if (hasParking !== undefined) {
+        query['custom_fields.parking_available'] = hasParking;
+        filtersApplied.push('parking');
+      }
+
+      if (hasFood !== undefined) {
+        query['custom_fields.coffee_available'] = hasFood;
+        filtersApplied.push('food');
+      }
+
+      if (hasMeetingRooms !== undefined) {
+        query['custom_fields.meeting_rooms'] = hasMeetingRooms;
+        filtersApplied.push('meeting_rooms');
       }
 
       // Execute query with pagination
@@ -323,13 +551,14 @@ class VenueSyncService {
         VenueCache.countDocuments(query)
       ]);
 
-      console.log(`✅ Retrieved ${venues.length} cached venues out of ${total} total`);
+      console.log(`✅ Retrieved ${venues.length} cached venues out of ${total} total (filters: ${filtersApplied.join(', ')})`);
 
       return {
         venues,
         total,
         page,
-        hasMore: skip + limit < total
+        hasMore: skip + limit < total,
+        filters_applied: filtersApplied
       };
 
     } catch (error: any) {
@@ -339,7 +568,7 @@ class VenueSyncService {
   }
 
   /**
-   * Get cache statistics
+   * 🆕 FIXED: Get comprehensive cache statistics with fixed queries
    */
   public async getCacheStats(): Promise<{
     total: number;
@@ -349,6 +578,16 @@ class VenueSyncService {
     lastSync: Date | null;
     cacheHealth: 'healthy' | 'warning' | 'error';
     recommendations: string[];
+    fieldStats: {
+      venues_with_wifi: number;
+      venues_with_location: number;
+      venues_with_charging: number;
+      venues_with_parking: number;
+      venues_with_food: number;
+      venues_with_meeting_rooms: number;
+      average_completeness: number;
+      average_fields_per_venue: number;
+    };
   }> {
     try {
       const [
@@ -364,6 +603,51 @@ class VenueSyncService {
         VenueCache.countDocuments({ sync_status: 'error' }),
         VenueCache.findOne({}, {}, { sort: { 'timestamps.synced_at': -1 } })
       ]);
+
+      // 🆕 FIXED: Enhanced field statistics with proper MongoDB queries
+      const [
+        venuesWithWifi,
+        venuesWithLocation,
+        venuesWithCharging,
+        venuesWithParking,
+        venuesWithFood,
+        venuesWithMeetingRooms
+      ] = await Promise.all([
+        VenueCache.countDocuments({ 
+          sync_status: 'synced',
+          'custom_fields.wifi_ssid': { $exists: true, $nin: [null, ''] }
+        }),
+        VenueCache.countDocuments({ 
+          sync_status: 'synced',
+          'custom_fields.latitude': { $exists: true, $ne: null },
+          'custom_fields.longitude': { $exists: true, $ne: null }
+        }),
+        VenueCache.countDocuments({ 
+          sync_status: 'synced',
+          'custom_fields.charging_ports': true
+        }),
+        VenueCache.countDocuments({ 
+          sync_status: 'synced',
+          'custom_fields.parking_available': true
+        }),
+        VenueCache.countDocuments({ 
+          sync_status: 'synced',
+          'custom_fields.coffee_available': true
+        }),
+        VenueCache.countDocuments({ 
+          sync_status: 'synced',
+          'custom_fields.meeting_rooms': true
+        })
+      ]);
+
+      // Calculate average completeness
+      const completenessAgg = await VenueCache.aggregate([
+        { $match: { sync_status: 'synced', data_completeness: { $exists: true } } },
+        { $group: { _id: null, avgCompleteness: { $avg: '$data_completeness' }, avgFields: { $avg: '$field_count' } } }
+      ]);
+
+      const avgCompleteness = completenessAgg.length > 0 ? completenessAgg[0].avgCompleteness : 0;
+      const avgFields = completenessAgg.length > 0 ? completenessAgg[0].avgFields : 0;
 
       // Determine cache health
       let cacheHealth: 'healthy' | 'warning' | 'error' = 'healthy';
@@ -383,6 +667,11 @@ class VenueSyncService {
         }
       }
 
+      if (avgCompleteness < 60) {
+        cacheHealth = 'warning';
+        recommendations.push('Data completeness is low - some venues have missing information');
+      }
+
       if (recommendations.length === 0) {
         recommendations.push('Cache is healthy');
       }
@@ -394,7 +683,17 @@ class VenueSyncService {
         errors,
         lastSync: lastSyncDoc?.timestamps.synced_at || null,
         cacheHealth,
-        recommendations
+        recommendations,
+        fieldStats: {
+          venues_with_wifi: venuesWithWifi,
+          venues_with_location: venuesWithLocation,
+          venues_with_charging: venuesWithCharging,
+          venues_with_parking: venuesWithParking,
+          venues_with_food: venuesWithFood,
+          venues_with_meeting_rooms: venuesWithMeetingRooms,
+          average_completeness: Math.round(avgCompleteness || 0),
+          average_fields_per_venue: Math.round(avgFields || 0)
+        }
       };
 
     } catch (error: any) {
@@ -423,9 +722,15 @@ class VenueSyncService {
   }
 
   /**
-   * Smart sync - decides between full or delta based on cache state
+   * 🆕 ENHANCED: Smart sync with field discovery reporting
    */
-  public async smartSync(): Promise<{ synced: number; errors: number; syncType: 'full' | 'delta' }> {
+  public async smartSync(): Promise<{ 
+    synced: number; 
+    errors: number; 
+    syncType: 'full' | 'delta';
+    fieldsDiscovered?: number;
+    checkedVenues?: number;
+  }> {
     try {
       const stats = await this.getCacheStats();
       
@@ -433,7 +738,12 @@ class VenueSyncService {
       if (stats.total === 0) {
         console.log('🧠 Smart sync: Cache is empty, running full sync');
         const result = await this.syncAllVenues();
-        return { ...result, syncType: 'full' };
+        return { 
+          synced: result.synced, 
+          errors: result.errors, 
+          syncType: 'full',
+          fieldsDiscovered: result.fieldsDiscovered
+        };
       }
       
       // If last sync was more than 6 hours ago, do full sync
@@ -442,14 +752,24 @@ class VenueSyncService {
         if (hoursSinceLastSync > 6) {
           console.log('🧠 Smart sync: Last sync was over 6 hours ago, running full sync');
           const result = await this.syncAllVenues();
-          return { ...result, syncType: 'full' };
+          return { 
+            synced: result.synced, 
+            errors: result.errors, 
+            syncType: 'full',
+            fieldsDiscovered: result.fieldsDiscovered
+          };
         }
       }
       
       // Otherwise, do delta sync
       console.log('🧠 Smart sync: Running delta sync');
       const result = await this.deltaSyncVenues();
-      return { ...result, syncType: 'delta' };
+      return { 
+        synced: result.synced, 
+        errors: result.errors, 
+        syncType: 'delta',
+        checkedVenues: result.checkedVenues
+      };
       
     } catch (error: any) {
       console.error('❌ Smart sync failed:', error.message);
@@ -507,6 +827,193 @@ class VenueSyncService {
         reason: 'Error checking cache state',
         priority: 'high'
       };
+    }
+  }
+
+  /**
+   * 🆕 FIXED: Sync specific venue and return detailed field information
+   */
+  public async syncVenueWithFieldAnalysis(zohoId: string): Promise<{
+    success: boolean;
+    venue?: IVenueCache;
+    fieldAnalysis?: {
+      totalFields: number;
+      customFields: number;
+      populatedFields: number;
+      fieldCompleteness: number;
+      customFieldNames: string[];
+      emptyFields: string[];
+    };
+    error?: string;
+  }> {
+    try {
+      const venue = await this.syncVenueById(zohoId);
+      
+      if (!venue) {
+        return {
+          success: false,
+          error: 'Venue not found or sync failed'
+        };
+      }
+
+      // 🆕 FIXED: Use the private helper method instead of non-existent interface method
+      const fieldAnalysis = this.getFieldAnalysis(venue);
+
+      return {
+        success: true,
+        venue,
+        fieldAnalysis: {
+          totalFields: fieldAnalysis.totalFields,
+          customFields: fieldAnalysis.customFields,
+          populatedFields: fieldAnalysis.populatedFields,
+          fieldCompleteness: fieldAnalysis.completeness,
+          customFieldNames: fieldAnalysis.customFieldNames,
+          emptyFields: fieldAnalysis.emptyFields
+        }
+      };
+
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * 🆕 FIXED: Get venues by specific amenities with fixed queries
+   */
+  public async getVenuesByAmenities(amenities: {
+    wifi?: boolean;
+    charging?: boolean;
+    parking?: boolean;
+    food?: boolean;
+    meetingRooms?: boolean;
+    audioSystem?: boolean;
+    projector?: boolean;
+  }): Promise<{
+    venues: IVenueCache[];
+    total: number;
+    amenitiesMatched: string[];
+  }> {
+    try {
+      const query: any = { sync_status: 'synced' };
+      const amenitiesMatched: string[] = [];
+
+      if (amenities.wifi) {
+        query['custom_fields.wifi_ssid'] = { $exists: true, $nin: [null, ''] };
+        amenitiesMatched.push('wifi');
+      }
+
+      if (amenities.charging) {
+        query['custom_fields.charging_ports'] = true;
+        amenitiesMatched.push('charging');
+      }
+
+      if (amenities.parking) {
+        query['custom_fields.parking_available'] = true;
+        amenitiesMatched.push('parking');
+      }
+
+      if (amenities.food) {
+        query['custom_fields.coffee_available'] = true;
+        amenitiesMatched.push('food');
+      }
+
+      if (amenities.meetingRooms) {
+        query['custom_fields.meeting_rooms'] = true;
+        amenitiesMatched.push('meetingRooms');
+      }
+
+      if (amenities.audioSystem) {
+        query['custom_fields.audio_system'] = true;
+        amenitiesMatched.push('audioSystem');
+      }
+
+      if (amenities.projector) {
+        query['custom_fields.projector_available'] = true;
+        amenitiesMatched.push('projector');
+      }
+
+      const [venues, total] = await Promise.all([
+        VenueCache.find(query)
+          .sort({ 'timestamps.modified_time': -1 })
+          .lean(),
+        VenueCache.countDocuments(query)
+      ]);
+
+      console.log(`✅ Found ${venues.length} venues with amenities: ${amenitiesMatched.join(', ')}`);
+
+      return {
+        venues,
+        total,
+        amenitiesMatched
+      };
+
+    } catch (error: any) {
+      console.error('❌ Error getting venues by amenities:', error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * 🆕 Get venues within a specific radius from coordinates
+   */
+  public async getVenuesNearLocation(
+    latitude: number, 
+    longitude: number, 
+    radiusKm: number = 5
+  ): Promise<{
+    venues: (IVenueCache & { distance?: number })[];
+    total: number;
+    searchRadius: number;
+  }> {
+    try {
+      console.log(`📍 Finding venues within ${radiusKm}km of ${latitude}, ${longitude}`);
+
+      // Find venues with location data
+      const venues = await VenueCache.find({
+        sync_status: 'synced',
+        'custom_fields.latitude': { $exists: true, $ne: null },
+        'custom_fields.longitude': { $exists: true, $ne: null }
+      }).lean();
+
+      // Calculate distances and filter by radius
+      const nearbyVenues = venues
+        .map(venue => {
+          const venueLat = venue.custom_fields.latitude!;
+          const venueLng = venue.custom_fields.longitude!;
+          
+          // Haversine formula for distance calculation
+          const R = 6371; // Earth's radius in km
+          const dLat = (venueLat - latitude) * Math.PI / 180;
+          const dLon = (venueLng - longitude) * Math.PI / 180;
+          const a = 
+            Math.sin(dLat/2) * Math.sin(dLat/2) +
+            Math.cos(latitude * Math.PI / 180) * Math.cos(venueLat * Math.PI / 180) * 
+            Math.sin(dLon/2) * Math.sin(dLon/2);
+          const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+          const distance = R * c;
+
+          return {
+            ...venue,
+            distance: Math.round(distance * 100) / 100 // Round to 2 decimal places
+          };
+        })
+        .filter(venue => venue.distance! <= radiusKm)
+        .sort((a, b) => a.distance! - b.distance!);
+
+      console.log(`✅ Found ${nearbyVenues.length} venues within ${radiusKm}km radius`);
+
+      return {
+        venues: nearbyVenues,
+        total: nearbyVenues.length,
+        searchRadius: radiusKm
+      };
+
+    } catch (error: any) {
+      console.error('❌ Error finding venues near location:', error.message);
+      throw error;
     }
   }
 }
