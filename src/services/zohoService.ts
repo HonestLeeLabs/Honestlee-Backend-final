@@ -58,117 +58,116 @@ class ZohoService {
   }
 
   /**
- * 🆕 FIXED: Get all available fields by analyzing actual venue data
- */
-public async getAvailableFields(forceRefresh: boolean = false): Promise<string[]> {
-  try {
-    // Check cache first
-    const now = Date.now();
-    if (!forceRefresh && this.availableFields.length > 0 && (now - this.fieldsLastFetched) < this.fieldsCacheDuration) {
-      console.log(`🔄 Using cached fields (${this.availableFields.length} fields)`);
-      return this.availableFields;
-    }
-
-    console.log('🔍 Discovering fields by analyzing actual venue data...');
-
-    // 🆕 METHOD 1: Try the fields API first (if it works)
+   * 🆕 FIXED: Get all available fields by analyzing actual venue data
+   */
+  public async getAvailableFields(forceRefresh: boolean = false): Promise<string[]> {
     try {
-      const fieldsResponse = await this.apiRequest<{
-        fields: Array<{
-          api_name: string;
-          field_label: string;
-          data_type: string;
-          visible: boolean;
-          read_only: boolean;
-          custom_field: boolean;
-        }>;
-      }>('GET', '/settings/fields?module=Accounts');
-
-      if (fieldsResponse.fields && fieldsResponse.fields.length > 15) {
-        console.log(`✅ Fields API returned ${fieldsResponse.fields.length} fields`);
-        const apiFields = fieldsResponse.fields
-          .map(field => field.api_name)
-          .sort();
-        
-        this.availableFields = apiFields;
-        this.fieldsLastFetched = now;
-        return apiFields;
-      } else {
-        console.log('⚠️ Fields API returned limited data, falling back to data analysis...');
+      // Check cache first
+      const now = Date.now();
+      if (!forceRefresh && this.availableFields.length > 0 && (now - this.fieldsLastFetched) < this.fieldsCacheDuration) {
+        console.log(`🔄 Using cached fields (${this.availableFields.length} fields)`);
+        return this.availableFields;
       }
-    } catch (error) {
-      console.log('⚠️ Fields API failed, falling back to data analysis...');
+
+      console.log('🔍 Discovering fields by analyzing actual venue data...');
+
+      // 🆕 METHOD 1: Try the fields API first (if it works)
+      try {
+        const fieldsResponse = await this.apiRequest<{
+          fields: Array<{
+            api_name: string;
+            field_label: string;
+            data_type: string;
+            visible: boolean;
+            read_only: boolean;
+            custom_field: boolean;
+          }>;
+        }>('GET', '/settings/fields?module=Accounts');
+
+        if (fieldsResponse.fields && fieldsResponse.fields.length > 15) {
+          console.log(`✅ Fields API returned ${fieldsResponse.fields.length} fields`);
+          const apiFields = fieldsResponse.fields
+            .map(field => field.api_name)
+            .sort();
+          
+          this.availableFields = apiFields;
+          this.fieldsLastFetched = now;
+          return apiFields;
+        } else {
+          console.log('⚠️ Fields API returned limited data, falling back to data analysis...');
+        }
+      } catch (error) {
+        console.log('⚠️ Fields API failed, falling back to data analysis...');
+      }
+
+      // 🆕 METHOD 2: Use a single venue to discover ALL available fields
+      console.log('🔍 Fetching single venue to discover all available fields...');
+      
+      // First, get a list of venues with minimal fields to get IDs
+      const venueListResponse = await this.apiRequest<{
+        data: Array<{ id: string; Account_Name: string }>;
+        info: any;
+      }>('GET', `/Accounts?fields=id,Account_Name&per_page=5`);
+      
+      if (!venueListResponse.data || venueListResponse.data.length === 0) {
+        console.log('⚠️ No venues found for field analysis, using fallback');
+        throw new Error('No venues available for field discovery');
+      }
+
+      // Get the first venue ID
+      const sampleVenueId = venueListResponse.data[0].id;
+      console.log(`🔍 Using venue ${sampleVenueId} for complete field discovery...`);
+
+      // 🆕 FIXED: Get single venue WITHOUT fields parameter (gets ALL fields)
+      const singleVenueResponse = await this.apiRequest<{
+        data: any[];
+        info: any;
+      }>('GET', `/Accounts/${sampleVenueId}`);
+      
+      if (singleVenueResponse.data && singleVenueResponse.data.length > 0) {
+        const sampleVenue = singleVenueResponse.data[0];
+        const discoveredFields = Object.keys(sampleVenue).sort();
+        
+        console.log(`✅ Field discovery complete: Found ${discoveredFields.length} total fields from single venue`);
+        console.log(`🔍 Sample discovered fields:`, discoveredFields.slice(0, 20));
+        
+        // Cache the results
+        this.availableFields = discoveredFields;
+        this.fieldsLastFetched = now;
+        
+        return discoveredFields;
+      } else {
+        throw new Error('Failed to get venue data for field discovery');
+      }
+
+    } catch (error: any) {
+      console.error('❌ Error in field discovery:', error);
+      
+      // 🆕 ENHANCED FALLBACK: Use your exact known field list
+      const knownFields = [
+        // System fields
+        'id', 'Owner', 'Created_Time', 'Modified_Time', 'Created_By', 'Modified_By',
+        
+        // Standard fields  
+        'Account_Name', 'Account_Number', 'Account_Type', 'Phone', 'Website', 'Industry',
+        'Description', 'Rating', 'Employees', 'Annual_Revenue', 'Fax',
+        
+        // Address fields
+        'Billing_Street', 'Billing_City', 'Billing_State', 'Billing_Code', 'Billing_Country',
+        'Shipping_Street', 'Shipping_City', 'Shipping_State', 'Shipping_Code', 'Shipping_Country',
+        
+        // 🆕 Your exact custom fields (the ones you listed)
+        'HL_Price_Level', 'PW', 'Latitude', 'HL_Photo_Ref', 'HL_Photo_Count', 'Noise_Level',
+        'HL_Place_ID', 'Charging_Ports', 'Wifi_SSID', 'Pub_Wifi', 'HL_Ratings_Count',
+        'HL_Opening_Hours_Text', 'Longitude', 'HL_Distance_km_from_center', 'Curr_Wifi_Display_Method'
+      ];
+      
+      console.log(`🔄 Using enhanced fallback with ${knownFields.length} known fields`);
+      this.availableFields = knownFields;
+      this.fieldsLastFetched = Date.now();
+      return knownFields;
     }
-
-    // 🆕 METHOD 2: Use a single venue to discover ALL available fields
-    console.log('🔍 Fetching single venue to discover all available fields...');
-    
-    // First, get a list of venues with minimal fields to get IDs
-    const venueListResponse = await this.apiRequest<{
-      data: Array<{ id: string; Account_Name: string }>;
-      info: any;
-    }>('GET', `/Accounts?fields=id,Account_Name&per_page=5`);
-    
-    if (!venueListResponse.data || venueListResponse.data.length === 0) {
-      console.log('⚠️ No venues found for field analysis, using fallback');
-      throw new Error('No venues available for field discovery');
-    }
-
-    // Get the first venue ID
-    const sampleVenueId = venueListResponse.data[0].id;
-    console.log(`🔍 Using venue ${sampleVenueId} for complete field discovery...`);
-
-    // 🆕 FIXED: Get single venue WITHOUT fields parameter (gets ALL fields)
-    const singleVenueResponse = await this.apiRequest<{
-      data: any[];
-      info: any;
-    }>('GET', `/Accounts/${sampleVenueId}`);
-    
-    if (singleVenueResponse.data && singleVenueResponse.data.length > 0) {
-      const sampleVenue = singleVenueResponse.data[0];
-      const discoveredFields = Object.keys(sampleVenue).sort();
-      
-      console.log(`✅ Field discovery complete: Found ${discoveredFields.length} total fields from single venue`);
-      console.log(`🔍 Sample discovered fields:`, discoveredFields.slice(0, 20));
-      
-      // Cache the results
-      this.availableFields = discoveredFields;
-      this.fieldsLastFetched = now;
-      
-      return discoveredFields;
-    } else {
-      throw new Error('Failed to get venue data for field discovery');
-    }
-
-  } catch (error: any) {
-    console.error('❌ Error in field discovery:', error);
-    
-    // 🆕 ENHANCED FALLBACK: Use your exact known field list
-    const knownFields = [
-      // System fields
-      'id', 'Owner', 'Created_Time', 'Modified_Time', 'Created_By', 'Modified_By',
-      
-      // Standard fields  
-      'Account_Name', 'Account_Number', 'Account_Type', 'Phone', 'Website', 'Industry',
-      'Description', 'Rating', 'Employees', 'Annual_Revenue', 'Fax',
-      
-      // Address fields
-      'Billing_Street', 'Billing_City', 'Billing_State', 'Billing_Code', 'Billing_Country',
-      'Shipping_Street', 'Shipping_City', 'Shipping_State', 'Shipping_Code', 'Shipping_Country',
-      
-      // 🆕 Your exact custom fields (the ones you listed)
-      'HL_Price_Level', 'PW', 'Latitude', 'HL_Photo_Ref', 'HL_Photo_Count', 'Noise_Level',
-      'HL_Place_ID', 'Charging_Ports', 'Wifi_SSID', 'Pub_Wifi', 'HL_Ratings_Count',
-      'HL_Opening_Hours_Text', 'Longitude', 'HL_Distance_km_from_center', 'Curr_Wifi_Display_Method'
-    ];
-    
-    console.log(`🔄 Using enhanced fallback with ${knownFields.length} known fields`);
-    this.availableFields = knownFields;
-    this.fieldsLastFetched = Date.now();
-    return knownFields;
   }
-}
-
 
   /**
    * 🆕 SMART: Get optimized field list (respects 50-field limit with priority)
@@ -230,43 +229,61 @@ public async getAvailableFields(forceRefresh: boolean = false): Promise<string[]
     }
   }
 
-/**
- * 🆕 ADMIN: Force refresh field cache
- */
-public async refreshFieldCache(): Promise<{
-  success: boolean;
-  message: string;
-  fields_discovered: number;
-  fields_list: string[];
-}> {
-  try {
-    console.log('🔄 Force refreshing field cache...');
-    
-    // Force clear the cache first
-    this.availableFields = [];
-    this.fieldsLastFetched = 0;
-    
-    // Now get fresh fields with force refresh
-    const fields = await this.getAvailableFields(true);
-    
-    console.log(`✅ Field cache refreshed: ${fields.length} fields discovered`);
-    
-    return {
-      success: true,
-      message: 'Field cache refreshed successfully',
-      fields_discovered: fields.length,
-      fields_list: fields
-    };
-  } catch (error: any) {
-    console.error('❌ Error refreshing field cache:', error);
-    return {
-      success: false,
-      message: `Failed to refresh field cache: ${error.message}`,
-      fields_discovered: 0,
-      fields_list: []
-    };
+  /**
+   * 🆕 ADMIN: Force refresh field cache
+   */
+  public async refreshFieldCache(): Promise<{
+    success: boolean;
+    message: string;
+    fields_discovered: number;
+    fields_list: string[];
+  }> {
+    try {
+      console.log('🔄 Force refreshing field cache...');
+      
+      // Force clear the cache first
+      this.availableFields = [];
+      this.fieldsLastFetched = 0;
+      
+      // Now get fresh fields with force refresh
+      const fields = await this.getAvailableFields(true);
+      
+      console.log(`✅ Field cache refreshed: ${fields.length} fields discovered`);
+      
+      return {
+        success: true,
+        message: 'Field cache refreshed successfully',
+        fields_discovered: fields.length,
+        fields_list: fields
+      };
+    } catch (error: any) {
+      console.error('❌ Error refreshing field cache:', error);
+      return {
+        success: false,
+        message: `Failed to refresh field cache: ${error.message}`,
+        fields_discovered: 0,
+        fields_list: []
+      };
+    }
   }
-}
+
+  /**
+   * 🆕 Helper method to calculate venue data completeness
+   */
+  private calculateVenueCompleteness(venue: any): number {
+    const importantFields = [
+      'Account_Name', 'Phone', 'Website', 'Billing_City', 'Billing_State',
+      'Industry', 'Description', 'Latitude', 'Longitude', 'HL_Place_ID',
+      'HL_Opening_Hours_Text', 'HL_Ratings_Count'
+    ];
+
+    const filledFields = importantFields.filter(field => {
+      const value = venue[field];
+      return value !== null && value !== undefined && value !== '';
+    });
+
+    return Math.round((filledFields.length / importantFields.length) * 100);
+  }
 
   /**
    * Get fresh access token with proper concurrency control
@@ -475,6 +492,89 @@ public async refreshFieldCache(): Promise<{
       return {
         success: false,
         message: `Failed to fetch venues: ${error.message}`,
+        data: [],
+        pagination: { page, perPage, hasMore: false, count: 0 }
+      };
+    }
+  }
+
+  /**
+   * 🆕 SPECIAL: Get venues with ALL fields (no 50-field limit) by fetching individually
+   */
+  public async getVenuesAllFields(page: number = 1, perPage: number = 10): Promise<VenuesListResponse> {
+    try {
+      console.log(`📋 Fetching venues with ALL FIELDS (no limit)...`);
+
+      const validPage = Math.max(1, Math.floor(page));
+      const validPerPage = Math.min(20, Math.max(1, Math.floor(perPage))); // Smaller limit for all fields
+
+      // First get venue IDs with minimal fields
+      const venueListResponse = await this.apiRequest<{
+        data: Array<{ id: string; Account_Name: string }>;
+        info: any;
+      }>('GET', `/Accounts?fields=id,Account_Name&page=${validPage}&per_page=${validPerPage}&sort_by=Modified_Time&sort_order=desc`);
+      
+      if (!venueListResponse.data || venueListResponse.data.length === 0) {
+        return {
+          success: true,
+          message: 'No venues found',
+          data: [],
+          pagination: { page: validPage, perPage: validPerPage, hasMore: false, count: 0 }
+        };
+      }
+
+      // Get each venue individually to get ALL fields
+      console.log(`🔍 Fetching ${venueListResponse.data.length} venues with ALL available fields...`);
+      
+      const venuesWithAllFields = [];
+      for (const venueInfo of venueListResponse.data) {
+        try {
+          const fullVenueResponse = await this.apiRequest<{
+            data: any[];
+          }>('GET', `/Accounts/${venueInfo.id}`);
+          
+          if (fullVenueResponse.data && fullVenueResponse.data.length > 0) {
+            const venue = fullVenueResponse.data[0];
+            
+            // Enhance with computed data
+            venue._field_count = Object.keys(venue).length;
+            venue._custom_fields = Object.keys(venue).filter(field => 
+              field.includes('HL_') || field.includes('Wifi') || field.includes('Charging') ||
+              field.includes('Mapsly') || field.includes('Payment')
+            );
+            venue._has_location = !!(venue.Latitude || venue.Latitude_Mapsly_text_singleLine);
+            venue._data_completeness = this.calculateVenueCompleteness(venue);
+            
+            venuesWithAllFields.push(venue);
+          }
+        } catch (error: any) {
+          console.warn(`⚠️ Failed to get full data for venue ${venueInfo.id}:`, error.message);
+        }
+      }
+
+      console.log(`✅ Retrieved ${venuesWithAllFields.length} venues with ALL available fields`);
+      
+      if (venuesWithAllFields.length > 0) {
+        const fieldCount = venuesWithAllFields[0]._field_count || Object.keys(venuesWithAllFields[0]).length;
+        console.log(`📊 Each venue has ${fieldCount} total fields`);
+      }
+      
+      return {
+        success: true,
+        message: `Venues retrieved with ALL available fields (${venuesWithAllFields.length} venues)`,
+        data: venuesWithAllFields,
+        info: venueListResponse.info,
+        pagination: {
+          page: validPage,
+          perPage: validPerPage,
+          hasMore: venueListResponse.info?.more_records || false,
+          count: venuesWithAllFields.length
+        }
+      };
+    } catch (error: any) {
+      return {
+        success: false,
+        message: `Failed to fetch venues with all fields: ${error.message}`,
         data: [],
         pagination: { page, perPage, hasMore: false, count: 0 }
       };
@@ -816,147 +916,43 @@ public async refreshFieldCache(): Promise<{
   }
 
   /**
- * 🔧 DEBUG: Test field discovery directly
- */
-public async debugFieldDiscovery(): Promise<any> {
-  try {
-    console.log('🔧 DEBUG: Testing field discovery...');
-    
-    // Test direct API call
-    const response = await this.apiRequest<{
-      data: any[];
-      info: any;
-    }>('GET', `/Accounts?page=1&per_page=5`);
-    
-    if (response.data && response.data.length > 0) {
-      const sampleVenue = response.data[0];
-      const fields = Object.keys(sampleVenue);
+   * 🔧 DEBUG: Test field discovery directly
+   */
+  public async debugFieldDiscovery(): Promise<any> {
+    try {
+      console.log('🔧 DEBUG: Testing field discovery...');
       
-      console.log('✅ DEBUG: Sample venue fields found:', fields);
+      // Test direct API call
+      const response = await this.apiRequest<{
+        data: any[];
+        info: any;
+      }>('GET', `/Accounts?fields=id,Account_Name&per_page=5`);
       
-      return {
-        success: true,
-        sample_venue_id: sampleVenue.id,
-        fields_found: fields,
-        total_fields: fields.length,
-        custom_fields: fields.filter(f => 
-          f.includes('HL_') || f.includes('Wifi') || f.includes('Charging')
-        ),
-        sample_venue_data: sampleVenue
-      };
-    }
-    
-    return { success: false, message: 'No venues found' };
-    
-  } catch (error: any) {
-    console.error('❌ DEBUG: Field discovery test failed:', error);
-    return { success: false, error: error.message };
-  }
-}
-
-/**
- * 🆕 SPECIAL: Get venues with ALL fields (no 50-field limit) by fetching individually
- */
-public async getVenuesAllFields(page: number = 1, perPage: number = 10): Promise<VenuesListResponse> {
-  try {
-    console.log(`📋 Fetching venues with ALL FIELDS (no limit)...`);
-
-    const validPage = Math.max(1, Math.floor(page));
-    const validPerPage = Math.min(20, Math.max(1, Math.floor(perPage))); // Smaller limit for all fields
-
-    // First get venue IDs with minimal fields
-    const venueListResponse = await this.apiRequest<{
-      data: Array<{ id: string; Account_Name: string }>;
-      info: any;
-    }>('GET', `/Accounts?fields=id,Account_Name&page=${validPage}&per_page=${validPerPage}&sort_by=Modified_Time&sort_order=desc`);
-    
-    if (!venueListResponse.data || venueListResponse.data.length === 0) {
-      return {
-        success: true,
-        message: 'No venues found',
-        data: [],
-        pagination: { page: validPage, perPage: validPerPage, hasMore: false, count: 0 }
-      };
-    }
-
-    // Get each venue individually to get ALL fields
-    console.log(`🔍 Fetching ${venueListResponse.data.length} venues with ALL available fields...`);
-    
-    const venuesWithAllFields = [];
-    for (const venueInfo of venueListResponse.data) {
-      try {
-        const fullVenueResponse = await this.apiRequest<{
-          data: any[];
-        }>('GET', `/Accounts/${venueInfo.id}`);
+      if (response.data && response.data.length > 0) {
+        const sampleVenue = response.data[0];
+        const fields = Object.keys(sampleVenue);
         
-        if (fullVenueResponse.data && fullVenueResponse.data.length > 0) {
-          const venue = fullVenueResponse.data[0];
-          
-          // Enhance with computed data
-          venue._field_count = Object.keys(venue).length;
-          venue._custom_fields = Object.keys(venue).filter(field => 
-            field.includes('HL_') || field.includes('Wifi') || field.includes('Charging') ||
-            field.includes('Mapsly') || field.includes('Payment')
-          );
-          venue._has_location = !!(venue.Latitude || venue.Latitude_Mapsly_text_singleLine);
-          venue._data_completeness = this.calculateVenueCompleteness(venue);
-          
-          venuesWithAllFields.push(venue);
-        }
-      } catch (error: any) {
-        console.warn(`⚠️ Failed to get full data for venue ${venueInfo.id}:`, error.message);
-        // Add basic venue info as fallback
-        venuesWithAllFields.push(venueInfo);
+        console.log('✅ DEBUG: Sample venue fields found:', fields);
+        
+        return {
+          success: true,
+          sample_venue_id: sampleVenue.id,
+          fields_found: fields,
+          total_fields: fields.length,
+          custom_fields: fields.filter(f => 
+            f.includes('HL_') || f.includes('Wifi') || f.includes('Charging')
+          ),
+          sample_venue_data: sampleVenue
+        };
       }
+      
+      return { success: false, message: 'No venues found' };
+      
+    } catch (error: any) {
+      console.error('❌ DEBUG: Field discovery test failed:', error);
+      return { success: false, error: error.message };
     }
-
-    console.log(`✅ Retrieved ${venuesWithAllFields.length} venues with ALL available fields`);
-    
-    if (venuesWithAllFields.length > 0) {
-      const fieldCount = venuesWithAllFields[0]._field_count || Object.keys(venuesWithAllFields[0]).length;
-      console.log(`📊 Each venue has ${fieldCount} total fields`);
-    }
-    
-    return {
-      success: true,
-      message: `Venues retrieved with ALL available fields (${venuesWithAllFields.length} venues)`,
-      data: venuesWithAllFields,
-      info: venueListResponse.info,
-      pagination: {
-        page: validPage,
-        perPage: validPerPage,
-        hasMore: venueListResponse.info?.more_records || false,
-        count: venuesWithAllFields.length
-      }
-    };
-  } catch (error: any) {
-    return {
-      success: false,
-      message: `Failed to fetch venues with all fields: ${error.message}`,
-      data: [],
-      pagination: { page, perPage, hasMore: false, count: 0 }
-    };
   }
-}
-
-/**
- * 🆕 Helper method to calculate venue data completeness
- */
-private calculateVenueCompleteness(venue: any): number {
-  const importantFields = [
-    'Account_Name', 'Phone', 'Website', 'Billing_City', 'Billing_State',
-    'Industry', 'Description', 'Latitude', 'Longitude', 'HL_Place_ID',
-    'HL_Opening_Hours_Text', 'HL_Ratings_Count'
-  ];
-
-  const filledFields = importantFields.filter(field => {
-    const value = venue[field];
-    return value !== null && value !== undefined && value !== '';
-  });
-
-  return Math.round((filledFields.length / importantFields.length) * 100);
-}
-  
 }
 
 export default new ZohoService();
