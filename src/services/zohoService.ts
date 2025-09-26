@@ -32,7 +32,7 @@ class ZohoService {
     this.clientSecret = process.env.ZOHO_CLIENT_SECRET || '';
     this.refreshToken = process.env.ZOHO_REFRESH_TOKEN || '';
     this.dc = process.env.ZOHO_DC || 'in';
-    this.baseURL = `https://www.zohoapis.${this.dc}/crm/v4`;
+    this.baseURL = `https://www.zohoapis.${this.dc}/crm/v8`;
     this.authURL = `https://accounts.zoho.${this.dc}/oauth/v2/token`;
     this.debug = true;
 
