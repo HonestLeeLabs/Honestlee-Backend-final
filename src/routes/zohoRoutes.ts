@@ -1,5 +1,15 @@
 import express from 'express';
-import { healthCheck, getVenues, searchVenues, getVenueById, getCachedVenues } from '../controllers/zohoController';
+import { 
+  healthCheck, 
+  getVenues, 
+  searchVenues, 
+  getVenueById, 
+  getCachedVenues,
+  createVenue,
+  updateVenue,
+  deleteVenue,
+  createVenuesBulk
+} from '../controllers/zohoController';
 import { authenticate } from '../middlewares/authMiddleware';
 
 const router = express.Router();
@@ -8,29 +18,28 @@ const router = express.Router();
 router.use(authenticate);
 
 /**
- * Health check endpoint
+ * READ Operations
  */
 router.get('/health', healthCheck);
-
-/**
- * Get all venues with pagination (direct from Zoho)
- */
 router.get('/venues', getVenues);
-
-/**
- * IMPORTANT: Specific routes MUST come before parameterized routes
- * Get cached venues - MUST be before /:venueId route
- */
 router.get('/venues/cached', getCachedVenues);
-
-/**
- * Search venues - MUST be before /:venueId route
- */
 router.get('/venues/search', searchVenues);
+router.get('/venues/:venueId', getVenueById);
 
 /**
- * Get venue by ID - MUST be LAST (catches everything else)
+ * WRITE Operations (NEW - Bidirectional functionality)
  */
-router.get('/venues/:venueId', getVenueById);
+
+// CREATE: Add new venue
+router.post('/venues', createVenue);
+
+// CREATE: Bulk add venues
+router.post('/venues/bulk', createVenuesBulk);
+
+// UPDATE: Modify existing venue
+router.put('/venues/:venueId', updateVenue);
+
+// DELETE: Remove venue
+router.delete('/venues/:venueId', deleteVenue);
 
 export default router;
