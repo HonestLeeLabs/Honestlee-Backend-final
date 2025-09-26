@@ -6,15 +6,14 @@ import {
   getVenueById, 
   getCachedVenues,
   createVenue,
-  getVenuesAllFields,
   updateVenue,
   deleteVenue,
   createVenuesBulk,
-  // 🆕 Fixed field endpoints
-  getFields,           // ✅ Fixed name
-  refreshFields,       // ✅ Fixed name
+  getVenuesAllFields,
+  getFields,
+  refreshFields,
   getFieldUsageStats,
-  debugFieldDiscovery  // ✅ Debug endpoint
+  debugFieldDiscovery
 } from '../controllers/zohoController';
 import { authenticate } from '../middlewares/authMiddleware';
 
@@ -27,25 +26,26 @@ router.use(authenticate);
  * READ Operations (Enhanced with dynamic fields)
  */
 router.get('/health', healthCheck);
-router.get('/venues', getVenues);                    // 🆕 Now with dynamic field discovery
-router.get('/venues/cached', getCachedVenues);       // 🆕 Enhanced with dynamic fields
-router.get('/venues/search', searchVenues);          // 🆕 Enhanced search with all fields
-router.get('/venues/:venueId', getVenueById);        // 🆕 Full field analysis
-router.get('/venues/all-fields', getVenuesAllFields); // 🆕 All fields endpoint (no 50-field limit)
+router.get('/venues', getVenues);                        // 🆕 Dynamic field discovery
+router.get('/venues/cached', getCachedVenues);           // 🆕 Enhanced with dynamic fields
+router.get('/venues/all-fields', getVenuesAllFields);    // 🆕 ALL fields endpoint (SINGLE DEFINITION)
+router.get('/venues/search', searchVenues);              // 🆕 Enhanced search
+router.get('/venues/:venueId', getVenueById);            // 🆕 Full field analysis
+
 /**
  * WRITE Operations (Enhanced with field tracking)
  */
-router.post('/venues', createVenue);                 // 🆕 Tracks custom fields used
-router.post('/venues/bulk', createVenuesBulk);       // 🆕 Analyzes bulk field data
-router.put('/venues/:venueId', updateVenue);         // 🆕 Tracks field updates
+router.post('/venues', createVenue);                     // 🆕 Tracks custom fields used
+router.post('/venues/bulk', createVenuesBulk);           // 🆕 Analyzes bulk field data
+router.put('/venues/:venueId', updateVenue);             // 🆕 Tracks field updates
 router.delete('/venues/:venueId', deleteVenue);
 
 /**
- * 🆕 FIXED: DYNAMIC FIELD MANAGEMENT
+ * 🆕 DYNAMIC FIELD MANAGEMENT
  */
-router.get('/fields', getFields);                    // ✅ Get current available fields
-router.post('/fields/refresh', refreshFields);       // ✅ Force refresh field cache
-router.get('/fields/usage', getFieldUsageStats);     // Analyze field usage patterns
+router.get('/fields', getFields);                        // ✅ Get current available fields
+router.post('/fields/refresh', refreshFields);           // ✅ Force refresh field cache
+router.get('/fields/usage', getFieldUsageStats);         // Analyze field usage patterns
 router.get('/debug/field-discovery', debugFieldDiscovery); // 🔧 Debug endpoint
 
 export default router;
