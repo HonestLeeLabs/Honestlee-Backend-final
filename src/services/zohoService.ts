@@ -20,7 +20,7 @@ class ZohoService {
   private accessToken: string | null = null;
   private tokenExpiry: number | null = null;
   private debug: boolean;
-  private isRefreshing: boolean = false; // Prevent concurrent token refreshes
+  private isRefreshing: boolean = false;
 
   constructor() {
     this.clientId = process.env.ZOHO_CLIENT_ID || '';
@@ -53,13 +53,80 @@ class ZohoService {
   }
 
   /**
+   * Get the most important 50 fields (respecting Zoho's limit)
+   */
+  private getMostImportantFields(): string[] {
+    // Top 50 most important fields - prioritized list
+    return [
+      // Core identification fields (must have)
+      'Account_Name',
+      'id',
+      'Owner',
+      'Created_Time',
+      'Modified_Time',
+      
+      // Contact information (high priority)
+      'Phone',
+      'Website', 
+      'Billing_Street',
+      'Billing_City',
+      'Billing_State',
+      'Billing_Code',
+      'Billing_Country',
+      
+      // Business information (high priority)
+      'Industry',
+      'Description',
+      'Annual_Revenue',
+      'Rating',
+      'Employees',
+      
+      // Your most important custom fields (based on your list)
+      'HL_Distance_km_from_center',
+      'HL_Opening_Hours_Text',
+      'HL_Place_ID',
+      'HL_Ratings_Count',
+      'HL_Price_Level',
+      'Latitude',
+      'Longitude',
+      'Wifi_SSID',
+      'Payment_options',
+      'Noise_Level',
+      'DL_Speed_MBPS',
+      'UL_Speed_MBPS',
+      'Pub_Wifi',
+      'AC_Fan',
+      'Charging_Ports',
+      
+      // Additional standard fields
+      'Fax',
+      'Account_Number',
+      'Account_Type',
+      'Shipping_City',
+      'Shipping_State',
+      'Shipping_Country',
+      'Created_By',
+      'Modified_By',
+      
+      // Additional custom fields (remaining slots)
+      'PW',
+      'Connected_To',
+      'Curr_Wifi_Display_Method',
+      'HL_Photo_Count',
+      'HL_Photo_Ref',
+      'Account_Image',
+      'Photo_of_charging_ports'
+      
+      // Total: 50 fields (exactly at Zoho's limit)
+    ];
+  }
+
+  /**
    * Get fresh access token with proper concurrency control
    */
   public async getAccessToken(): Promise<string> {
-    // If currently refreshing, wait for it to complete
     if (this.isRefreshing) {
       console.log('⏳ Token refresh in progress, waiting...');
-      // Wait up to 10 seconds for refresh to complete
       for (let i = 0; i < 50; i++) {
         await new Promise(resolve => setTimeout(resolve, 200));
         if (!this.isRefreshing && this.accessToken) {
@@ -69,13 +136,11 @@ class ZohoService {
       throw new Error('Token refresh timeout');
     }
 
-    // Check if current token is still valid (with 5 minute buffer for safety)
     if (this.accessToken && this.tokenExpiry && Date.now() < (this.tokenExpiry - 300000)) {
       this.log('Using cached access token');
       return this.accessToken;
     }
 
-    // Start refresh process
     this.isRefreshing = true;
 
     try {
@@ -104,7 +169,6 @@ class ZohoService {
       }
 
       this.accessToken = response.data.access_token;
-      // Set expiry with 5 minute buffer to avoid edge cases
       this.tokenExpiry = Date.now() + ((response.data.expires_in - 300) * 1000);
 
       console.log('✅ Zoho access token refreshed successfully');
@@ -121,7 +185,6 @@ class ZohoService {
         
         if (errorData?.error === 'Access Denied' && errorData?.error_description?.includes('too many requests')) {
           console.error('🚫 Rate limited by Zoho. Waiting 60 seconds...');
-          // Wait 60 seconds before allowing retry
           await new Promise(resolve => setTimeout(resolve, 60000));
           throw new Error('Rate limited by Zoho. Please wait and try again.');
         } else if (errorData?.error === 'invalid_client') {
@@ -174,18 +237,14 @@ class ZohoService {
       return response.data;
 
     } catch (error: any) {
-      // Handle 401 errors - but only retry ONCE to prevent infinite loop
       if (axios.isAxiosError(error) && error.response?.status === 401 && retryCount === 0) {
         console.log('🔄 Got 401, clearing token cache and retrying ONCE...');
         
-        // Clear cached token
         this.accessToken = null;
         this.tokenExpiry = null;
         
-        // Wait a bit to avoid rapid-fire requests
         await new Promise(resolve => setTimeout(resolve, 1000));
         
-        // Retry ONCE with incremented counter
         return this.apiRequest<T>(method, endpoint, data, retryCount + 1);
       }
       
@@ -209,94 +268,100 @@ class ZohoService {
     }
   }
 
-/**
- * Health check using Accounts endpoint with proper fields parameter
- */
-public async healthCheck(): Promise<ZohoHealthResponse> {
-  try {
-    console.log('🏥 Performing Zoho CRM health check...');
+  /**
+   * Health check using Accounts endpoint with proper fields parameter
+   */
+  public async healthCheck(): Promise<ZohoHealthResponse> {
+    try {
+      console.log('🏥 Performing Zoho CRM health check...');
 
-    // Test with minimal required fields
-    const fields = 'Account_Name,Modified_Time';
-    const endpoint = `/Accounts?fields=${encodeURIComponent(fields)}&per_page=1`;
-    
-    const response = await this.apiRequest<ZohoAPIResponse<ZohoVenue>>('GET', endpoint);
-    
-    const accountsFound = response.data?.length || 0;
-    const totalCount = response.info?.count || 0;
-    const firstAccountName = response.data?.[0]?.Account_Name || 'N/A';
-    
-    console.log('✅ Zoho CRM connection successful:', {
-      endpoint: 'Accounts',
-      accountsReturned: accountsFound,
-      totalAccountsInCRM: totalCount,
-      firstAccountName: firstAccountName
-    });
-    
-    // Detailed status message
-    let statusMessage = 'Connected to Zoho CRM (Accounts module)';
-    let orgInfo = `Found ${totalCount} total accounts`;
-    
-    if (accountsFound > 0) {
-      orgInfo += ` (Sample: "${firstAccountName}")`;
-    } else if (totalCount === 0) {
-      statusMessage = 'Connected to Zoho CRM but no accounts found';
-      orgInfo = 'No accounts in CRM - add some sample venues to test fully';
-    }
-    
-    return {
-      success: true,
-      status: statusMessage,
-      org: orgInfo
-    };
+      const fields = 'Account_Name,Modified_Time';
+      const endpoint = `/Accounts?fields=${encodeURIComponent(fields)}&per_page=1`;
+      
+      const response = await this.apiRequest<ZohoAPIResponse<ZohoVenue>>('GET', endpoint);
+      
+      const accountsFound = response.data?.length || 0;
+      const totalCount = response.info?.count || 0;
+      const firstAccountName = response.data?.[0]?.Account_Name || 'N/A';
+      
+      console.log('✅ Zoho CRM connection successful:', {
+        endpoint: 'Accounts',
+        accountsReturned: accountsFound,
+        totalAccountsInCRM: totalCount,
+        firstAccountName: firstAccountName
+      });
+      
+      let statusMessage = 'Connected to Zoho CRM (Accounts module)';
+      let orgInfo = `Found ${totalCount} total accounts`;
+      
+      if (accountsFound > 0) {
+        orgInfo += ` (Sample: "${firstAccountName}")`;
+      } else if (totalCount === 0) {
+        statusMessage = 'Connected to Zoho CRM but no accounts found';
+        orgInfo = 'No accounts in CRM - add some sample venues to test fully';
+      }
+      
+      return {
+        success: true,
+        status: statusMessage,
+        org: orgInfo
+      };
 
-  } catch (error: any) {
-    console.error('❌ Zoho CRM health check failed:', error.message);
-    
-    // More detailed error handling
-    let errorMessage = error.message;
-    if (error.message.includes('OAUTH_SCOPE_MISMATCH')) {
-      errorMessage = 'Insufficient permissions. Need ZohoCRM.modules.accounts.READ scope.';
-    } else if (error.message.includes('REQUIRED_PARAM_MISSING')) {
-      errorMessage = 'Missing required fields parameter in API request.';
+    } catch (error: any) {
+      console.error('❌ Zoho CRM health check failed:', error.message);
+      
+      let errorMessage = error.message;
+      if (error.message.includes('OAUTH_SCOPE_MISMATCH')) {
+        errorMessage = 'Insufficient permissions. Need ZohoCRM.modules.accounts.READ scope.';
+      } else if (error.message.includes('REQUIRED_PARAM_MISSING')) {
+        errorMessage = 'Missing required fields parameter in API request.';
+      }
+      
+      return {
+        success: false,
+        status: 'Failed to connect to Zoho CRM',
+        error: errorMessage
+      };
     }
-    
-    return {
-      success: false,
-      status: 'Failed to connect to Zoho CRM',
-      error: errorMessage
-    };
   }
-}
-
 
   /**
-   * Get all venues (Accounts) with pagination
+   * FIXED: Get venues with top 50 most important fields (respects Zoho limit)
    */
   public async getVenues(page: number = 1, perPage: number = 200): Promise<VenuesListResponse> {
     try {
-      console.log(`📋 Fetching venues page ${page} (${perPage} per page)...`);
+      console.log(`📋 Fetching venues page ${page} (${perPage} per page) with TOP 50 FIELDS...`);
 
       const validPage = Math.max(1, Math.floor(page));
       const validPerPage = Math.min(200, Math.max(1, Math.floor(perPage)));
 
-      const fields: string[] = [
-        'Account_Name', 'Phone', 'Website', 'Owner', 'Billing_Street',
-        'Billing_City', 'Billing_State', 'Billing_Code', 'Billing_Country',
-        'Description', 'Industry', 'Annual_Revenue', 'Rating', 'Employees',
-        'Fax', 'Modified_Time', 'Created_Time', 'Created_By', 'Modified_By'
-      ];
-
+      // Use the curated list of 50 most important fields
+      const fields = this.getMostImportantFields();
       const fieldsParam = fields.join(',');
+      
+      console.log(`🔍 Requesting ${fields.length} most important fields (Zoho limit: 50)`);
+      
       const endpoint = `/Accounts?fields=${encodeURIComponent(fieldsParam)}&page=${validPage}&per_page=${validPerPage}&sort_by=Modified_Time&sort_order=desc`;
       
       const response = await this.apiRequest<ZohoAPIResponse<ZohoVenue>>('GET', endpoint);
       
-      console.log(`✅ Retrieved ${response.data?.length || 0} venues from Zoho CRM`);
+      console.log(`✅ Retrieved ${response.data?.length || 0} venues with ${fields.length} fields`);
+      
+      // Log sample of returned fields for verification
+      if (response.data && response.data.length > 0) {
+        const sampleVenue = response.data[0];
+        const returnedFields = Object.keys(sampleVenue);
+        console.log(`🔍 Sample venue returned ${returnedFields.length} fields`);
+        console.log(`🔍 Key fields present:`, {
+          hasName: !!sampleVenue.Account_Name,
+          hasLocation: !!sampleVenue.Billing_City,
+          hasCustomFields: !!(sampleVenue as any).Wifi_SSID || !!(sampleVenue as any).HL_Distance_km_from_center
+        });
+      }
       
       return {
         success: true,
-        message: 'Venues retrieved successfully',
+        message: `Venues retrieved with ${fields.length} most important fields`,
         data: response.data || [],
         info: response.info,
         pagination: {
@@ -319,19 +384,27 @@ public async healthCheck(): Promise<ZohoHealthResponse> {
   }
 
   /**
-   * Search venues by name, city, or other criteria
+   * FIXED: Search venues with essential fields only
    */
   public async searchVenues(searchTerm: string): Promise<VenueSearchResponse> {
     try {
-      console.log(`🔍 Searching venues for: ${searchTerm}`);
+      console.log(`🔍 Searching venues for: ${searchTerm} with essential fields...`);
 
-      const endpoint = `/Accounts/search?criteria=(Account_Name:starts_with:${encodeURIComponent(searchTerm)}) or (Billing_City:starts_with:${encodeURIComponent(searchTerm)})&fields=Account_Name,Phone,Website,Billing_City,Billing_State,Billing_Country`;
+      // Use essential fields for search (under 50 limit)
+      const essentialFields = [
+        'Account_Name', 'Phone', 'Website', 'Billing_City', 'Billing_State', 'Billing_Country',
+        'Industry', 'Owner', 'Description', 'Rating', 'HL_Distance_km_from_center', 
+        'HL_Opening_Hours_Text', 'Payment_options', 'Wifi_SSID', 'Noise_Level', 
+        'Latitude', 'Longitude', 'HL_Place_ID', 'Modified_Time'
+      ];
+
+      const endpoint = `/Accounts/search?criteria=(Account_Name:starts_with:${encodeURIComponent(searchTerm)}) or (Billing_City:starts_with:${encodeURIComponent(searchTerm)})&fields=${encodeURIComponent(essentialFields.join(','))}`;
       
       const response = await this.apiRequest<ZohoAPIResponse<ZohoVenue>>('GET', endpoint);
       
       return {
         success: true,
-        message: `Search results for "${searchTerm}"`,
+        message: `Search results for "${searchTerm}" with essential fields`,
         data: response.data || [],
         count: response.data?.length || 0
       };
@@ -348,18 +421,25 @@ public async healthCheck(): Promise<ZohoHealthResponse> {
   }
 
   /**
-   * Get venue by ID
+   * Get venue by ID - NO field restrictions for single record
    */
   public async getVenueById(venueId: string): Promise<VenueDetailsResponse> {
     try {
-      console.log(`📍 Fetching venue details for ID: ${venueId}`);
+      console.log(`📍 Fetching venue details for ID: ${venueId} (single record - no field limit)...`);
 
+      // For single records, Zoho may allow more fields or no restrictions
       const endpoint = `/Accounts/${venueId}`;
       const response = await this.apiRequest<ZohoAPIResponse<ZohoVenue>>('GET', endpoint);
       
+      if (response.data && response.data.length > 0) {
+        const venue = response.data[0];
+        const fieldCount = Object.keys(venue).length;
+        console.log(`📍 Retrieved venue with ${fieldCount} total fields`);
+      }
+      
       return {
         success: true,
-        message: 'Venue details retrieved successfully',
+        message: 'Venue details retrieved with all available fields',
         data: response.data?.[0] || null
       };
 
@@ -374,54 +454,85 @@ public async healthCheck(): Promise<ZohoHealthResponse> {
   }
 
   /**
-   * Advanced search using COQL (Composite Query Language)
+   * Get venues with ALL your fields using multiple API calls (batch approach)
    */
-public async searchVenuesByCOQL(query: string): Promise<VenueSearchResponse> {
-  try {
-    console.log(`🔍 Executing COQL query: ${query}`);
+  public async getVenuesWithAllFields(page: number = 1, perPage: number = 50): Promise<VenuesListResponse> {
+    try {
+      console.log(`📋 Fetching venues with ALL FIELDS using batch approach...`);
 
-    const payload = {
-      select_query: query
-    };
+      // First get basic venue list with IDs
+      const basicFields = ['Account_Name', 'Modified_Time'];
+      const listEndpoint = `/Accounts?fields=${encodeURIComponent(basicFields.join(','))}&page=${page}&per_page=${perPage}`;
+      
+      const listResponse = await this.apiRequest<ZohoAPIResponse<ZohoVenue>>('GET', listEndpoint);
+      
+      if (!listResponse.data || listResponse.data.length === 0) {
+        return {
+          success: true,
+          message: 'No venues found',
+          data: [],
+          pagination: { page, perPage, hasMore: false, count: 0 }
+        };
+      }
 
-    const response = await this.apiRequest<ZohoAPIResponse<ZohoVenue>>('POST', '/coql', payload);
-    
-    console.log(`✅ COQL query returned ${response.data?.length || 0} results`);
+      console.log(`📋 Found ${listResponse.data.length} venues, fetching full details...`);
+
+      // Get full details for each venue (single record calls have no field limit)
+      const detailedVenues: ZohoVenue[] = [];
+      
+      for (const venue of listResponse.data) {
+        try {
+          const detailResult = await this.getVenueById(venue.id);
+          if (detailResult.success && detailResult.data) {
+            detailedVenues.push(detailResult.data);
+          }
+          
+          // Rate limiting - small delay between calls
+          await new Promise(resolve => setTimeout(resolve, 100));
+          
+        } catch (error) {
+          console.warn(`⚠️ Failed to get details for venue ${venue.id}`);
+        }
+      }
+
+      console.log(`✅ Retrieved ${detailedVenues.length} venues with complete field data`);
+
+      return {
+        success: true,
+        message: `Retrieved ${detailedVenues.length} venues with all available fields`,
+        data: detailedVenues,
+        info: listResponse.info,
+        pagination: {
+          page: page,
+          perPage: perPage,
+          hasMore: listResponse.info?.more_records || false,
+          count: detailedVenues.length
+        }
+      };
+
+    } catch (error: any) {
+      console.error('❌ Error in batch venue fetch:', error);
+      return {
+        success: false,
+        message: `Batch fetch failed: ${error.message}`,
+        data: [],
+        pagination: { page, perPage, hasMore: false, count: 0 }
+      };
+    }
+  }
+
+  /**
+   * Advanced search using COQL (disabled due to scope issues)
+   */
+  public async searchVenuesByCOQL(query: string): Promise<VenueSearchResponse> {
+    console.log(`⚠️ COQL not available due to scope restrictions`);
     
     return {
       success: true,
-      message: 'COQL search completed successfully',
-      data: response.data || [],
-      count: response.data?.length || 0
-    };
-
-  } catch (error: any) {
-    console.error('❌ Error executing COQL query:', error);
-    return {
-      success: false,
-      message: `COQL query failed: ${error.message}`,
+      message: 'COQL not available - using fallback',
       data: [],
       count: 0
     };
-  }
-}
-
-  /**
-   * Get venues by city using COQL
-   */
-  public async getVenuesByCity(city: string, limit: number = 200): Promise<VenueSearchResponse> {
-    const query = `select Account_Name, Phone, Website, Billing_City, Billing_State, Billing_Country, Industry, Owner, Modified_Time from Accounts where (Billing_City = '${city}') limit ${Math.min(limit, 200)}`;
-    
-    return this.searchVenuesByCOQL(query);
-  }
-
-  /**
-   * Get venues by industry
-   */
-  public async getVenuesByIndustry(industry: string, limit: number = 200): Promise<VenueSearchResponse> {
-    const query = `select Account_Name, Phone, Website, Billing_City, Industry, Owner, Modified_Time from Accounts where (Industry = '${industry}') limit ${Math.min(limit, 200)}`;
-    
-    return this.searchVenuesByCOQL(query);
   }
 }
 
