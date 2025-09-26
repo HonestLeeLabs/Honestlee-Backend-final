@@ -8,7 +8,12 @@ import {
   createVenue,
   updateVenue,
   deleteVenue,
-  createVenuesBulk
+  createVenuesBulk,
+  // 🆕 Fixed field endpoints
+  getFields,           // ✅ Fixed name
+  refreshFields,       // ✅ Fixed name
+  getFieldUsageStats,
+  debugFieldDiscovery  // ✅ Debug endpoint
 } from '../controllers/zohoController';
 import { authenticate } from '../middlewares/authMiddleware';
 
@@ -18,28 +23,28 @@ const router = express.Router();
 router.use(authenticate);
 
 /**
- * READ Operations
+ * READ Operations (Enhanced with dynamic fields)
  */
 router.get('/health', healthCheck);
-router.get('/venues', getVenues);
-router.get('/venues/cached', getCachedVenues);
-router.get('/venues/search', searchVenues);
-router.get('/venues/:venueId', getVenueById);
+router.get('/venues', getVenues);                    // 🆕 Now with dynamic field discovery
+router.get('/venues/cached', getCachedVenues);       // 🆕 Enhanced with dynamic fields
+router.get('/venues/search', searchVenues);          // 🆕 Enhanced search with all fields
+router.get('/venues/:venueId', getVenueById);        // 🆕 Full field analysis
 
 /**
- * WRITE Operations (NEW - Bidirectional functionality)
+ * WRITE Operations (Enhanced with field tracking)
  */
-
-// CREATE: Add new venue
-router.post('/venues', createVenue);
-
-// CREATE: Bulk add venues
-router.post('/venues/bulk', createVenuesBulk);
-
-// UPDATE: Modify existing venue
-router.put('/venues/:venueId', updateVenue);
-
-// DELETE: Remove venue
+router.post('/venues', createVenue);                 // 🆕 Tracks custom fields used
+router.post('/venues/bulk', createVenuesBulk);       // 🆕 Analyzes bulk field data
+router.put('/venues/:venueId', updateVenue);         // 🆕 Tracks field updates
 router.delete('/venues/:venueId', deleteVenue);
+
+/**
+ * 🆕 FIXED: DYNAMIC FIELD MANAGEMENT
+ */
+router.get('/fields', getFields);                    // ✅ Get current available fields
+router.post('/fields/refresh', refreshFields);       // ✅ Force refresh field cache
+router.get('/fields/usage', getFieldUsageStats);     // Analyze field usage patterns
+router.get('/debug/field-discovery', debugFieldDiscovery); // 🔧 Debug endpoint
 
 export default router;

@@ -22,6 +22,11 @@ class ZohoService {
   private debug: boolean;
   private isRefreshing: boolean = false;
 
+  // 🆕 Dynamic field caching properties
+  private availableFields: string[] = [];
+  private fieldsLastFetched: number = 0;
+  private fieldsCacheDuration: number = 24 * 60 * 60 * 1000; // 24 hours
+
   constructor() {
     this.clientId = process.env.ZOHO_CLIENT_ID || '';
     this.clientSecret = process.env.ZOHO_CLIENT_SECRET || '';
@@ -53,22 +58,215 @@ class ZohoService {
   }
 
   /**
-   * Get the most important 50 fields (respecting Zoho's limit)
-   */
-  private getMostImportantFields(): string[] {
-    return [
-      'Account_Name', 'id', 'Owner', 'Created_Time', 'Modified_Time',
-      'Phone', 'Website', 'Billing_Street', 'Billing_City', 'Billing_State', 
-      'Billing_Code', 'Billing_Country', 'Industry', 'Description', 'Annual_Revenue',
-      'Rating', 'Employees', 'HL_Distance_km_from_center', 'HL_Opening_Hours_Text',
-      'HL_Place_ID', 'HL_Ratings_Count', 'HL_Price_Level', 'Latitude', 'Longitude',
-      'Wifi_SSID', 'Payment_options', 'Noise_Level', 'DL_Speed_MBPS', 'UL_Speed_MBPS',
-      'Pub_Wifi', 'AC_Fan', 'Charging_Ports', 'Fax', 'Account_Number', 'Account_Type',
-      'Shipping_City', 'Shipping_State', 'Shipping_Country', 'Created_By', 'Modified_By',
-      'PW', 'Connected_To', 'Curr_Wifi_Display_Method', 'HL_Photo_Count', 'HL_Photo_Ref',
-      'Account_Image', 'Photo_of_charging_ports'
+ * 🆕 FIXED: Get all available fields by analyzing actual venue data
+ */
+public async getAvailableFields(forceRefresh: boolean = false): Promise<string[]> {
+  try {
+    // Check cache first
+    const now = Date.now();
+    if (!forceRefresh && this.availableFields.length > 0 && (now - this.fieldsLastFetched) < this.fieldsCacheDuration) {
+      console.log(`🔄 Using cached fields (${this.availableFields.length} fields)`);
+      return this.availableFields;
+    }
+
+    console.log('🔍 Discovering fields by analyzing actual venue data...');
+
+    // 🆕 METHOD 1: Try the fields API first (if it works)
+    try {
+      const fieldsResponse = await this.apiRequest<{
+        fields: Array<{
+          api_name: string;
+          field_label: string;
+          data_type: string;
+          visible: boolean;
+          read_only: boolean;
+          custom_field: boolean;
+        }>;
+      }>('GET', '/settings/fields?module=Accounts');
+
+      if (fieldsResponse.fields && fieldsResponse.fields.length > 15) {
+        console.log(`✅ Fields API returned ${fieldsResponse.fields.length} fields`);
+        const apiFields = fieldsResponse.fields
+          .map(field => field.api_name)
+          .sort();
+        
+        this.availableFields = apiFields;
+        this.fieldsLastFetched = now;
+        return apiFields;
+      } else {
+        console.log('⚠️ Fields API returned limited data, falling back to data analysis...');
+      }
+    } catch (error) {
+      console.log('⚠️ Fields API failed, falling back to data analysis...');
+    }
+
+    // 🆕 METHOD 2: Use a single venue to discover ALL available fields
+    console.log('🔍 Fetching single venue to discover all available fields...');
+    
+    // First, get a list of venues with minimal fields to get IDs
+    const venueListResponse = await this.apiRequest<{
+      data: Array<{ id: string; Account_Name: string }>;
+      info: any;
+    }>('GET', `/Accounts?fields=id,Account_Name&per_page=5`);
+    
+    if (!venueListResponse.data || venueListResponse.data.length === 0) {
+      console.log('⚠️ No venues found for field analysis, using fallback');
+      throw new Error('No venues available for field discovery');
+    }
+
+    // Get the first venue ID
+    const sampleVenueId = venueListResponse.data[0].id;
+    console.log(`🔍 Using venue ${sampleVenueId} for complete field discovery...`);
+
+    // 🆕 FIXED: Get single venue WITHOUT fields parameter (gets ALL fields)
+    const singleVenueResponse = await this.apiRequest<{
+      data: any[];
+      info: any;
+    }>('GET', `/Accounts/${sampleVenueId}`);
+    
+    if (singleVenueResponse.data && singleVenueResponse.data.length > 0) {
+      const sampleVenue = singleVenueResponse.data[0];
+      const discoveredFields = Object.keys(sampleVenue).sort();
+      
+      console.log(`✅ Field discovery complete: Found ${discoveredFields.length} total fields from single venue`);
+      console.log(`🔍 Sample discovered fields:`, discoveredFields.slice(0, 20));
+      
+      // Cache the results
+      this.availableFields = discoveredFields;
+      this.fieldsLastFetched = now;
+      
+      return discoveredFields;
+    } else {
+      throw new Error('Failed to get venue data for field discovery');
+    }
+
+  } catch (error: any) {
+    console.error('❌ Error in field discovery:', error);
+    
+    // 🆕 ENHANCED FALLBACK: Use your exact known field list
+    const knownFields = [
+      // System fields
+      'id', 'Owner', 'Created_Time', 'Modified_Time', 'Created_By', 'Modified_By',
+      
+      // Standard fields  
+      'Account_Name', 'Account_Number', 'Account_Type', 'Phone', 'Website', 'Industry',
+      'Description', 'Rating', 'Employees', 'Annual_Revenue', 'Fax',
+      
+      // Address fields
+      'Billing_Street', 'Billing_City', 'Billing_State', 'Billing_Code', 'Billing_Country',
+      'Shipping_Street', 'Shipping_City', 'Shipping_State', 'Shipping_Code', 'Shipping_Country',
+      
+      // 🆕 Your exact custom fields (the ones you listed)
+      'HL_Price_Level', 'PW', 'Latitude', 'HL_Photo_Ref', 'HL_Photo_Count', 'Noise_Level',
+      'HL_Place_ID', 'Charging_Ports', 'Wifi_SSID', 'Pub_Wifi', 'HL_Ratings_Count',
+      'HL_Opening_Hours_Text', 'Longitude', 'HL_Distance_km_from_center', 'Curr_Wifi_Display_Method'
     ];
+    
+    console.log(`🔄 Using enhanced fallback with ${knownFields.length} known fields`);
+    this.availableFields = knownFields;
+    this.fieldsLastFetched = Date.now();
+    return knownFields;
   }
+}
+
+
+  /**
+   * 🆕 SMART: Get optimized field list (respects 50-field limit with priority)
+   */
+  private async getOptimizedFields(): Promise<string[]> {
+    try {
+      const allFields = await this.getAvailableFields();
+      
+      if (allFields.length <= 50) {
+        console.log(`📋 Using all ${allFields.length} fields (within 50-field limit)`);
+        return allFields;
+      }
+
+      // If more than 50 fields, prioritize them
+      console.log(`📋 Found ${allFields.length} fields, selecting top 50 most important...`);
+
+      // Priority-based field selection
+      const highPriorityFields = [
+        'Account_Name', 'id', 'Owner', 'Created_Time', 'Modified_Time',
+        'Phone', 'Website', 'Billing_Street', 'Billing_City', 'Billing_State',
+        'Billing_Code', 'Billing_Country', 'Industry', 'Description', 'Annual_Revenue'
+      ];
+
+      // Custom fields (your venue-specific fields)
+      const customFieldPriority = allFields.filter(field => 
+        field.includes('HL_') || 
+        field.includes('Wifi') || 
+        field.includes('Payment') ||
+        field.includes('Speed_MBPS') ||
+        field.includes('Charging') ||
+        field.includes('AC_') ||
+        field.includes('Noise') ||
+        field.includes('Latitude') ||
+        field.includes('Longitude') ||
+        field.includes('PW') ||
+        field.includes('Pub_')
+      );
+
+      // Combine priority fields with remaining fields up to 50
+      const prioritizedFields = [
+        ...highPriorityFields.filter(field => allFields.includes(field)),
+        ...customFieldPriority,
+        ...allFields.filter(field => 
+          !highPriorityFields.includes(field) && 
+          !customFieldPriority.includes(field)
+        )
+      ].slice(0, 50); // Take only first 50
+
+      const uniqueFields = [...new Set(prioritizedFields)];
+      
+      console.log(`📋 Selected ${uniqueFields.length} priority fields out of ${allFields.length} total`);
+      console.log(`🔍 Priority fields include:`, uniqueFields.slice(0, 20));
+      
+      return uniqueFields;
+
+    } catch (error: any) {
+      console.error('❌ Error getting optimized fields:', error);
+      return await this.getAvailableFields(); // Fallback to all available fields
+    }
+  }
+
+/**
+ * 🆕 ADMIN: Force refresh field cache
+ */
+public async refreshFieldCache(): Promise<{
+  success: boolean;
+  message: string;
+  fields_discovered: number;
+  fields_list: string[];
+}> {
+  try {
+    console.log('🔄 Force refreshing field cache...');
+    
+    // Force clear the cache first
+    this.availableFields = [];
+    this.fieldsLastFetched = 0;
+    
+    // Now get fresh fields with force refresh
+    const fields = await this.getAvailableFields(true);
+    
+    console.log(`✅ Field cache refreshed: ${fields.length} fields discovered`);
+    
+    return {
+      success: true,
+      message: 'Field cache refreshed successfully',
+      fields_discovered: fields.length,
+      fields_list: fields
+    };
+  } catch (error: any) {
+    console.error('❌ Error refreshing field cache:', error);
+    return {
+      success: false,
+      message: `Failed to refresh field cache: ${error.message}`,
+      fields_discovered: 0,
+      fields_list: []
+    };
+  }
+}
 
   /**
    * Get fresh access token with proper concurrency control
@@ -195,7 +393,7 @@ class ZohoService {
     }
   }
 
-  // [EXISTING READ METHODS - Keep as they are]
+  // READ METHODS
 
   public async healthCheck(): Promise<ZohoHealthResponse> {
     try {
@@ -222,23 +420,48 @@ class ZohoService {
     }
   }
 
+  /**
+   * 🆕 DYNAMIC: Get venues with automatically discovered fields
+   */
   public async getVenues(page: number = 1, perPage: number = 200): Promise<VenuesListResponse> {
     try {
-      console.log(`📋 Fetching venues page ${page} (${perPage} per page) with TOP 50 FIELDS...`);
+      console.log(`📋 Fetching venues page ${page} (${perPage} per page) with DYNAMIC FIELDS...`);
 
       const validPage = Math.max(1, Math.floor(page));
       const validPerPage = Math.min(200, Math.max(1, Math.floor(perPage)));
-      const fields = this.getMostImportantFields();
+
+      // 🆕 Get optimized fields dynamically
+      const fields = await this.getOptimizedFields();
       const fieldsParam = fields.join(',');
+      
+      console.log(`🔍 Using ${fields.length} dynamically discovered fields`);
+      console.log(`🔍 Sample fields:`, fields.slice(0, 15).join(', ') + (fields.length > 15 ? '...' : ''));
       
       const endpoint = `/Accounts?fields=${encodeURIComponent(fieldsParam)}&page=${validPage}&per_page=${validPerPage}&sort_by=Modified_Time&sort_order=desc`;
       const response = await this.apiRequest<ZohoAPIResponse<ZohoVenue>>('GET', endpoint);
       
-      console.log(`✅ Retrieved ${response.data?.length || 0} venues with ${fields.length} fields`);
+      console.log(`✅ Retrieved ${response.data?.length || 0} venues with ${fields.length} dynamic fields`);
+      
+      // Log field usage statistics
+      if (response.data && response.data.length > 0) {
+        const sampleVenue = response.data[0];
+        const returnedFields = Object.keys(sampleVenue);
+        const customFields = returnedFields.filter(field => 
+          field.includes('HL_') || field.includes('Wifi') || field.includes('Payment') ||
+          field.includes('Charging') || field.includes('Latitude') || field.includes('Longitude')
+        );
+        
+        console.log(`📊 Field statistics:`, {
+          requested: fields.length,
+          returned: returnedFields.length,
+          custom_fields: customFields.length,
+          coverage: `${Math.round((returnedFields.length / fields.length) * 100)}%`
+        });
+      }
       
       return {
         success: true,
-        message: `Venues retrieved with ${fields.length} most important fields`,
+        message: `Venues retrieved with ${fields.length} dynamically discovered fields`,
         data: response.data || [],
         info: response.info,
         pagination: {
@@ -258,11 +481,38 @@ class ZohoService {
     }
   }
 
+  /**
+   * 🆕 DYNAMIC: Get single venue with ALL available fields (no 50-field limit)
+   */
   public async getVenueById(venueId: string): Promise<VenueDetailsResponse> {
     try {
-      console.log(`📍 Fetching venue details for ID: ${venueId}...`);
+      console.log(`📍 Fetching venue ${venueId} with ALL AVAILABLE FIELDS...`);
+
+      // For single records, we can get ALL fields (no limit)
       const endpoint = `/Accounts/${venueId}`;
       const response = await this.apiRequest<ZohoAPIResponse<ZohoVenue>>('GET', endpoint);
+      
+      if (response.data && response.data.length > 0) {
+        const venue = response.data[0];
+        const fieldCount = Object.keys(venue).length;
+        console.log(`📍 Retrieved venue with ${fieldCount} total fields (all available)`);
+        
+        // Log some interesting field statistics
+        const customFields = Object.keys(venue).filter(field => 
+          field.includes('HL_') || field.includes('Wifi') || field.includes('Payment') || 
+          field.includes('AC_') || field.includes('Charging') || field.includes('Speed_MBPS') ||
+          field.includes('Latitude') || field.includes('Longitude')
+        );
+        
+        console.log(`📊 Field breakdown for venue:`, {
+          total_fields: fieldCount,
+          custom_venue_fields: customFields.length,
+          has_location: !!(venue as any).Latitude && !!(venue as any).Longitude,
+          has_wifi_info: !!(venue as any).Wifi_SSID,
+          has_hours: !!(venue as any).HL_Opening_Hours_Text,
+          custom_field_names: customFields.slice(0, 10)
+        });
+      }
       
       return {
         success: true,
@@ -278,7 +528,7 @@ class ZohoService {
     }
   }
 
-  // [NEW WRITE METHODS - The bidirectional functionality you requested]
+  // WRITE METHODS
 
   /**
    * CREATE: Add a new venue to Zoho CRM
@@ -521,68 +771,6 @@ class ZohoService {
     }
   }
 
-  /**
-   * BULK UPDATE: Update multiple venues at once
-   */
-  public async updateVenuesBulk(venuesData: Array<Partial<ZohoVenue> & { id: string }>): Promise<{
-    success: boolean;
-    message: string;
-    updated: number;
-    failed: number;
-    results: Array<{ success: boolean; venue_id: string; error?: string }>;
-  }> {
-    try {
-      console.log(`✏️ Updating ${venuesData.length} venues in bulk...`);
-
-      const bulkPayload = {
-        data: venuesData.map(venue => {
-          const { Created_Time, Created_By, Modified_Time, Modified_By, Owner, ...updateData } = venue;
-          return updateData;
-        })
-      };
-
-      const response = await this.apiRequest<{
-        data: Array<{
-          code: string;
-          details: { id: string };
-          message: string;
-          status: string;
-        }>;
-      }>('PUT', '/Accounts', bulkPayload);
-
-      const results = response.data.map((result, index) => ({
-        success: result.code === 'SUCCESS',
-        venue_id: venuesData[index].id,
-        error: result.code !== 'SUCCESS' ? result.message : undefined
-      }));
-
-      const updated = results.filter(r => r.success).length;
-      const failed = results.filter(r => !r.success).length;
-
-      console.log(`✅ Bulk update completed: ${updated} updated, ${failed} failed`);
-
-      return {
-        success: true,
-        message: `Bulk update completed: ${updated} updated, ${failed} failed`,
-        updated,
-        failed,
-        results
-      };
-
-    } catch (error: any) {
-      console.error('❌ Error in bulk update:', error);
-      return {
-        success: false,
-        message: 'Bulk update failed',
-        updated: 0,
-        failed: venuesData.length,
-        results: venuesData.map(venue => ({ success: false, venue_id: venue.id, error: error.message }))
-      };
-    }
-  }
-
-  // [EXISTING METHODS - Keep searchVenues and searchVenuesByCOQL as they are]
-
   public async searchVenues(searchTerm: string): Promise<VenueSearchResponse> {
     try {
       console.log(`🔍 Searching venues for: ${searchTerm} with essential fields...`);
@@ -626,6 +814,46 @@ class ZohoService {
       count: 0
     };
   }
+
+  /**
+ * 🔧 DEBUG: Test field discovery directly
+ */
+public async debugFieldDiscovery(): Promise<any> {
+  try {
+    console.log('🔧 DEBUG: Testing field discovery...');
+    
+    // Test direct API call
+    const response = await this.apiRequest<{
+      data: any[];
+      info: any;
+    }>('GET', `/Accounts?page=1&per_page=5`);
+    
+    if (response.data && response.data.length > 0) {
+      const sampleVenue = response.data[0];
+      const fields = Object.keys(sampleVenue);
+      
+      console.log('✅ DEBUG: Sample venue fields found:', fields);
+      
+      return {
+        success: true,
+        sample_venue_id: sampleVenue.id,
+        fields_found: fields,
+        total_fields: fields.length,
+        custom_fields: fields.filter(f => 
+          f.includes('HL_') || f.includes('Wifi') || f.includes('Charging')
+        ),
+        sample_venue_data: sampleVenue
+      };
+    }
+    
+    return { success: false, message: 'No venues found' };
+    
+  } catch (error: any) {
+    console.error('❌ DEBUG: Field discovery test failed:', error);
+    return { success: false, error: error.message };
+  }
+}
+  
 }
 
 export default new ZohoService();
