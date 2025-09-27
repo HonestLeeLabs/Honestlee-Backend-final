@@ -33,7 +33,9 @@ const corsOptions = {
     'http://in.honestlee.app.s3-website.ap-south-1.amazonaws.com',
     'http://ae.honestlee.app.s3-website.ap-south-1.amazonaws.com',
     'http://ae.honestlee.app',
-    'http://in.honestlee.app',    
+    'http://in.honestlee.app',
+    'https://ae.honestlee.app',
+    'https://in.honestlee.app',
   ],
   credentials: true,              // Allow cookies and authentication headers
   optionsSuccessStatus: 200,      // Support legacy browsers
