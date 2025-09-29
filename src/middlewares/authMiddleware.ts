@@ -7,6 +7,7 @@ export interface AuthRequest extends Request {
     role: string;
     region?: string;
   };
+  fileValidationError?: string; // Add this for multer file validation
 }
 
 function extractRegionFromRequest(req: Request): string | undefined {
@@ -42,3 +43,6 @@ export function authenticate(req: Request, res: Response, next: NextFunction) {
   authReq.user = payload;
   next();
 }
+
+// Export alias for backward compatibility
+export const authenticateToken = authenticate;

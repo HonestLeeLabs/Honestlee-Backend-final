@@ -16,6 +16,7 @@ import webhookRoutes from './routes/webhookRoutes';
 import { startSyncJobs } from './jobs/syncJob';
 import { errorHandler } from './utils/errorHandler';
 import { testEmailConfig } from './services/emailService';
+import uploadRoutes from './routes/uploadRoutes';
 
 dotenv.config();
 
@@ -118,6 +119,7 @@ app.use('/api/users', userRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/zoho', zohoRoutes);
 app.use('/webhooks', webhookRoutes);
+app.use('/api/upload', uploadRoutes);
 
 // Health check endpoint
 app.get('/health', (req, res) => {
