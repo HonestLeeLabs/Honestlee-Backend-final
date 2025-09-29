@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import User, { Role } from '../models/User';
+import User, { Role, LoginMethod } from '../models/User';
 import { generateOtpHash, verifyOtpHash } from '../services/otpService';
 import { sendOtpEmail } from '../services/emailService';
 import { signJwt } from '../utils/jwt';
@@ -20,10 +20,20 @@ export const sendOtp = async (req: Request, res: Response) => {
   let user = await User.findOne({ phone });
 
   if (!user) {
-    user = new User({ phone, otpCode: otpHash, otpExpiresAt: otpExpiry, role: Role.CONSUMER });
+    user = new User({ 
+      phone, 
+      otpCode: otpHash, 
+      otpExpiresAt: otpExpiry, 
+      role: Role.CONSUMER,
+      loginMethod: LoginMethod.PHONE  // NEW: Set login method
+    });
   } else {
     user.otpCode = otpHash;
     user.otpExpiresAt = otpExpiry;
+    // Set loginMethod if not already set
+    if (!user.loginMethod) {
+      user.loginMethod = LoginMethod.PHONE;
+    }
   }
   await user.save();
 
@@ -50,10 +60,20 @@ export const sendEmailOtp = async (req: Request, res: Response) => {
   let user = await User.findOne({ email });
 
   if (!user) {
-    user = new User({ email, otpCode: otpHash, otpExpiresAt: otpExpiry, role: Role.CONSUMER });
+    user = new User({ 
+      email, 
+      otpCode: otpHash, 
+      otpExpiresAt: otpExpiry, 
+      role: Role.CONSUMER,
+      loginMethod: LoginMethod.EMAIL  // NEW: Set login method
+    });
   } else {
     user.otpCode = otpHash;
     user.otpExpiresAt = otpExpiry;
+    // Set loginMethod if not already set
+    if (!user.loginMethod) {
+      user.loginMethod = LoginMethod.EMAIL;
+    }
   }
   await user.save();
 
@@ -88,7 +108,14 @@ export const verifyOtp = async (req: Request, res: Response) => {
 
   const token = signJwt({ userId: user._id.toString(), role: user.role, region });
 
-  res.json({ token, role: user.role, phone: user.phone, name: user.name, email: user.email });
+  res.json({ 
+    token, 
+    role: user.role, 
+    phone: user.phone, 
+    name: user.name, 
+    email: user.email,
+    loginMethod: user.loginMethod  // NEW: Return login method
+  });
 };
 
 // Verify OTP for Email
@@ -114,5 +141,12 @@ export const verifyEmailOtp = async (req: Request, res: Response) => {
 
   const token = signJwt({ userId: user._id.toString(), role: user.role, region });
 
-  res.json({ token, role: user.role, email: user.email, name: user.name, phone: user.phone });
+  res.json({ 
+    token, 
+    role: user.role, 
+    email: user.email, 
+    name: user.name, 
+    phone: user.phone,
+    loginMethod: user.loginMethod  // NEW: Return login method
+  });
 };
