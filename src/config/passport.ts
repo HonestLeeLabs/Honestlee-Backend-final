@@ -1,6 +1,6 @@
 import passport from 'passport';
 import { Strategy as GoogleStrategy, Profile } from 'passport-google-oauth20';
-import User, { Role } from '../models/User';
+import User, { Role, LoginMethod } from '../models/User';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -41,8 +41,15 @@ passport.use(new GoogleStrategy({
         email,
         name: profile.displayName,
         role: Role.CONSUMER,
+        loginMethod: LoginMethod.GOOGLE,  // NEW: Set login method for Google
       });
       await user.save();
+    } else {
+      // Update loginMethod if not set
+      if (!user.loginMethod) {
+        user.loginMethod = LoginMethod.GOOGLE;
+        await user.save();
+      }
     }
     done(null, user);
   } catch (error) {

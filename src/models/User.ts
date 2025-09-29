@@ -7,6 +7,12 @@ export enum Role {
   AGENT = 'AGENT'
 }
 
+export enum LoginMethod {
+  PHONE = 'phone',
+  EMAIL = 'email',
+  GOOGLE = 'google'
+}
+
 export interface IUser extends Document {
   phone?: string;          
   email?: string;
@@ -16,6 +22,7 @@ export interface IUser extends Document {
   referralCode?: string;
   referredBy?: string;      
   role: Role;
+  loginMethod?: LoginMethod;  // NEW: Track how user authenticated
   otpCode?: string;
   otpExpiresAt?: Date;
   createdAt: Date;
@@ -27,12 +34,12 @@ const UserSchema = new Schema<IUser>({
   phone: { 
     type: String, 
     unique: true, 
-    sparse: true    // <-- Key fix: allows multiple null values
+    sparse: true
   },
   email: { 
     type: String, 
     unique: true, 
-    sparse: true    // <-- Also make email sparse for consistency
+    sparse: true
   },
   name: { type: String },
   address: { type: String },
@@ -40,6 +47,7 @@ const UserSchema = new Schema<IUser>({
   referralCode: { type: String, unique: true, sparse: true },
   referredBy: { type: String },
   role: { type: String, enum: Object.values(Role), default: Role.CONSUMER },
+  loginMethod: { type: String, enum: Object.values(LoginMethod) },  // NEW
   otpCode: { type: String },
   otpExpiresAt: { type: Date }
 }, { timestamps: true });

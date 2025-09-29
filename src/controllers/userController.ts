@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import User, { Role } from '../models/User';
+import User, { Role, LoginMethod } from '../models/User';
 import { AuthRequest } from '../middlewares/authMiddleware';
 
 // GET /api/users/me
@@ -28,13 +28,41 @@ export const getMyUserDetails = async (req: AuthRequest, res: Response) => {
   });
 };
 
-// PUT /api/users/me - Update current user's profile with extended fields
+// PUT /api/users/me - Update current user's profile with extended fields and auth protection
 export const updateMyProfile = async (req: AuthRequest, res: Response) => {
   if (!req.user || !req.user.userId) {
     return res.status(401).json({ message: 'Unauthorized' });
   }
 
   const input = req.body;
+
+  // Get current user to check loginMethod
+  const currentUser = await User.findById(req.user.userId);
+  if (!currentUser) {
+    return res.status(404).json({ message: 'User not found' });
+  }
+
+  // CRITICAL: Prevent changing phone if logged in via phone
+  if (currentUser.loginMethod === LoginMethod.PHONE) {
+    if (input.phone && input.phone !== currentUser.phone) {
+      return res.status(403).json({ 
+        message: 'Cannot change phone number used for authentication' 
+      });
+    }
+    // Remove phone from input to be safe
+    delete input.phone;
+  }
+
+  // CRITICAL: Prevent changing email if logged in via email or Google
+  if (currentUser.loginMethod === LoginMethod.EMAIL || currentUser.loginMethod === LoginMethod.GOOGLE) {
+    if (input.email && input.email !== currentUser.email) {
+      return res.status(403).json({ 
+        message: 'Cannot change email address used for authentication' 
+      });
+    }
+    // Remove email from input to be safe
+    delete input.email;
+  }
 
   // Validate role if provided
   if (input.role && !Object.values(Role).includes(input.role)) {
@@ -47,6 +75,7 @@ export const updateMyProfile = async (req: AuthRequest, res: Response) => {
   const allowedFields = [
     "name",
     "email",
+    "phone",
     "role",
     "address",
     "profileImage",
@@ -61,6 +90,14 @@ export const updateMyProfile = async (req: AuthRequest, res: Response) => {
       updateData[field] = input[field];
     }
   });
+
+  // Prevent changing sensitive fields
+  delete updateData.otpCode;
+  delete updateData.otpExpiresAt;
+  delete updateData.loginMethod;
+  delete updateData._id;
+  delete updateData.createdAt;
+  delete updateData.updatedAt;
 
   try {
     const updatedUser = await User.findByIdAndUpdate(
