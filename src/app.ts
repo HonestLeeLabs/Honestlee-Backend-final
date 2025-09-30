@@ -13,6 +13,7 @@ import userRoutes from './routes/userRoutes';
 import adminRoutes from './routes/adminRoutes';
 import zohoRoutes from './routes/zohoRoutes';
 import webhookRoutes from './routes/webhookRoutes';
+import venueDubaiRoutes from './routes/venueDubaiRoutes'; // NEW: Import venue Dubai routes
 import { startSyncJobs } from './jobs/syncJob';
 import { errorHandler } from './utils/errorHandler';
 import { testEmailConfig } from './services/emailService';
@@ -73,12 +74,12 @@ app.use((req, res, next) => {
 mongoose.connect(process.env.MONGODB_URI || '')
   .then(async () => {
     console.log('MongoDB connected');
-    
+
     // Fix the phone index issue
     try {
       const db = mongoose.connection.db;
       const collection = db.collection('users');
-      
+
       // Drop existing indexes
       try {
         await collection.dropIndex('phone_1');
@@ -86,19 +87,19 @@ mongoose.connect(process.env.MONGODB_URI || '')
       } catch (e) {
         console.log('phone_1 index not found or already dropped');
       }
-      
+
       try {
         await collection.dropIndex('email_1');
         console.log('Dropped email_1 index');
       } catch (e) {
         console.log('email_1 index not found or already dropped');
       }
-      
+
       // Create sparse unique indexes
       await collection.createIndex({ phone: 1 }, { unique: true, sparse: true });
       await collection.createIndex({ email: 1 }, { unique: true, sparse: true });
       console.log('Created sparse indexes for phone and email');
-      
+
     } catch (error) {
       console.error('Error fixing indexes:', error);
     }
@@ -115,6 +116,7 @@ app.use('/api/auth', googleAuthRoutes);
 app.use('/api/wifi', wifiRoutes);
 app.use('/api/reviews', reviewRoutes);
 app.use('/api/venues', venueRoutes);
+app.use('/api/venues-dubai', venueDubaiRoutes); // NEW: Add venue Dubai routes
 app.use('/api/users', userRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/zoho', zohoRoutes);
@@ -126,7 +128,12 @@ app.get('/health', (req, res) => {
   res.json({ 
     status: 'OK', 
     timestamp: new Date().toISOString(),
-    cors: 'Enabled for ports 3000, 3001 and production domains'
+    cors: 'Enabled for ports 3000, 3001 and production domains',
+    routes: {
+      venues_dubai: '/api/venues-dubai',
+      auth: '/api/auth',
+      users: '/api/users'
+    }
   });
 });
 
