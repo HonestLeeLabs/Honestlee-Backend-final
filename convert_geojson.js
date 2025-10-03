@@ -9,6 +9,22 @@ function convertBooleanString(value) {
     return value; // Return as-is if not a string or not TRUE/FALSE
 }
 
+// Function to convert string numbers to actual numbers
+function convertStringNumber(value) {
+    if (typeof value === 'string' && value !== '' && !isNaN(value)) {
+        return parseInt(value) || parseFloat(value);
+    }
+    return value;
+}
+
+// Function to convert empty strings to null
+function convertEmptyString(value) {
+    if (typeof value === 'string' && value.trim() === '') {
+        return null;
+    }
+    return value;
+}
+
 // Function to convert numeric Healthy_food_level to string enum
 function convertHealthyFoodLevel(value) {
     if (typeof value === 'number') {
@@ -157,7 +173,7 @@ function convertNoiseLevel(value) {
 }
 
 // Read the GeoJSON file
-const geojsonData = JSON.parse(fs.readFileSync('full_dubai_places.geojson', 'utf8'));
+const geojsonData = JSON.parse(fs.readFileSync('gyms_yoga.geojson', 'utf8'));
 
 // Generate timestamp suffix to avoid conflicts
 const timestamp = new Date().toISOString().slice(0, 19).replace(/[-:]/g, '').replace('T', '-');
@@ -178,7 +194,7 @@ const venues = geojsonData.features.map((feature, index) => {
     }
     delete properties['Smoking Policy']; // Remove the space version
     
-    // Add missing fields with default values for all venue types
+    // Add missing fields with default values for gym and yoga venues
     const defaultFields = {
         // Billing/Location Fields - only if missing
         Billing_City: "Dubai",
@@ -202,33 +218,33 @@ const venues = geojsonData.features.map((feature, index) => {
         Takes_bookings: false,
         Open_Late: false,
         
-        // Food/Service Related
+        // Food/Service Related (mostly N/A for gyms/yoga but needed for schema)
         Breakfast_offered: false,
         Brunch_offered: false,
         Dinner_offered: false,
         Alcohol_served: false,
-        Offers_water_refills: false,
+        Offers_water_refills: true,  // Default true for gyms/yoga
         Type_Of_Coffee: "None",
         Cuisine_Tags: null,
         Dietary_tags: null,
         Veg_only: false,
-        Healthy_food_level: "Medium",
+        // NOTE: Healthy_food_level removed completely for gyms/yoga - not applicable
         
         // Pricing/Rating
         HL_Price_Level: null,
         Rating: null,
         Budget_Friendly: "$",  // Only valid enum value
         Coffee_price_range: null,
-        Entrance_Fee: "None",
+        Entrance_Fee: "120",  // Default gym/yoga entrance fee
         
         // Policies/Atmosphere
         Pet_Policy: null,
-        Group_policy: null,
+        Group_policy: "Reservation Recommended",  // Common for gyms/yoga
         Smoking_Policy: null,
         Noise_Level: "Moderate",  // Default to Moderate (known to work)
         View: "Street",
         Staff_friedliness_bage: "Neutral",
-        Family_frienliness_score: null,
+        Family_frienliness_score: 3,  // Default for fitness venues
         Nomad_friendly_score: null,
         HL_zoho_AC_Fan: "AC",
         
@@ -236,8 +252,8 @@ const venues = geojsonData.features.map((feature, index) => {
         Int_phone_google_mapsly: "+971 4 XXX XXXX",
         Website: null,
         Hotel_pool_access: false,
-        Day_pass_club: false,
-        "Payment types": "Cash;Card",
+        Day_pass_club: true,  // Common for gyms/yoga
+        "Payment types": "Cash;Card;Apple Pay;Google Pay",
         parking_options: null
     };
     
@@ -247,6 +263,18 @@ const venues = geojsonData.features.map((feature, index) => {
         'Alcohol_served', 'Pub_Wifi', 'Power_backup', 'Has_TV_Display', 
         'Takes_bookings', 'Outdoor_seating', 'Offers_water_refills', 
         'Day_pass_club', 'Hotel_pool_access', 'Veg_only'
+    ];
+    
+    // List of fields that should be converted from string numbers to actual numbers
+    const numericFields = [
+        'DL_SPeed_MBPS', 'UL_SPeed_MBPS', 'Charging_Ports', 'Number_of_TVs', 
+        'HL_Price_Level', 'Rating', 'Family_frienliness_score', 'Nomad_friendly_score'
+    ];
+    
+    // List of fields that should convert empty strings to null
+    const nullableFields = [
+        'Cuisine_Tags', 'Dietary_tags', 'Pet_Policy', 'Group_policy', 'Smoking_Policy',
+        'Website', 'Coffee_price_range', 'Shows_what_on_TV', 'Type_Of_Coffee'
     ];
     
     // Only add default fields if they don't already exist (preserve all existing data)
@@ -281,9 +309,16 @@ const venues = geojsonData.features.map((feature, index) => {
             'vt_samosa_stall': "Samosa / Pakora Stall",
             'vt_luqaimat_stall': "Luqaimat Stall (Emirati Sweet Dumplings)",
             'vt_street_food': "Street Food",
-            'vt_food_truck': "Food Truck"
+            'vt_food_truck': "Food Truck",
+            'vt_gym': "Gym",
+            'vt_yoga': "Yoga Studio",
+            'vt_fitness': "Fitness Center",
+            'vt_wellness': "Wellness Center",
+            'vt_pilates': "Pilates Studio",
+            'vt_crossfit': "CrossFit Box",
+            'vt_martial_arts': "Martial Arts Studio"
         };
-        mergedProperties.venue_type_display = venueTypeDisplayMap[mergedProperties.venue_type] || "Food & Drink";
+        mergedProperties.venue_type_display = venueTypeDisplayMap[mergedProperties.venue_type] || "Fitness";
     }
     
     if (!mergedProperties.venue_category_display && mergedProperties.venue_category) {
@@ -295,9 +330,16 @@ const venues = geojsonData.features.map((feature, index) => {
             'vc_casual_dining': "Casual Dining",
             'vc_fast_food': "Fast Food",
             'vc_street_vendor': "Street Vendor",
-            'vc_food_truck': "Food Truck"
+            'vc_food_truck': "Food Truck",
+            'vc_gym': "Gym",
+            'vc_yoga': "Yoga",
+            'vc_fitness': "Fitness",
+            'vc_wellness': "Wellness",
+            'vc_pilates': "Pilates",
+            'vc_crossfit': "CrossFit",
+            'vc_martial_arts': "Martial Arts"
         };
-        mergedProperties.venue_category_display = venueCategoryDisplayMap[mergedProperties.venue_category] || "Food & Drink";
+        mergedProperties.venue_category_display = venueCategoryDisplayMap[mergedProperties.venue_category] || "Fitness";
     }
     
     // Fix Account_Name if it's null or undefined (REQUIRED FIELD)
@@ -315,9 +357,16 @@ const venues = geojsonData.features.map((feature, index) => {
             'vt_samosa_stall': 'Food Stall',
             'vt_luqaimat_stall': 'Luqaimat Stall',
             'vt_street_food': 'Street Food',
-            'vt_food_truck': 'Food Truck'
+            'vt_food_truck': 'Food Truck',
+            'vt_gym': 'Gym',
+            'vt_yoga': 'Yoga Studio',
+            'vt_fitness': 'Fitness Center',
+            'vt_wellness': 'Wellness Center',
+            'vt_pilates': 'Pilates Studio',
+            'vt_crossfit': 'CrossFit Box',
+            'vt_martial_arts': 'Martial Arts Studio'
         };
-        const venueTypeName = venueTypeMap[mergedProperties.venue_type] || 'Venue';
+        const venueTypeName = venueTypeMap[mergedProperties.venue_type] || 'Fitness Center';
         const location = mergedProperties.Billing_District || 'Dubai';
         mergedProperties.Account_Name = `${location} ${venueTypeName}`;
     }
@@ -327,10 +376,34 @@ const venues = geojsonData.features.map((feature, index) => {
         mergedProperties.Int_phone_google_mapsly = `+${mergedProperties.Int_phone_google_mapsly}`;
     }
     
-    // Convert Healthy_food_level from number to valid enum string
-    if (mergedProperties.Healthy_food_level !== undefined) {
-        mergedProperties.Healthy_food_level = convertHealthyFoodLevel(mergedProperties.Healthy_food_level);
+    // Convert string numbers to actual numbers
+    numericFields.forEach(field => {
+        if (mergedProperties[field] !== undefined) {
+            mergedProperties[field] = convertStringNumber(mergedProperties[field]);
+        }
+    });
+    
+    // Convert empty strings to null for nullable fields
+    nullableFields.forEach(field => {
+        if (mergedProperties[field] !== undefined) {
+            mergedProperties[field] = convertEmptyString(mergedProperties[field]);
+        }
+    });
+    
+    // Handle Entrance_Fee - convert to proper format
+    if (mergedProperties.Entrance_Fee !== undefined) {
+        if (typeof mergedProperties.Entrance_Fee === 'string') {
+            if (mergedProperties.Entrance_Fee === '' || mergedProperties.Entrance_Fee.toLowerCase() === 'none' || mergedProperties.Entrance_Fee === '0') {
+                mergedProperties.Entrance_Fee = "None";
+            } else if (!isNaN(mergedProperties.Entrance_Fee)) {
+                // Keep numeric entrance fees as strings but ensure they're clean
+                mergedProperties.Entrance_Fee = mergedProperties.Entrance_Fee.toString();
+            }
+        }
     }
+    
+    // REMOVE Healthy_food_level completely for gym/yoga venues since null is not valid
+    delete mergedProperties.Healthy_food_level;
     
     // Convert Budget_Friendly to single dollar (only valid enum value)
     if (mergedProperties.Budget_Friendly !== undefined) {
@@ -375,24 +448,28 @@ const venues = geojsonData.features.map((feature, index) => {
 });
 
 // Write the converted data
-fs.writeFileSync('venues_dubai_places_for_import_local.json', JSON.stringify(venues, null, 2));
+fs.writeFileSync('venues_gyms_yoga_for_import_local.json', JSON.stringify(venues, null, 2));
 
-console.log(`Converted ${venues.length} Dubai venue places for import`);
+console.log(`Converted ${venues.length} gym and yoga venues for import`);
 console.log('✅ All boolean fields converted to true/false (not 1/0)');
 console.log('✅ Preserved ALL existing venue_type_display and venue_category_display');
-console.log('✅ Added support for luqaimat stalls, street vendors, and all venue types');
+console.log('✅ Added support for gym, yoga, fitness, wellness, pilates, crossfit, and martial arts venues');
 console.log('✅ Fixed duplicate Smoking Policy field issue');
 console.log('✅ Generated unique Dubai_id values to avoid conflicts');
 console.log('✅ Converted phone numbers from number to string format');
-console.log('✅ Fixed Healthy_food_level: converted numeric values to enum strings');
+console.log('✅ Converted string numbers to actual numbers for numeric fields');
+console.log('✅ Converted empty strings to null for nullable fields');
+console.log('✅ REMOVED Healthy_food_level field completely for gym/yoga venues (not applicable)');
 console.log('✅ Fixed Budget_Friendly: all values converted to "$" (only valid enum value)');
 console.log('✅ Fixed Power_outlet_density: converted "none" to "Low" and other values to valid enums');
 console.log('✅ Fixed Staff_friedliness_bage: converted "neutral" to "Neutral" (proper case)');
 console.log('✅ Fixed HL_zoho_AC_Fan: converted "portable_fan" to "Fan" (valid enum)');
 console.log('✅ Fixed Noise_Level: using only known working values (Quiet/Moderate/Lively)');
+console.log('✅ Fixed Entrance_Fee: handled numeric values and "None" properly');
+console.log('✅ Set fitness-appropriate defaults (water refills=true, day_pass=true, etc.)');
 console.log('✅ Generated meaningful Account_Name based on location and type');
 console.log('✅ Preserved ALL existing data while adding missing defaults only');
 console.log('✅ All fields now match frontend expectations');
 console.log('✅ REMOVED Kids_friendly_badge field completely to avoid validation errors');
 console.log('Account_name_local field removed if present');
-console.log('File saved as: venues_dubai_places_for_import_local.json');
+console.log('File saved as: venues_gyms_yoga_for_import_local.json');
