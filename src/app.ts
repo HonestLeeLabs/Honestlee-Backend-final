@@ -13,11 +13,17 @@ import userRoutes from './routes/userRoutes';
 import adminRoutes from './routes/adminRoutes';
 import zohoRoutes from './routes/zohoRoutes';
 import webhookRoutes from './routes/webhookRoutes';
-import venueDubaiRoutes from './routes/venueDubaiRoutes'; // NEW: Import venue Dubai routes
+import venueDubaiRoutes from './routes/venueDubaiRoutes';
+import eventDubaiRoutes from './routes/eventDubaiRoutes';
 import { startSyncJobs } from './jobs/syncJob';
 import { errorHandler } from './utils/errorHandler';
 import { testEmailConfig } from './services/emailService';
 import uploadRoutes from './routes/uploadRoutes';
+
+
+// ADD THIS RIGHT AFTER THE IMPORT
+console.log('✅ eventDubaiRoutes imported:', typeof eventDubaiRoutes);
+console.log('✅ eventDubaiRoutes is Router?', eventDubaiRoutes?.stack ? 'Yes' : 'No');
 
 dotenv.config();
 
@@ -116,7 +122,8 @@ app.use('/api/auth', googleAuthRoutes);
 app.use('/api/wifi', wifiRoutes);
 app.use('/api/reviews', reviewRoutes);
 app.use('/api/venues', venueRoutes);
-app.use('/api/venues-dubai', venueDubaiRoutes); // NEW: Add venue Dubai routes
+app.use('/api/venues-dubai', venueDubaiRoutes);
+app.use('/api/events-dubai', eventDubaiRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/zoho', zohoRoutes);
