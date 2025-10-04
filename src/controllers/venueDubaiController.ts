@@ -1,6 +1,8 @@
 import { Request, Response } from 'express';
 import VenueDubai, { IVenueDubai } from '../models/VenueDubai';
+import EventDubai, { IEventDubai } from '../models/EventDubai';
 import { AuthRequest } from '../middlewares/authMiddleware';
+
 
 // GET /api/venues-dubai - Get all venues with filtering, pagination, and search
 export const getAllVenues = async (req: Request, res: Response) => {
@@ -22,8 +24,10 @@ export const getAllVenues = async (req: Request, res: Response) => {
       sort = 'Rating'
     } = req.query;
 
+
     // Build query object
     const query: any = {};
+
 
     // Text search across multiple fields
     if (search) {
@@ -35,6 +39,7 @@ export const getAllVenues = async (req: Request, res: Response) => {
       ];
     }
 
+
     // Filter by venue type
     if (venue_type) query.venue_type = venue_type;
     if (venue_category) query.venue_category = venue_category;
@@ -44,11 +49,13 @@ export const getAllVenues = async (req: Request, res: Response) => {
     if (alcohol === 'true') query.Alcohol_served = 1;
     if (rating) query.Rating = { $gte: parseFloat(rating as string) };
 
+
     // Geospatial query for nearby venues
     if (latitude && longitude) {
       const lat = parseFloat(latitude as string);
       const lng = parseFloat(longitude as string);
       const maxDistance = radius ? parseInt(radius as string) * 1000 : 5000; // Default 5km
+
 
       query.geometry = {
         $near: {
@@ -60,6 +67,7 @@ export const getAllVenues = async (req: Request, res: Response) => {
         }
       };
     }
+
 
     // Sort options
     const sortOptions: any = {};
@@ -77,10 +85,12 @@ export const getAllVenues = async (req: Request, res: Response) => {
         sortOptions.Rating = -1;
     }
 
+
     // Pagination
     const pageNumber = parseInt(page as string);
     const pageSize = parseInt(limit as string);
     const skip = (pageNumber - 1) * pageSize;
+
 
     // Execute query
     const [venues, totalCount] = await Promise.all([
@@ -92,10 +102,12 @@ export const getAllVenues = async (req: Request, res: Response) => {
       VenueDubai.countDocuments(query)
     ]);
 
+
     // Calculate distance if coordinates provided
     const venuesWithDistance = latitude && longitude ? venues.map(venue => {
       const lat = parseFloat(latitude as string);
       const lng = parseFloat(longitude as string);
+
 
       if (venue.geometry?.coordinates) {
         const [venueLng, venueLat] = venue.geometry.coordinates;
@@ -104,6 +116,7 @@ export const getAllVenues = async (req: Request, res: Response) => {
       }
       return venue;
     }) : venues;
+
 
     res.json({
       success: true,
@@ -135,19 +148,23 @@ export const getAllVenues = async (req: Request, res: Response) => {
   }
 };
 
+
 // GET /api/venues-dubai/:id - Get single venue by ID
 export const getVenueById = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
+    const { include_events = 'false' } = req.query;
+
 
     let venue;
 
-    // Try to find by MongoDB ObjectId first, then by Dubai_id
+
     if (id.match(/^[0-9a-fA-F]{24}$/)) {
       venue = await VenueDubai.findById(id);
     } else {
       venue = await VenueDubai.findOne({ Dubai_id: id });
     }
+
 
     if (!venue) {
       return res.status(404).json({
@@ -156,9 +173,24 @@ export const getVenueById = async (req: Request, res: Response) => {
       });
     }
 
+
+    // Optionally include events - FIXED: Explicit type annotation
+    let events: IEventDubai[] = [];
+    if (include_events === 'true') {
+      events = await EventDubai.find({ 
+        Account_Name: venue.Account_Name,
+        EventStarts_At: { $gte: new Date() }
+      }).sort({ EventStarts_At: 1 });
+    }
+
+
     res.json({
       success: true,
-      data: venue
+      data: {
+        ...venue.toObject(),
+        events: include_events === 'true' ? events : undefined,
+        eventCount: include_events === 'true' ? events.length : undefined
+      }
     });
   } catch (error: any) {
     res.status(500).json({
@@ -168,6 +200,7 @@ export const getVenueById = async (req: Request, res: Response) => {
     });
   }
 };
+
 
 // POST /api/venues-dubai - Create new venue (Admin/Staff only)
 export const createVenue = async (req: AuthRequest, res: Response) => {
@@ -180,7 +213,9 @@ export const createVenue = async (req: AuthRequest, res: Response) => {
       });
     }
 
+
     const venueData = req.body;
+
 
     // Validate required fields
     if (!venueData.Dubai_id || !venueData.Account_Name) {
@@ -189,6 +224,7 @@ export const createVenue = async (req: AuthRequest, res: Response) => {
         message: 'Dubai_id and Account_Name are required'
       });
     }
+
 
     // Check if venue with same Dubai_id already exists
     const existingVenue = await VenueDubai.findOne({ Dubai_id: venueData.Dubai_id });
@@ -199,9 +235,11 @@ export const createVenue = async (req: AuthRequest, res: Response) => {
       });
     }
 
+
     // Create new venue
     const venue = new VenueDubai(venueData);
     await venue.save();
+
 
     res.status(201).json({
       success: true,
@@ -217,6 +255,7 @@ export const createVenue = async (req: AuthRequest, res: Response) => {
       });
     }
 
+
     res.status(400).json({
       success: false,
       message: 'Error creating venue',
@@ -224,6 +263,7 @@ export const createVenue = async (req: AuthRequest, res: Response) => {
     });
   }
 };
+
 
 // PUT /api/venues-dubai/:id - Update venue (Admin/Staff only)
 export const updateVenue = async (req: AuthRequest, res: Response) => {
@@ -236,15 +276,19 @@ export const updateVenue = async (req: AuthRequest, res: Response) => {
       });
     }
 
+
     const { id } = req.params;
     const updateData = req.body;
+
 
     // Remove sensitive fields that shouldn't be updated directly
     delete updateData._id;
     delete updateData.createdAt;
     delete updateData.updatedAt;
 
+
     let venue;
+
 
     // Try to find by MongoDB ObjectId first, then by Dubai_id
     if (id.match(/^[0-9a-fA-F]{24}$/)) {
@@ -261,12 +305,14 @@ export const updateVenue = async (req: AuthRequest, res: Response) => {
       );
     }
 
+
     if (!venue) {
       return res.status(404).json({
         success: false,
         message: 'Venue not found'
       });
     }
+
 
     res.json({
       success: true,
@@ -282,6 +328,7 @@ export const updateVenue = async (req: AuthRequest, res: Response) => {
   }
 };
 
+
 // DELETE /api/venues-dubai/:id - Delete venue (Admin only)
 export const deleteVenue = async (req: AuthRequest, res: Response) => {
   try {
@@ -293,9 +340,12 @@ export const deleteVenue = async (req: AuthRequest, res: Response) => {
       });
     }
 
+
     const { id } = req.params;
 
+
     let venue;
+
 
     // Try to find by MongoDB ObjectId first, then by Dubai_id
     if (id.match(/^[0-9a-fA-F]{24}$/)) {
@@ -304,12 +354,14 @@ export const deleteVenue = async (req: AuthRequest, res: Response) => {
       venue = await VenueDubai.findOneAndDelete({ Dubai_id: id });
     }
 
+
     if (!venue) {
       return res.status(404).json({
         success: false,
         message: 'Venue not found'
       });
     }
+
 
     res.json({
       success: true,
@@ -325,10 +377,12 @@ export const deleteVenue = async (req: AuthRequest, res: Response) => {
   }
 };
 
+
 // GET /api/venues-dubai/nearby - Find nearby venues
 export const getNearbyVenues = async (req: Request, res: Response) => {
   try {
     const { latitude, longitude, radius = 5, limit = 10 } = req.query;
+
 
     if (!latitude || !longitude) {
       return res.status(400).json({
@@ -337,10 +391,12 @@ export const getNearbyVenues = async (req: Request, res: Response) => {
       });
     }
 
+
     const lat = parseFloat(latitude as string);
     const lng = parseFloat(longitude as string);
     const maxDistance = parseInt(radius as string) * 1000; // Convert to meters
     const maxResults = parseInt(limit as string);
+
 
     const venues = await VenueDubai.find({
       geometry: {
@@ -354,6 +410,7 @@ export const getNearbyVenues = async (req: Request, res: Response) => {
       }
     }).limit(maxResults);
 
+
     // Calculate distances
     const venuesWithDistance = venues.map(venue => {
       const distance = venue.getDistance(lng, lat);
@@ -362,6 +419,7 @@ export const getNearbyVenues = async (req: Request, res: Response) => {
         distance: distance ? Math.round(distance * 100) / 100 : null
       };
     });
+
 
     res.json({
       success: true,
@@ -381,6 +439,7 @@ export const getNearbyVenues = async (req: Request, res: Response) => {
   }
 };
 
+
 // GET /api/venues-dubai/filters - Get available filter options
 export const getFilterOptions = async (req: Request, res: Response) => {
   try {
@@ -395,6 +454,7 @@ export const getFilterOptions = async (req: Request, res: Response) => {
       VenueDubai.distinct('Billing_District').then(dists => dists.filter(Boolean)),
       VenueDubai.distinct('Budget_Friendly').then(budgets => budgets.filter(Boolean))
     ]);
+
 
     res.json({
       success: true,
@@ -414,6 +474,7 @@ export const getFilterOptions = async (req: Request, res: Response) => {
   }
 };
 
+
 // POST /api/venues-dubai/bulk-import - Import multiple venues from JSON (Admin only)
 export const bulkImportVenues = async (req: AuthRequest, res: Response) => {
   try {
@@ -425,7 +486,9 @@ export const bulkImportVenues = async (req: AuthRequest, res: Response) => {
       });
     }
 
+
     const { venues, overwrite = false } = req.body;
+
 
     if (!Array.isArray(venues) || venues.length === 0) {
       return res.status(400).json({
@@ -434,12 +497,14 @@ export const bulkImportVenues = async (req: AuthRequest, res: Response) => {
       });
     }
 
+
     const results = {
       created: 0,
       updated: 0,
       errors: 0,
       details: [] as any[]
     };
+
 
     for (const venueData of venues) {
       try {
@@ -452,7 +517,9 @@ export const bulkImportVenues = async (req: AuthRequest, res: Response) => {
           continue;
         }
 
+
         const existingVenue = await VenueDubai.findOne({ Dubai_id: venueData.Dubai_id });
+
 
         if (existingVenue && overwrite) {
           await VenueDubai.findOneAndUpdate(
@@ -489,6 +556,7 @@ export const bulkImportVenues = async (req: AuthRequest, res: Response) => {
       }
     }
 
+
     res.json({
       success: true,
       message: 'Bulk import completed',
@@ -502,6 +570,7 @@ export const bulkImportVenues = async (req: AuthRequest, res: Response) => {
     });
   }
 };
+
 
 // Utility function to calculate distance between two points
 function calculateDistance(lat1: number, lng1: number, lat2: number, lng2: number): number {
