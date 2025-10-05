@@ -14,6 +14,8 @@ export const getAllEvents = async (req: Request, res: Response) => {
       event_category,
       venue_id,
       account_name,
+      startDate,
+      endDate,
       upcoming = 'true',
       active = 'false',
       sort = 'date'
@@ -21,29 +23,50 @@ export const getAllEvents = async (req: Request, res: Response) => {
 
     const query: any = {};
 
-    // Text search
+    // Universal text search across multiple fields
     if (search) {
       query.$or = [
         { Event_Name: { $regex: search, $options: 'i' } },
         { Account_Name: { $regex: search, $options: 'i' } },
-        { Even_description: { $regex: search, $options: 'i' } }
+        { Even_description: { $regex: search, $options: 'i' } },
+        { Event_Category: { $regex: search, $options: 'i' } },
+        { Event_typs_displayname: { $regex: search, $options: 'i' } },
+        { Event_type: { $regex: search, $options: 'i' } }
       ];
     }
 
-    // Filters
+    // Specific field filters
     if (event_type) query.Event_type = event_type;
     if (event_category) query.Event_Category = event_category;
     if (venue_id) query.Dubai_id = venue_id;
     if (account_name) query.Account_Name = account_name;
 
-    // Time filters
-    const now = new Date();
-    if (upcoming === 'true') {
-      query.EventStarts_At = { $gte: now };
-    }
-    if (active === 'true') {
-      query.EventStarts_At = { $lte: now };
-      query.EventEnds_At = { $gte: now };
+    // Date range filters
+    if (startDate || endDate) {
+      query.EventStarts_At = {};
+      
+      if (startDate) {
+        const start = new Date(startDate as string);
+        start.setHours(0, 0, 0, 0);
+        query.EventStarts_At.$gte = start;
+      }
+      
+      if (endDate) {
+        const end = new Date(endDate as string);
+        end.setHours(23, 59, 59, 999);
+        query.EventStarts_At.$lte = end;
+      }
+    } 
+    // Upcoming/Active filters (only if no date range specified)
+    else {
+      const now = new Date();
+      if (upcoming === 'true') {
+        query.EventStarts_At = { $gte: now };
+      }
+      if (active === 'true') {
+        query.EventStarts_At = { $lte: now };
+        query.EventEnds_At = { $gte: now };
+      }
     }
 
     // Sort options
@@ -92,6 +115,8 @@ export const getAllEvents = async (req: Request, res: Response) => {
         event_category,
         venue_id,
         account_name,
+        startDate,
+        endDate,
         upcoming: upcoming === 'true',
         active: active === 'true'
       }
