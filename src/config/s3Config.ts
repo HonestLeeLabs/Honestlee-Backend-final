@@ -27,7 +27,7 @@ const fileFilter = (req: any, file: any, cb: any) => {
 export const uploadProfileImage = multer({
   storage: multerS3({
     s3: s3,
-    bucket: process.env.S3_BUCKET_NAME || 'honestlee-user-uploads',
+    bucket: process.env.S3_BUCKET_NAME || 'honestlee-user-upload',
     metadata: function (req, file, cb) {
       cb(null, { fieldName: file.fieldname });
     },
@@ -52,7 +52,7 @@ export const uploadProfileImage = multer({
 export const deleteFileFromS3 = async (fileKey: string): Promise<boolean> => {
   try {
     const command = new DeleteObjectCommand({
-      Bucket: process.env.S3_BUCKET_NAME || 'honestlee-user-uploads',
+      Bucket: process.env.S3_BUCKET_NAME || 'honestlee-user-upload',
       Key: fileKey
     });
     
