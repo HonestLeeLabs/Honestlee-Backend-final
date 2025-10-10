@@ -44,6 +44,10 @@ const corsOptions = {
     'http://in.honestlee.app',
     'https://ae.honestlee.app',
     'https://in.honestlee.app',
+    'https://honestlee.ae',
+    'http://honestlee.ae',
+    'https://api.honestlee.ae', 
+
   ],
   credentials: true,              // Allow cookies and authentication headers
   optionsSuccessStatus: 200,      // Support legacy browsers
