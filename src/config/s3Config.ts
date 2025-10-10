@@ -39,8 +39,7 @@ export const uploadProfileImage = multer({
       const fileName = `profile-images/${userId}-${uniqueId}${fileExtension}`;
       cb(null, fileName);
     },
-    contentType: multerS3.AUTO_CONTENT_TYPE,
-    acl: 'public-read'
+    contentType: multerS3.AUTO_CONTENT_TYPE
   }),
   fileFilter: fileFilter,
   limits: {
