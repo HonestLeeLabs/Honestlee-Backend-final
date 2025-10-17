@@ -93,7 +93,7 @@ app.use((req, res, next) => {
   res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, Cache-Control, X-File-Name, x-region, X-Region');
   res.header('Access-Control-Allow-Credentials', 'true');
   next();
-});
+}); 
 
 mongoose.connect(process.env.MONGODB_URI || '')
   .then(async () => {
