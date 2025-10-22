@@ -271,7 +271,7 @@ try {
     venues: finalVenues,
     overwrite: false
   };
-  
+   
   fs.writeFileSync('./ALL_VENUES_COMPLETE_IMPORT.json', JSON.stringify(apiImportData, null, 2));
   
   console.log('\n' + '═'.repeat(60));
