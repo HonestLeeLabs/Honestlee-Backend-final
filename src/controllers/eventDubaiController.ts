@@ -150,7 +150,7 @@ export const getEventById = async (req: Request, res: Response) => {
     }
 
     // Get venue details
-    const venue = await VenueDubai.findOne({ Account_Name: event.Account_Name });
+    const venue = await VenueDubai.findOne({ AccountName: event.Account_Name });
 
     res.json({
       success: true,
@@ -174,8 +174,8 @@ export const getEventsByVenue = async (req: Request, res: Response) => {
     const { account_name } = req.params;
     const { upcoming = 'true' } = req.query;
 
-    // Verify venue exists
-    const venue = await VenueDubai.findOne({ Account_Name: account_name });
+    // Verify venue exists - FIXED: Use AccountName instead of Account_Name
+    const venue = await VenueDubai.findOne({ AccountName: account_name });
     if (!venue) {
       return res.status(404).json({
         success: false,
@@ -230,8 +230,8 @@ export const createEvent = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    // Verify venue exists
-    const venue = await VenueDubai.findOne({ Account_Name: eventData.Account_Name });
+    // Verify venue exists - FIXED: Use AccountName instead of Account_Name
+    const venue = await VenueDubai.findOne({ AccountName: eventData.Account_Name });
     if (!venue) {
       return res.status(400).json({
         success: false,
@@ -239,9 +239,9 @@ export const createEvent = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    // Set Dubai_id from venue if not provided
+    // Set Dubai_id from venue if not provided - FIXED: Use Dubaiid
     if (!eventData.Dubai_id) {
-      eventData.Dubai_id = venue.Dubai_id;
+      eventData.Dubai_id = venue.Dubaiid;
     }
 
     // Check for duplicate event ID
@@ -287,16 +287,17 @@ export const updateEvent = async (req: AuthRequest, res: Response) => {
     delete updateData.createdAt;
     delete updateData.updatedAt;
 
-    // If Account_Name is being changed, verify new venue exists
+    // If Account_Name is being changed, verify new venue exists - FIXED: Use AccountName
     if (updateData.Account_Name) {
-      const venue = await VenueDubai.findOne({ Account_Name: updateData.Account_Name });
+      const venue = await VenueDubai.findOne({ AccountName: updateData.Account_Name });
       if (!venue) {
         return res.status(400).json({
           success: false,
           message: `Venue with Account_Name "${updateData.Account_Name}" not found`
         });
       }
-      updateData.Dubai_id = venue.Dubai_id;
+      // FIXED: Use Dubaiid instead of Dubai_id
+      updateData.Dubai_id = venue.Dubaiid;
     }
 
     let event;
@@ -404,8 +405,8 @@ export const bulkImportEvents = async (req: AuthRequest, res: Response) => {
           continue;
         }
 
-        // Verify venue exists
-        const venue = await VenueDubai.findOne({ Account_Name: eventData.Account_Name });
+        // Verify venue exists - FIXED: Use AccountName instead of Account_Name
+        const venue = await VenueDubai.findOne({ AccountName: eventData.Account_Name });
         if (!venue) {
           results.errors++;
           results.details.push({
@@ -415,8 +416,8 @@ export const bulkImportEvents = async (req: AuthRequest, res: Response) => {
           continue;
         }
 
-        // Set Dubai_id from venue
-        eventData.Dubai_id = venue.Dubai_id;
+        // Set Dubai_id from venue - FIXED: Use Dubaiid
+        eventData.Dubai_id = venue.Dubaiid;
 
         const existingEvent = await EventDubai.findOne({ Dubai_event_id: eventData.Dubai_event_id });
 

@@ -86,8 +86,8 @@ async function importEvents() {
           continue;
         }
         
-        // Verify venue exists
-        const venue = await VenueDubai.findOne({ Account_Name: eventData.Account_Name });
+        // Verify venue exists - FIXED: Use AccountName (camelCase)
+        const venue = await VenueDubai.findOne({ AccountName: eventData.Account_Name });
         
         if (!venue) {
           console.error(`   ❌ Venue not found: ${eventData.Account_Name}`);
@@ -96,10 +96,11 @@ async function importEvents() {
           continue;
         }
 
-        console.log(`   ✅ Venue found: ${venue.Account_Name} (${venue.Dubai_id})`);
+        // FIXED: Use camelCase field names
+        console.log(`   ✅ Venue found: ${venue.AccountName} (${venue.Dubaiid})`);
 
-        // Set Dubai_id from venue
-        eventData.Dubai_id = venue.Dubai_id;
+        // Set Dubai_id from venue - FIXED: Use Dubaiid
+        eventData.Dubai_id = venue.Dubaiid;
 
         // Check if event already exists
         const existingEvent = await EventDubai.findOne({ Dubai_event_id: eventData.Dubai_event_id });

@@ -1,9 +1,10 @@
+// src/app.ts or src/index.ts
 import express from 'express';
 import cors from 'cors';
 import 'express-async-errors';
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
-import session from 'express-session'; // 🆕 Add session support
+import session from 'express-session';
 import passport from './config/passport';
 import authRoutes from './routes/authRoutes';
 import googleAuthRoutes from './routes/googleAuthRoutes';
@@ -46,8 +47,8 @@ const corsOptions = {
     'https://honestlee.ae',
     'http://honestlee.ae',
     'https://api.honestlee.ae',
-    'https://hlee.app',        // 🆕 Add QR landing page
-    'https://www.hlee.app',    // 🆕 Add WWW version
+    'https://hlee.app',
+    'https://www.hlee.app',
   ],
   credentials: true,
   optionsSuccessStatus: 200,
@@ -66,9 +67,12 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-app.use(express.json());
 
-// 🆕 Add session support for OAuth state
+// ⭐ INCREASED TO 1GB for massive bulk imports
+app.use(express.json({ limit: '1gb' }));
+app.use(express.urlencoded({ limit: '1gb', extended: true }));
+
+// Session support for OAuth state
 app.use(session({
   secret: process.env.SESSION_SECRET || 'your-session-secret-change-this',
   resave: false,
@@ -81,7 +85,7 @@ app.use(session({
 }));
 
 app.use(passport.initialize());
-app.use(passport.session()); // 🆕 Add passport session
+app.use(passport.session());
 
 // Add preflight handler for complex CORS requests
 app.options('*', cors(corsOptions));
@@ -97,36 +101,40 @@ app.use((req, res, next) => {
 
 mongoose.connect(process.env.MONGODB_URI || '')
   .then(async () => {
-    console.log('MongoDB connected');
+    console.log('✅ MongoDB connected');
+    console.log('📦 Max request body size: 1GB (for bulk imports)');
 
     try {
       const db = mongoose.connection.db;
       const collection = db.collection('users');
 
+      // Drop old indexes
       try {
         await collection.dropIndex('phone_1');
-        console.log('Dropped phone_1 index');
+        console.log('✅ Dropped phone_1 index');
       } catch (e) {
-        console.log('phone_1 index not found or already dropped');
+        console.log('⚠️  phone_1 index not found or already dropped');
       }
 
       try {
         await collection.dropIndex('email_1');
-        console.log('Dropped email_1 index');
+        console.log('✅ Dropped email_1 index');
       } catch (e) {
-        console.log('email_1 index not found or already dropped');
+        console.log('⚠️  email_1 index not found or already dropped');
       }
 
+      // Create sparse indexes
       await collection.createIndex({ phone: 1 }, { unique: true, sparse: true });
       await collection.createIndex({ email: 1 }, { unique: true, sparse: true });
-      console.log('Created sparse indexes for phone and email');
+      console.log('✅ Created sparse indexes for phone and email');
 
     } catch (error) {
-      console.error('Error fixing indexes:', error);
+      console.error('❌ Error fixing indexes:', error);
     }
   })
-  .catch(err => console.error('MongoDB connection error:', err));
+  .catch(err => console.error('❌ MongoDB connection error:', err));
 
+// Initialize services
 testEmailConfig();
 startSyncJobs();
 
@@ -150,15 +158,19 @@ app.get('/health', (req, res) => {
     status: 'OK', 
     timestamp: new Date().toISOString(),
     cors: 'Enabled for ports 3000, 3001 and production domains',
+    maxBodySize: '1GB',
     routes: {
       venues_dubai: '/api/venues-dubai',
+      events_dubai: '/api/events-dubai',
       auth: '/api/auth',
       google_auth: '/api/auth/google',
-      users: '/api/users'
+      users: '/api/users',
+      bulk_import: '/api/venues-dubai/bulk-import'
     }
   });
 });
 
+// Error handler
 app.use(errorHandler);
 
 export default app;
