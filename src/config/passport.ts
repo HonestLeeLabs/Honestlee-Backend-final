@@ -1,6 +1,6 @@
 import passport from 'passport';
 import { Strategy as GoogleStrategy, Profile } from 'passport-google-oauth20';
-import User, { Role, LoginMethod } from '../models/User';
+import User, { Role, LoginMethod, IUser } from '../models/User';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -13,21 +13,34 @@ if (!clientID || !clientSecret) {
   throw new Error('Google OAuth client ID and secret must be set in environment variables');
 }
 
-passport.serializeUser((user: any, done) => {
-  done(null, user._id);
+// ✅ FIX: Properly type the serializeUser
+passport.serializeUser((user: Express.User, done) => {
+  done(null, user.userId);
 });
 
-passport.deserializeUser(async (id: string, done) => {
+// ✅ FIX: Properly type the deserializeUser
+passport.deserializeUser(async (userId: string, done) => {
   try {
-    const user = await User.findById(id);
-    done(null, user);
+    const user = await User.findById(userId);
+    if (!user) {
+      return done(null, false);
+    }
+    
+    // Convert Mongoose document to Express.User format
+    const expressUser: Express.User = {
+      userId: user._id.toString(),
+      role: user.role,
+      email: user.email
+    };
+    
+    done(null, expressUser);
   } catch (err) {
     done(err);
   }
 });
 
-// 🆕 Helper function to store QR source data
-const storeQrSource = (user: any, hl_src: any) => {
+// Helper function to store QR source data
+const storeQrSource = (user: IUser, hl_src: any) => {
   if (!hl_src) return;
   
   if (hl_src.t) {
@@ -56,13 +69,13 @@ passport.use(new GoogleStrategy({
   clientID,
   clientSecret,
   callbackURL,
-  passReqToCallback: true, // 🆕 Enable access to req object
+  passReqToCallback: true,
 }, async (req, accessToken, refreshToken, profile: Profile, done) => {
   try {
     const email = profile.emails?.[0]?.value;
     if (!email) throw new Error('No email found in Google profile');
 
-    // 🆕 Get QR source from query params (passed from frontend)
+    // Get QR source from query params (passed from frontend)
     const hl_src = req.query?.hl_src ? JSON.parse(req.query.hl_src as string) : null;
 
     let user = await User.findOne({ email });
@@ -76,7 +89,7 @@ passport.use(new GoogleStrategy({
         loginMethod: LoginMethod.GOOGLE,
       });
       
-      // 🆕 Store QR source for new users
+      // Store QR source for new users
       storeQrSource(user, hl_src);
       
       await user.save();
@@ -92,15 +105,22 @@ passport.use(new GoogleStrategy({
         user.profileImage = profile.photos[0].value;
       }
       
-      // 🆕 Store QR source for existing users
+      // Store QR source for existing users
       storeQrSource(user, hl_src);
       
       await user.save();
     }
     
-    done(null, user);
+    // ✅ FIX: Convert to Express.User format before passing to done()
+    const expressUser: Express.User = {
+      userId: user._id.toString(),
+      role: user.role,
+      email: user.email
+    };
+    
+    done(null, expressUser);
   } catch (error) {
-    done(error);
+    done(error as Error);
   }
 }));
 
