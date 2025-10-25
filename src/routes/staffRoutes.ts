@@ -16,7 +16,8 @@ import {
   inviteStaffMember,
   updateStaffRole,
   removeStaffMember,
-  suspendStaffMember
+  suspendStaffMember,
+  testAddStaffToRoster // ✅ ADDED
 } from '../controllers/staffRosterController';
 import { authenticateToken, AuthRequest } from '../middlewares/authMiddleware';
 
@@ -47,5 +48,8 @@ router.post('/roster/invite', authenticateToken, authRoute(inviteStaffMember));
 router.put('/roster/:rosterId/role', authenticateToken, authRoute(updateStaffRole));
 router.delete('/roster/:rosterId', authenticateToken, authRoute(removeStaffMember));
 router.put('/roster/:rosterId/suspend', authenticateToken, authRoute(suspendStaffMember));
+
+// ✅ TEST ROUTE - Add yourself to roster
+router.post('/roster/test-add', authenticateToken, authRoute(testAddStaffToRoster));
 
 export default router;

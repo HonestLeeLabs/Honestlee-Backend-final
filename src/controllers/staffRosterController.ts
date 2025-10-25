@@ -4,6 +4,46 @@ import VenueRoster from '../models/VenueRoster';
 import User from '../models/User';
 import StaffSession from '../models/StaffSession';
 
+// ✅ TEST ENDPOINT - Add current user to roster
+export const testAddStaffToRoster = async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    const { venueId } = req.body;
+
+    // Check if already exists
+    const existing = await VenueRoster.findOne({
+      staffUserId: req.user.userId,
+      venueId
+    });
+
+    if (existing) {
+      return res.json({ success: true, message: 'Already in roster', data: existing });
+    }
+
+    // ✅ FIX: Use OWNER instead of ADMIN
+    const roster = new VenueRoster({
+      staffUserId: req.user.userId,
+      venueId,
+      role: 'OWNER', // ✅ CHANGED FROM ADMIN TO OWNER
+      status: 'ACTIVE',
+      permissions: ['VIEW_DASHBOARD', 'MANAGE_STAFF', 'VIEW_REDEMPTIONS', 'APPROVE_REDEMPTIONS'],
+      joinedAt: new Date(),
+      invitedBy: req.user.userId
+    });
+
+    await roster.save();
+
+    res.json({ success: true, message: 'Added to roster successfully', data: roster });
+
+  } catch (error: any) {
+    console.error('Error adding to roster:', error);
+    res.status(500).json({ success: false, message: 'Error adding to roster', error: error.message });
+  }
+};
+
 // GET /api/staff/roster/:venueId - Get venue roster
 export const getVenueRoster = async (req: AuthRequest, res: Response) => {
   try {

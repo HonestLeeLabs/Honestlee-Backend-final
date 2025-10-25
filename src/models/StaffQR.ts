@@ -2,7 +2,7 @@ import mongoose, { Schema, Document } from 'mongoose';
 
 export interface IStaffQR extends Document {
   venueId: mongoose.Types.ObjectId;
-  roleScope: 'MEMBER' | 'STAFF' | 'MANAGER';
+  roleScope: 'MEMBER' | 'STAFF' | 'MANAGER' | 'OWNER'; // ✅ ADDED OWNER
   token: string;
   tokenHash: string;
   issuedAt: Date;
@@ -20,7 +20,7 @@ const StaffQRSchema = new Schema<IStaffQR>({
   venueId: { type: Schema.Types.ObjectId, ref: 'Venue', required: true, index: true },
   roleScope: { 
     type: String, 
-    enum: ['MEMBER', 'STAFF', 'MANAGER'], 
+    enum: ['MEMBER', 'STAFF', 'MANAGER', 'OWNER'], // ✅ ADDED OWNER
     required: true 
   },
   token: { type: String, required: true, unique: true },
