@@ -1,4 +1,4 @@
-// src/app.ts or src/index.ts
+// src/app.ts
 import express from 'express';
 import cors from 'cors';
 import 'express-async-errors';
@@ -21,6 +21,9 @@ import { startSyncJobs } from './jobs/syncJob';
 import { errorHandler } from './utils/errorHandler';
 import { testEmailConfig } from './services/emailService';
 import uploadRoutes from './routes/uploadRoutes';
+import offerRoutes from './routes/offerRoutes';
+import redemptionRoutes from './routes/redemptionRoutes';
+import staffRoutes from './routes/staffRoutes'; // ✅ ADDED
 
 console.log('✅ eventDubaiRoutes imported:', typeof eventDubaiRoutes);
 console.log('✅ eventDubaiRoutes is Router?', eventDubaiRoutes?.stack ? 'Yes' : 'No');
@@ -29,7 +32,7 @@ dotenv.config();
 
 const app = express();
 
-// CORS Configuration for Frontend Access
+// CORS Configuration
 const corsOptions = {
   origin: [
     'http://localhost:3000',
@@ -62,17 +65,17 @@ const corsOptions = {
     'Cache-Control',
     'X-File-Name',
     'x-region',
-    'X-Region'
+    'X-Region',
+    'x-device-id',    // ✅ ADDED for staff sessions
+    'x-platform'      // ✅ ADDED for staff sessions
   ]
 };
 
 app.use(cors(corsOptions));
-
-// ⭐ INCREASED TO 1GB for massive bulk imports
 app.use(express.json({ limit: '1gb' }));
 app.use(express.urlencoded({ limit: '1gb', extended: true }));
 
-// Session support for OAuth state
+// Session support
 app.use(session({
   secret: process.env.SESSION_SECRET || 'your-session-secret-change-this',
   resave: false,
@@ -80,35 +83,49 @@ app.use(session({
   cookie: {
     secure: process.env.NODE_ENV === 'production',
     httpOnly: true,
-    maxAge: 10 * 60 * 1000 // 10 minutes
+    maxAge: 10 * 60 * 1000
   }
 }));
 
 app.use(passport.initialize());
 app.use(passport.session());
-
-// Add preflight handler for complex CORS requests
 app.options('*', cors(corsOptions));
 
-// Add additional headers for streaming responses
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, Cache-Control, X-File-Name, x-region, X-Region');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, Cache-Control, X-File-Name, x-region, X-Region, x-device-id, x-platform');
   res.header('Access-Control-Allow-Credentials', 'true');
   next();
-}); 
+});
 
-mongoose.connect(process.env.MONGODB_URI || '')
-  .then(async () => {
-    console.log('✅ MongoDB connected');
+// ✅ FIX: MongoDB connection with proper scoping
+const connectDB = async (retries = 5) => {
+  // ✅ FIX: Define mongoURI outside try block
+  const mongoURI = process.env.MONGODB_URI;
+
+  try {
+    if (!mongoURI) {
+      throw new Error('MONGODB_URI is not defined in environment variables');
+    }
+
+    console.log('🔄 Attempting MongoDB connection...');
+    console.log('📍 Database:', mongoURI.split('/')[3]?.split('?')[0] || 'Not specified');
+
+    await mongoose.connect(mongoURI, {
+      serverSelectionTimeoutMS: 10000,
+      socketTimeoutMS: 45000,
+    });
+
+    console.log('✅ MongoDB connected successfully');
+    console.log('📦 Database name:', mongoose.connection.name);
     console.log('📦 Max request body size: 1GB (for bulk imports)');
 
+    // Fix indexes after successful connection
     try {
       const db = mongoose.connection.db;
       const collection = db.collection('users');
 
-      // Drop old indexes
       try {
         await collection.dropIndex('phone_1');
         console.log('✅ Dropped phone_1 index');
@@ -123,7 +140,6 @@ mongoose.connect(process.env.MONGODB_URI || '')
         console.log('⚠️  email_1 index not found or already dropped');
       }
 
-      // Create sparse indexes
       await collection.createIndex({ phone: 1 }, { unique: true, sparse: true });
       await collection.createIndex({ email: 1 }, { unique: true, sparse: true });
       console.log('✅ Created sparse indexes for phone and email');
@@ -131,12 +147,35 @@ mongoose.connect(process.env.MONGODB_URI || '')
     } catch (error) {
       console.error('❌ Error fixing indexes:', error);
     }
-  })
-  .catch(err => console.error('❌ MongoDB connection error:', err));
 
-// Initialize services
-testEmailConfig();
-startSyncJobs();
+    // Initialize services after successful connection
+    testEmailConfig();
+    startSyncJobs();
+
+  } catch (error: any) {
+    console.error('❌ MongoDB connection error:', error.message);
+
+    if (retries > 0) {
+      console.log(`🔄 Retrying connection... (${retries} attempts left)`);
+      await new Promise(resolve => setTimeout(resolve, 5000));
+      return connectDB(retries - 1);
+    } else {
+      console.error('❌ MongoDB connection failed after all retries');
+      console.error('💡 Troubleshooting:');
+      console.error('   1. Check MONGODB_URI includes database name: /test?...');
+      console.error('   2. Verify IP is whitelisted (0.0.0.0/0 for all)');
+      console.error('   3. Ensure cluster is running in MongoDB Atlas');
+      console.error('   4. Check username/password are correct');
+      console.error('   5. Current URI:', mongoURI?.substring(0, 50) + '...');
+      console.error('   6. Try standard connection string instead of SRV');
+      
+      console.warn('⚠️  Server will continue but database operations will fail');
+    }
+  }
+};
+
+// Connect to database
+connectDB();
 
 // API Routes
 app.use('/api/auth', authRoutes);
@@ -151,12 +190,20 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/zoho', zohoRoutes);
 app.use('/webhooks', webhookRoutes);
 app.use('/api/upload', uploadRoutes);
+app.use('/api/offers', offerRoutes);
+app.use('/api/redemptions', redemptionRoutes);
+app.use('/api/staff', staffRoutes); // ✅ ADDED STAFF ROUTES
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'OK', 
+  const dbStatus = mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected';
+  res.json({
+    status: 'OK',
     timestamp: new Date().toISOString(),
+    database: {
+      status: dbStatus,
+      name: mongoose.connection.name || 'Not connected'
+    },
     cors: 'Enabled for ports 3000, 3001 and production domains',
     maxBodySize: '1GB',
     routes: {
@@ -165,6 +212,10 @@ app.get('/health', (req, res) => {
       auth: '/api/auth',
       google_auth: '/api/auth/google',
       users: '/api/users',
+      venues: '/api/venues',
+      offers: '/api/offers',
+      redemptions: '/api/redemptions',
+      staff: '/api/staff',           // ✅ ADDED
       bulk_import: '/api/venues-dubai/bulk-import'
     }
   });
