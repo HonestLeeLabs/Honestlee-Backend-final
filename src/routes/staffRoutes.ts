@@ -1,3 +1,4 @@
+// ===== FILE: src/routes/staffRoutes.ts =====
 import { Router, Request, Response, NextFunction } from 'express';
 import {
   getDashboardOverview,
@@ -17,7 +18,8 @@ import {
   updateStaffRole,
   removeStaffMember,
   suspendStaffMember,
-  testAddStaffToRoster // ✅ ADDED
+  testAddStaffToRoster,
+  getMyRosterEntries // ✅ ADDED
 } from '../controllers/staffRosterController';
 import { authenticateToken, AuthRequest } from '../middlewares/authMiddleware';
 
@@ -43,6 +45,7 @@ router.post('/qr/onboard/generate', authenticateToken, authRoute(generateOnboard
 router.post('/qr/onboard/activate', authenticateToken, authRoute(activateOnboardQR));
 
 // Roster routes
+router.get('/roster/my-roster', authenticateToken, authRoute(getMyRosterEntries)); // ✅ ADDED - MUST BE BEFORE :venueId
 router.get('/roster/:venueId', authenticateToken, authRoute(getVenueRoster));
 router.post('/roster/invite', authenticateToken, authRoute(inviteStaffMember));
 router.put('/roster/:rosterId/role', authenticateToken, authRoute(updateStaffRole));

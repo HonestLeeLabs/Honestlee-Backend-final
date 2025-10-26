@@ -1,8 +1,41 @@
+// ===== FILE: src/controllers/staffRosterController.ts =====
 import { Response } from 'express';
 import { AuthRequest } from '../middlewares/authMiddleware';
 import VenueRoster from '../models/VenueRoster';
 import User from '../models/User';
 import StaffSession from '../models/StaffSession';
+
+// ✅ NEW: GET /api/staff/roster/my-roster - Get current user's roster entries
+export const getMyRosterEntries = async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ success: false, message: 'Unauthorized' });
+    }
+
+    console.log('🔍 Fetching roster for userId:', req.user.userId);
+
+    const rosterEntries = await VenueRoster.find({
+      staffUserId: req.user.userId,
+      status: 'ACTIVE'
+    })
+      .populate('venueId')
+      .sort({ activatedAt: -1 });
+
+    console.log('✅ Found roster entries:', rosterEntries.length);
+
+    res.json({
+      success: true,
+      data: rosterEntries
+    });
+  } catch (error: any) {
+    console.error('❌ Error fetching my roster:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching roster',
+      error: error.message
+    });
+  }
+};
 
 // ✅ TEST ENDPOINT - Add current user to roster
 export const testAddStaffToRoster = async (req: AuthRequest, res: Response) => {
@@ -12,6 +45,10 @@ export const testAddStaffToRoster = async (req: AuthRequest, res: Response) => {
     }
 
     const { venueId } = req.body;
+
+    if (!venueId) {
+      return res.status(400).json({ success: false, message: 'venueId is required' });
+    }
 
     // Check if already exists
     const existing = await VenueRoster.findOne({
@@ -23,14 +60,15 @@ export const testAddStaffToRoster = async (req: AuthRequest, res: Response) => {
       return res.json({ success: true, message: 'Already in roster', data: existing });
     }
 
-    // ✅ FIX: Use OWNER instead of ADMIN
+    // Create new roster entry
     const roster = new VenueRoster({
       staffUserId: req.user.userId,
       venueId,
-      role: 'OWNER', // ✅ CHANGED FROM ADMIN TO OWNER
+      role: 'OWNER',
       status: 'ACTIVE',
       permissions: ['VIEW_DASHBOARD', 'MANAGE_STAFF', 'VIEW_REDEMPTIONS', 'APPROVE_REDEMPTIONS'],
       joinedAt: new Date(),
+      activatedAt: new Date(),
       invitedBy: req.user.userId
     });
 
