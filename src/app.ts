@@ -24,6 +24,7 @@ import uploadRoutes from './routes/uploadRoutes';
 import offerRoutes from './routes/offerRoutes';
 import redemptionRoutes from './routes/redemptionRoutes';
 import staffRoutes from './routes/staffRoutes'; // ✅ ADDED
+import eventRoutes from './routes/eventRoutes';
 
 console.log('✅ eventDubaiRoutes imported:', typeof eventDubaiRoutes);
 console.log('✅ eventDubaiRoutes is Router?', eventDubaiRoutes?.stack ? 'Yes' : 'No');
@@ -193,6 +194,7 @@ app.use('/api/upload', uploadRoutes);
 app.use('/api/offers', offerRoutes);
 app.use('/api/redemptions', redemptionRoutes);
 app.use('/api/staff', staffRoutes); // ✅ ADDED STAFF ROUTES
+app.use('/api/events', eventRoutes); 
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -209,6 +211,7 @@ app.get('/health', (req, res) => {
     routes: {
       venues_dubai: '/api/venues-dubai',
       events_dubai: '/api/events-dubai',
+      events: '/api/events',
       auth: '/api/auth',
       google_auth: '/api/auth/google',
       users: '/api/users',
