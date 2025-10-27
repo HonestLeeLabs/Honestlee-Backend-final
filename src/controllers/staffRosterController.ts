@@ -5,7 +5,7 @@ import VenueRoster from '../models/VenueRoster';
 import User from '../models/User';
 import StaffSession from '../models/StaffSession';
 
-// ✅ NEW: GET /api/staff/roster/my-roster - Get current user's roster entries
+// ✅ GET /api/staff/roster/my-roster - Get current user's active roster entries
 export const getMyRosterEntries = async (req: AuthRequest, res: Response) => {
   try {
     if (!req.user) {
@@ -33,6 +33,133 @@ export const getMyRosterEntries = async (req: AuthRequest, res: Response) => {
       success: false,
       message: 'Error fetching roster',
       error: error.message
+    });
+  }
+};
+
+// ✅ NEW: GET /api/staff/roster/my-invitations - Get pending invitations for current user
+export const getMyInvitations = async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ success: false, message: 'Unauthorized' });
+    }
+
+    console.log('🔍 Fetching invitations for userId:', req.user.userId);
+
+    const invitations = await VenueRoster.find({
+      staffUserId: req.user.userId,
+      status: 'PENDING'
+    })
+      .populate('venueId', 'AccountName BillingCity venuecategory')
+      .populate('invitedBy', 'name email')
+      .sort({ invitedAt: -1 });
+
+    console.log('✅ Found invitations:', invitations.length);
+
+    res.json({
+      success: true,
+      data: invitations,
+      count: invitations.length
+    });
+
+  } catch (error: any) {
+    console.error('❌ Error fetching invitations:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Error fetching invitations', 
+      error: error.message 
+    });
+  }
+};
+
+// ✅ NEW: PUT /api/staff/roster/:rosterId/accept - Accept staff invitation
+export const acceptStaffInvitation = async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ success: false, message: 'Unauthorized' });
+    }
+
+    const { rosterId } = req.params;
+
+    console.log('📩 Accepting invitation:', { rosterId, userId: req.user.userId });
+
+    const roster = await VenueRoster.findById(rosterId);
+
+    if (!roster) {
+      return res.status(404).json({ success: false, message: 'Invitation not found' });
+    }
+
+    // Verify this invitation is for the current user
+    if (roster.staffUserId.toString() !== req.user.userId) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'This invitation is not for you' 
+      });
+    }
+
+    // Check if already active
+    if (roster.status === 'ACTIVE') {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invitation already accepted' 
+      });
+    }
+
+    // Check if not pending
+    if (roster.status !== 'PENDING') {
+      return res.status(400).json({ 
+        success: false, 
+        message: `Cannot accept invitation with status: ${roster.status}` 
+      });
+    }
+
+    // Accept the invitation
+    roster.status = 'ACTIVE';
+    roster.activatedAt = new Date();
+    roster.joinedAt = new Date();
+
+    // Set default permissions based on role
+    if (!roster.permissions || roster.permissions.length === 0) {
+      switch (roster.role) {
+        case 'OWNER':
+        case 'MANAGER':
+          roster.permissions = [
+            'VIEW_DASHBOARD',
+            'MANAGE_STAFF',
+            'VIEW_REDEMPTIONS',
+            'APPROVE_REDEMPTIONS',
+            'MANAGE_OFFERS',
+            'MANAGE_EVENTS'
+          ];
+          break;
+        case 'STAFF':
+          roster.permissions = [
+            'VIEW_DASHBOARD',
+            'VIEW_REDEMPTIONS',
+            'APPROVE_REDEMPTIONS'
+          ];
+          break;
+        default:
+          roster.permissions = ['VIEW_DASHBOARD', 'VIEW_REDEMPTIONS'];
+      }
+    }
+
+    await roster.save();
+
+    console.log('✅ Invitation accepted:', roster._id);
+
+    res.json({
+      success: true,
+      message: 'Invitation accepted successfully',
+      data: roster
+    });
+
+  } catch (error: any) {
+    console.error('❌ Error accepting invitation:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Error accepting invitation', 
+      error: error.message 
     });
   }
 };

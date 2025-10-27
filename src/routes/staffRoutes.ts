@@ -19,7 +19,9 @@ import {
   removeStaffMember,
   suspendStaffMember,
   testAddStaffToRoster,
-  getMyRosterEntries // ✅ ADDED
+  getMyRosterEntries,
+  getMyInvitations, // ✅ NEW
+  acceptStaffInvitation // ✅ NEW
 } from '../controllers/staffRosterController';
 import { authenticateToken, AuthRequest } from '../middlewares/authMiddleware';
 
@@ -44,15 +46,15 @@ router.post('/qr/verify', authenticateToken, authRoute(verifyStaffQR));
 router.post('/qr/onboard/generate', authenticateToken, authRoute(generateOnboardQR));
 router.post('/qr/onboard/activate', authenticateToken, authRoute(activateOnboardQR));
 
-// Roster routes
-router.get('/roster/my-roster', authenticateToken, authRoute(getMyRosterEntries)); // ✅ ADDED - MUST BE BEFORE :venueId
+// Roster routes - ORDER MATTERS! Specific routes BEFORE parameterized routes
+router.get('/roster/my-roster', authenticateToken, authRoute(getMyRosterEntries)); 
+router.get('/roster/my-invitations', authenticateToken, authRoute(getMyInvitations)); // ✅ NEW
+router.put('/roster/:rosterId/accept', authenticateToken, authRoute(acceptStaffInvitation)); // ✅ NEW
 router.get('/roster/:venueId', authenticateToken, authRoute(getVenueRoster));
 router.post('/roster/invite', authenticateToken, authRoute(inviteStaffMember));
 router.put('/roster/:rosterId/role', authenticateToken, authRoute(updateStaffRole));
 router.delete('/roster/:rosterId', authenticateToken, authRoute(removeStaffMember));
 router.put('/roster/:rosterId/suspend', authenticateToken, authRoute(suspendStaffMember));
-
-// ✅ TEST ROUTE - Add yourself to roster
-router.post('/roster/test-add', authenticateToken, authRoute(testAddStaffToRoster));
+router.post('/roster/test-add', authenticateToken, authRoute(testAddStaffToRoster)); // ✅ TEST
 
 export default router;
