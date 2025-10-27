@@ -1,4 +1,6 @@
+// ===== FILE: src/controllers/venueController.ts =====
 import { Request, Response } from 'express';
+import { AuthRequest } from '../middlewares/authMiddleware';
 import Venue from '../models/Venue';
 import mongoose from 'mongoose';
 import { Role } from '../models/User';
@@ -10,7 +12,7 @@ function hasRole(userRole: string | undefined, allowedRoles: string[]): boolean 
 }
 
 // Create venue - allowed roles: ADMIN, STAFF, AGENT
-export const createVenue = async (req: Request, res: Response) => {
+export const createVenue = async (req: AuthRequest, res: Response) => {
   try {
     // Check user authentication
     if (!req.user) {
@@ -134,13 +136,13 @@ export const createVenue = async (req: Request, res: Response) => {
 };
 
 // Update venue - allowed roles: ADMIN, STAFF
-export const updateVenue = async (req: Request, res: Response) => {
+export const updateVenue = async (req: AuthRequest, res: Response) => {
   try {
     if (!req.user) {
       return res.status(401).json({ message: 'Unauthorized' });
     }
 
-    if (!hasRole(req.user.role, [Role.ADMIN, Role.STAFF])) {
+    if (!hasRole(req.user.role, [Role.ADMIN, Role.STAFF, Role.MANAGER, Role.OWNER])) {
       return res.status(403).json({ message: 'Forbidden: insufficient role to update venue' });
     }
 
@@ -212,8 +214,118 @@ export const updateVenue = async (req: Request, res: Response) => {
   }
 };
 
+// ✅ NEW: GET /api/venues/:id/vitals - Get venue vitals
+export const getVenueVitals = async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid venue ID format'
+      });
+    }
+
+    const venue = await Venue.findById(id);
+
+    if (!venue) {
+      return res.status(404).json({ success: false, message: 'Venue not found' });
+    }
+
+    const vitals = {
+      address: venue.BillingStreet 
+        ? `${venue.BillingStreet}${venue.BillingCity ? ', ' + venue.BillingCity : ''}${venue.BillingState ? ', ' + venue.BillingState : ''}${venue.BillingPostalCode ? ' ' + venue.BillingPostalCode : ''}`
+        : null,
+      phone: venue.Phone || venue.Intphonegooglemapsly,
+      website: venue.Website,
+      hours: venue.operatingHours || (venue.HLOpeningHoursText ? { text: venue.HLOpeningHoursText } : null),
+      social: {
+        instagram: venue.socialLinks?.instagram,
+        facebook: venue.socialLinks?.facebook,
+        twitter: venue.socialLinks?.twitter
+      }
+    };
+
+    res.json({
+      success: true,
+      data: vitals
+    });
+  } catch (error: any) {
+    console.error('Error fetching venue vitals:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching venue vitals',
+      error: error.message
+    });
+  }
+};
+
+// ✅ NEW: PUT /api/venues/:id/vitals - Update venue vitals
+export const updateVenueVitals = async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user || !['MANAGER', 'OWNER', 'ADMIN'].includes(req.user.role)) {
+      return res.status(403).json({ message: 'Insufficient permissions' });
+    }
+
+    const { id } = req.params;
+    const { address, phone, website, hours, social } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid venue ID format'
+      });
+    }
+
+    const venue = await Venue.findById(id);
+
+    if (!venue) {
+      return res.status(404).json({ success: false, message: 'Venue not found' });
+    }
+
+    // Update basic fields
+    if (phone) {
+      venue.Phone = phone;
+      venue.Intphonegooglemapsly = phone;
+    }
+    if (website) venue.Website = website;
+    if (hours) venue.operatingHours = hours;
+    
+    // Update social links
+    if (social) {
+      if (!venue.socialLinks) venue.socialLinks = {};
+      if (social.instagram !== undefined) venue.socialLinks.instagram = social.instagram;
+      if (social.facebook !== undefined) venue.socialLinks.facebook = social.facebook;
+      if (social.twitter !== undefined) venue.socialLinks.twitter = social.twitter;
+    }
+
+    // Parse address if provided
+    if (address) {
+      const addressParts = address.split(',').map((part: string) => part.trim());
+      if (addressParts.length > 0) venue.BillingStreet = addressParts[0];
+      if (addressParts.length > 1) venue.BillingCity = addressParts[1];
+      if (addressParts.length > 2) venue.BillingState = addressParts[2];
+    }
+
+    await venue.save();
+
+    res.json({
+      success: true,
+      message: 'Venue vitals updated successfully',
+      data: venue
+    });
+  } catch (error: any) {
+    console.error('Error updating venue vitals:', error);
+    res.status(400).json({
+      success: false,
+      message: 'Error updating venue vitals',
+      error: error.message
+    });
+  }
+};
+
 // Delete venue - ADMIN only
-export const deleteVenue = async (req: Request, res: Response) => {
+export const deleteVenue = async (req: AuthRequest, res: Response) => {
   try {
     if (!req.user) {
       return res.status(401).json({ message: 'Unauthorized' });
@@ -262,7 +374,7 @@ export const deleteVenue = async (req: Request, res: Response) => {
 };
 
 // Get venues - all allowed roles
-export const getVenues = async (req: Request, res: Response) => {
+export const getVenues = async (req: AuthRequest, res: Response) => {
   try {
     if (!req.user) {
       return res.status(401).json({ message: 'Unauthorized' });
@@ -353,13 +465,13 @@ export const getVenues = async (req: Request, res: Response) => {
 };
 
 // Get venue by ID with owner populated
-export const getVenueById = async (req: Request, res: Response) => {
+export const getVenueById = async (req: AuthRequest, res: Response) => {
   try {
     if (!req.user) {
       return res.status(401).json({ message: 'Unauthorized' });
     }
 
-    if (!hasRole(req.user.role, [Role.ADMIN, Role.STAFF, Role.CONSUMER, Role.AGENT])) {
+    if (!hasRole(req.user.role, [Role.ADMIN, Role.STAFF, Role.CONSUMER, Role.AGENT, Role.MANAGER, Role.OWNER])) {
       return res.status(403).json({ message: 'Forbidden: insufficient role to view venue' });
     }
 
@@ -397,7 +509,7 @@ export const getVenueById = async (req: Request, res: Response) => {
 };
 
 // Get venues by category
-export const getVenuesByCategory = async (req: Request, res: Response) => {
+export const getVenuesByCategory = async (req: AuthRequest, res: Response) => {
   try {
     if (!req.user) {
       return res.status(401).json({ message: 'Unauthorized' });

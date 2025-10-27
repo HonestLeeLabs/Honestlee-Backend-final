@@ -1,9 +1,10 @@
+// ===== FILE: src/models/Venue.ts =====
 import mongoose, { Schema, Document, Model } from 'mongoose';
 
 // Define the interface matching Dubai schema structure
 export interface IVenue extends Document {
   // CORE IDENTIFIERS
-  globalId: string; // Unique ID for any location worldwide
+  globalId: string;
   AccountName: string;
 
   // TOP-LEVEL CATEGORY
@@ -13,7 +14,7 @@ export interface IVenue extends Document {
   // GEOSPATIAL DATA
   geometry: {
     type: 'Point';
-    coordinates: [number, number]; // [longitude, latitude]
+    coordinates: [number, number];
   };
   LatitudeMapslytextsingleLine?: number;
   LongitudeMapslytextsingleLine?: number;
@@ -23,7 +24,8 @@ export interface IVenue extends Document {
   BillingCity?: string;
   BillingState?: string;
   BillingDistrict?: string;
-  BillingCountry?: string; // Added for worldwide support
+  BillingCountry?: string;
+  BillingPostalCode?: string; // ✅ ADDED
 
   // VENUE CLASSIFICATION (HIERARCHICAL)
   venuetype?: string;
@@ -97,13 +99,31 @@ export interface IVenue extends Document {
   parkingoptions?: string;
   Website?: string;
   Intphonegooglemapsly?: string;
+  Phone?: string; // ✅ ADDED
   'Payment types'?: string;
+
+  // ✅ VITALS FIELDS - ADDED
+  operatingHours?: {
+    monday?: string;
+    tuesday?: string;
+    wednesday?: string;
+    thursday?: string;
+    friday?: string;
+    saturday?: string;
+    sunday?: string;
+  };
+  socialLinks?: {
+    instagram?: string;
+    facebook?: string;
+    twitter?: string;
+    linkedin?: string;
+  };
 
   // METADATA
   ownerId?: mongoose.Schema.Types.ObjectId;
   isVerified?: boolean;
   isActive?: boolean;
-  region?: string; // 'india', 'dubai', 'global', etc.
+  region?: string;
   createdAt: Date;
   updatedAt: Date;
 
@@ -176,6 +196,7 @@ const VenueSchema = new mongoose.Schema<IVenue>(
     BillingState: String,
     BillingDistrict: { type: String, index: true },
     BillingCountry: { type: String, index: true },
+    BillingPostalCode: String, // ✅ ADDED
 
     // VENUE CLASSIFICATION (HIERARCHICAL)
     venuetype: { type: String, index: true },
@@ -249,7 +270,25 @@ const VenueSchema = new mongoose.Schema<IVenue>(
     parkingoptions: String,
     Website: String,
     Intphonegooglemapsly: String,
+    Phone: String, // ✅ ADDED
     'Payment types': String,
+
+    // ✅ VITALS FIELDS - ADDED
+    operatingHours: {
+      monday: String,
+      tuesday: String,
+      wednesday: String,
+      thursday: String,
+      friday: String,
+      saturday: String,
+      sunday: String
+    },
+    socialLinks: {
+      instagram: String,
+      facebook: String,
+      twitter: String,
+      linkedin: String
+    },
 
     // ADDITIONAL METADATA
     ownerId: { type: Schema.Types.ObjectId, ref: 'User' },
