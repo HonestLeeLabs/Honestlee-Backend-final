@@ -1,5 +1,3 @@
-// ===== FILE: src/controllers/venueController.ts =====
-
 import { Response } from 'express';
 import { AuthRequest } from '../middlewares/authMiddleware';
 import { RegionRequest } from '../middlewares/regionMiddleware';
@@ -10,16 +8,15 @@ import { Role } from '../models/User';
 
 type CombinedRequest = AuthRequest & RegionRequest;
 
-// Helper to check if user's role is allowed
+// Helper to check user roles
 function hasRole(userRole: string | undefined, allowedRoles: string[]): boolean {
   if (!userRole) return false;
   return allowedRoles.includes(userRole);
 }
 
-// ───── CREATE VENUE ─────
+// CREATE VENUE
 export const createVenue = async (req: CombinedRequest, res: Response) => {
   try {
-    // Connect to regional database and get model
     const region = req.region || 'ae';
     await dbManager.connectRegion(region);
     const Venue = getVenueModel(region);
@@ -33,7 +30,6 @@ export const createVenue = async (req: CombinedRequest, res: Response) => {
 
     const venueData = { ...req.body, region };
 
-    // Validate required fields for NEW schema
     if (!venueData.globalId) {
       return res.status(400).json({ success: false, message: 'globalId is required' });
     }
@@ -78,7 +74,7 @@ export const createVenue = async (req: CombinedRequest, res: Response) => {
   }
 };
 
-// ───── UPDATE VENUE ─────
+// UPDATE VENUE
 export const updateVenue = async (req: CombinedRequest, res: Response) => {
   try {
     const region = req.region || 'ae';
@@ -111,7 +107,6 @@ export const updateVenue = async (req: CombinedRequest, res: Response) => {
         ]
       };
     }
-    // Only ADMIN can update verification and active status
     if (req.user.role !== Role.ADMIN) {
       delete updateData.isVerified;
       delete updateData.isActive;
@@ -128,7 +123,7 @@ export const updateVenue = async (req: CombinedRequest, res: Response) => {
   }
 };
 
-// ───── GET VENUE VITALS ─────
+// GET VENUE VITALS
 export const getVenueVitals = async (req: CombinedRequest, res: Response) => {
   try {
     const region = req.region || 'ae';
@@ -163,7 +158,7 @@ export const getVenueVitals = async (req: CombinedRequest, res: Response) => {
   }
 };
 
-// ───── UPDATE VENUE VITALS ─────
+// UPDATE VENUE VITALS
 export const updateVenueVitals = async (req: CombinedRequest, res: Response) => {
   try {
     const region = req.region || 'ae';
@@ -209,7 +204,7 @@ export const updateVenueVitals = async (req: CombinedRequest, res: Response) => 
   }
 };
 
-// ───── DELETE VENUE ─────
+// DELETE VENUE
 export const deleteVenue = async (req: CombinedRequest, res: Response) => {
   try {
     const region = req.region || 'ae';
@@ -242,7 +237,7 @@ export const deleteVenue = async (req: CombinedRequest, res: Response) => {
   }
 };
 
-// ───── GET VENUES ─────
+// GET VENUES WITH PAGINATION AND FILTERS
 export const getVenues = async (req: CombinedRequest, res: Response) => {
   try {
     const region = req.region || 'ae';
@@ -330,7 +325,7 @@ export const getVenues = async (req: CombinedRequest, res: Response) => {
   }
 };
 
-// ───── GET VENUE BY ID ─────
+// GET VENUE BY ID
 export const getVenueById = async (req: CombinedRequest, res: Response) => {
   try {
     const region = req.region || 'ae';
@@ -358,7 +353,7 @@ export const getVenueById = async (req: CombinedRequest, res: Response) => {
   }
 };
 
-// ───── GET VENUES BY CATEGORY ─────
+// GET VENUES BY CATEGORY
 export const getVenuesByCategory = async (req: CombinedRequest, res: Response) => {
   try {
     const region = req.region || 'ae';

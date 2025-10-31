@@ -1,5 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import {
+  getAllEvents,
   getUpcomingEvents,
   getEventById,
   createEvent,
@@ -19,13 +20,16 @@ const authRoute = (handler: (req: AuthRequest, res: Response, next: NextFunction
   };
 };
 
-// Public/authenticated routes
+// ✅ PUBLIC ROUTES - No authentication required
+router.get('/', authRoute(getAllEvents)); // Get all events with filters
+router.get('/venue/:venueId', authRoute(getEventsByVenue)); // Get events by venue name
+
+// ✅ AUTHENTICATED ROUTES - Require authentication
 router.get('/upcoming', authenticateToken, authRoute(getUpcomingEvents));
 router.get('/:id', authenticateToken, authRoute(getEventById));
-router.get('/venue/:venueId', authenticateToken, authRoute(getEventsByVenue));
 router.post('/:id/register', authenticateToken, authRoute(registerForEvent));
 
-// Manager/Owner/Admin routes
+// ✅ PROTECTED ROUTES - Manager/Owner/Admin only
 router.post('/', authenticateToken, authRoute(createEvent));
 router.put('/:id', authenticateToken, authRoute(updateEvent));
 router.delete('/:id', authenticateToken, authRoute(deleteEvent));

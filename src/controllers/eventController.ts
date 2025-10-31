@@ -5,13 +5,171 @@ import Venue from '../models/Venue';
 import { AuthRequest } from '../middlewares/authMiddleware';
 import mongoose from 'mongoose';
 
-// GET /api/events/venue/:venueId - Get all events for a venue
+// GET /api/events - Get all events with filters (PUBLIC or AUTHENTICATED)
+export const getAllEvents = async (req: AuthRequest, res: Response) => {
+  try {
+    const {
+      page = 1,
+      limit = 50,
+      upcoming = 'true',
+      startDate,
+      endDate,
+      category,
+      Event_Category,
+      event_type,
+      search,
+      minPrice,
+      maxPrice,
+      Event_Age_Restriction,
+      isFree,
+      isPaid,
+      sortBy = 'eventStartsAt',
+      region,
+      country
+    } = req.query;
+
+    console.log('🔍 Fetching all events with filters:', {
+      page,
+      limit,
+      upcoming,
+      category: category || Event_Category,
+      event_type,
+      search,
+      region,
+      country
+    });
+
+    // Build query
+    const query: any = { isActive: true };
+
+    // Date filters
+    if (upcoming === 'true') {
+      query.eventStartsAt = { $gte: new Date() };
+    } else if (startDate || endDate) {
+      query.eventStartsAt = {};
+      if (startDate) {
+        query.eventStartsAt.$gte = new Date(startDate as string);
+      }
+      if (endDate) {
+        const endDateTime = new Date(endDate as string);
+        endDateTime.setHours(23, 59, 59, 999); // End of day
+        query.eventStartsAt.$lte = endDateTime;
+      }
+    }
+
+    // Category filter
+    if (category || Event_Category) {
+      query.eventCategory = category || Event_Category;
+    }
+
+    // Event type filter
+    if (event_type) {
+      query.eventType = event_type;
+    }
+
+    // Price filters
+    if (isFree === 'true') {
+      query.eventPriceFrom = 0;
+      query.eventPriceMax = 0;
+    } else if (isPaid === 'true') {
+      query.$or = [
+        { eventPriceFrom: { $gt: 0 } },
+        { eventPriceMax: { $gt: 0 } }
+      ];
+    } else {
+      if (minPrice !== undefined) {
+        query.eventPriceFrom = { $gte: parseFloat(minPrice as string) };
+      }
+      if (maxPrice !== undefined) {
+        query.eventPriceMax = { $lte: parseFloat(maxPrice as string) };
+      }
+    }
+
+    // Age restriction filter
+    if (Event_Age_Restriction) {
+      query.eventAgeRestriction = Event_Age_Restriction;
+    }
+
+    // Search filter - Fixed TypeScript error
+    if (search && typeof search === 'string' && search.trim()) {
+      const searchTerm = search.trim();
+      query.$or = [
+        { eventName: { $regex: searchTerm, $options: 'i' } },
+        { description: { $regex: searchTerm, $options: 'i' } },
+        { eventCategory: { $regex: searchTerm, $options: 'i' } }
+      ];
+    }
+
+    // Calculate pagination
+    const pageNum = parseInt(page as string);
+    const limitNum = parseInt(limit as string);
+    const skip = (pageNum - 1) * limitNum;
+
+    // Execute query with pagination
+    const [events, totalCount] = await Promise.all([
+      Event.find(query)
+        .populate('venueId', 'AccountName BillingStreet BillingCity BillingDistrict geometry venuecategory')
+        .populate('createdBy', 'name email')
+        .sort({ [sortBy as string]: 1 })
+        .skip(skip)
+        .limit(limitNum)
+        .lean(),
+      Event.countDocuments(query)
+    ]);
+
+    console.log(`✅ Found ${events.length} events (total: ${totalCount})`);
+
+    // Return response
+    res.json({
+      success: true,
+      data: events,
+      pagination: {
+        currentPage: pageNum,
+        totalPages: Math.ceil(totalCount / limitNum),
+        totalCount,
+        limit: limitNum
+      }
+    });
+
+  } catch (error: any) {
+    console.error('❌ Error fetching all events:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching events',
+      error: error.message
+    });
+  }
+};
+
+// GET /api/events/venue/:venueId - Get all events for a venue BY NAME
 export const getEventsByVenue = async (req: AuthRequest, res: Response) => {
   try {
-    const { venueId } = req.params;
+    const { venueId } = req.params; // This is actually the venue name from the URL
     const { activeOnly = 'true', upcoming = 'false' } = req.query;
 
-    const query: any = { venueId };
+    console.log('🔍 Fetching events for venue:', venueId);
+
+    // First, find the venue by name to get its ObjectId
+    const venue = await Venue.findOne({ 
+      AccountName: { $regex: new RegExp(`^${venueId}$`, 'i') } // Case-insensitive exact match
+    });
+
+    if (!venue) {
+      console.log('❌ Venue not found:', venueId);
+      return res.json({ 
+        success: true, 
+        data: { 
+          events: [], 
+          eventCount: 0 
+        },
+        message: 'Venue not found'
+      });
+    }
+
+    console.log('✅ Venue found:', venue._id, venue.AccountName);
+
+    // Build query using the venue's ObjectId
+    const query: any = { venueId: venue._id };
     
     if (activeOnly === 'true') {
       query.isActive = true;
@@ -25,11 +183,27 @@ export const getEventsByVenue = async (req: AuthRequest, res: Response) => {
       .populate('createdBy', 'name email')
       .sort({ eventStartsAt: 1 });
 
-    res.json({ success: true, data: events, count: events.length });
+    console.log(`✅ Found ${events.length} events for venue ${venue.AccountName}`);
+
+    res.json({ 
+      success: true, 
+      data: { 
+        events, 
+        eventCount: events.length,
+        venue: {
+          id: venue._id,
+          name: venue.AccountName
+        }
+      }
+    });
 
   } catch (error: any) {
-    console.error('Error fetching venue events:', error);
-    res.status(500).json({ success: false, message: 'Error fetching venue events', error: error.message });
+    console.error('❌ Error fetching venue events:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Error fetching venue events', 
+      error: error.message 
+    });
   }
 };
 
