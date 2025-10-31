@@ -1,20 +1,28 @@
-import { Response } from 'express';
+import { Response, NextFunction } from 'express';
 import mongoose from 'mongoose';
 import { AuthRequest } from '../middlewares/authMiddleware';
+import { RegionRequest } from '../middlewares/regionMiddleware';
 import StaffSession, { IStaffSession } from '../models/StaffSession';
 import VenueRoster from '../models/VenueRoster';
 import Redemption, { RedemptionStatus } from '../models/Redemption';
 import Offer from '../models/Offer';
 import Venue from '../models/Venue';
+import { dbManager, Region } from '../config/database';
+
+// ✅ FIX: Create proper combined request type
+type StaffRequest = AuthRequest & RegionRequest;
 
 // GET /api/staff/dashboard/:venueId - Get dashboard overview
-export const getDashboardOverview = async (req: AuthRequest, res: Response) => {
+export const getDashboardOverview = async (req: StaffRequest, res: Response, next?: NextFunction) => {
   try {
     if (!req.user) {
       return res.status(401).json({ message: 'Unauthorized' });
     }
 
     const { venueId } = req.params;
+    const region = (req.region || 'ae') as Region;
+
+    console.log(`📊 Dashboard request for venue: ${venueId}, region: ${region}`);
 
     // Verify staff access
     const roster = await VenueRoster.findOne({
@@ -56,6 +64,10 @@ export const getDashboardOverview = async (req: AuthRequest, res: Response) => {
     // Get 24h activity snapshot
     const last24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
+    // ✅ FIX: Use dbManager to get regional connection
+    const regionalConnection = dbManager.getConnection(region);
+    const RegionalVenue = regionalConnection.model('Venue', Venue.schema);
+
     const [
       venue,
       redemptionsCount,
@@ -63,7 +75,7 @@ export const getDashboardOverview = async (req: AuthRequest, res: Response) => {
       activeOffers,
       upcomingOffers
     ] = await Promise.all([
-      Venue.findById(venueId),
+      RegionalVenue.findById(venueId), // ✅ Query from regional database
       Redemption.countDocuments({
         venueId: new mongoose.Types.ObjectId(venueId),
         createdAt: { $gte: last24h },
@@ -87,6 +99,8 @@ export const getDashboardOverview = async (req: AuthRequest, res: Response) => {
       })
     ]);
 
+    console.log(`✅ Venue found: ${venue?.AccountName || 'N/A'}`);
+
     const response = {
       success: true,
       session: {
@@ -98,7 +112,9 @@ export const getDashboardOverview = async (req: AuthRequest, res: Response) => {
       venue: {
         id: venue?._id,
         name: venue?.AccountName || venue?.name,
-        category: venue?.venuecategory || venue?.category
+        category: venue?.venuecategorydisplayname || venue?.venuecategory || venue?.category,
+        city: venue?.BillingCity,
+        region: region
       },
       activity: {
         redemptions: {
@@ -121,7 +137,7 @@ export const getDashboardOverview = async (req: AuthRequest, res: Response) => {
 };
 
 // POST /api/staff/session/refresh - Refresh session
-export const refreshSession = async (req: AuthRequest, res: Response) => {
+export const refreshSession = async (req: StaffRequest, res: Response, next?: NextFunction) => {
   try {
     if (!req.user) {
       return res.status(401).json({ message: 'Unauthorized' });
@@ -153,7 +169,7 @@ export const refreshSession = async (req: AuthRequest, res: Response) => {
 };
 
 // POST /api/staff/session/lock - Lock session
-export const lockSession = async (req: AuthRequest, res: Response) => {
+export const lockSession = async (req: StaffRequest, res: Response, next?: NextFunction) => {
   try {
     if (!req.user) {
       return res.status(401).json({ message: 'Unauthorized' });
