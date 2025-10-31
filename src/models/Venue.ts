@@ -1,32 +1,42 @@
 // ===== FILE: src/models/Venue.ts =====
+
 import mongoose, { Schema, Document, Model } from 'mongoose';
 import { Region, getRegionalModel } from '../config/database';
 
 // ───── INTERFACE DEFINITIONS ─────
 
-// Dubai-style interface, extended for region multi-tenancy
+// Venue interface (NO street vendor fields)
 export interface IVenue extends Document {
   // CORE IDENTIFIERS
   globalId: string;
   AccountName: string;
+  Account_Name?: string;
 
   // TOP-LEVEL CATEGORY
   groupid?: string;
   groupiddisplayname?: string;
 
-  // GEOSPATIAL DATA
+  // GEOSPATIAL DATA (SINGLE SOURCE OF TRUTH)
   geometry: {
     type: 'Point';
-    coordinates: [number, number];
+    coordinates: [number, number]; // [longitude, latitude]
   };
+  
+  // Backward compatibility fields (NOT geo-indexed)
   LatitudeMapslytextsingleLine?: number;
   LongitudeMapslytextsingleLine?: number;
+  Latitude_Mapsly_text_singleLine?: number;
+  Longitude_Mapsly_text_singleLine?: number;
 
   // ADDRESS INFORMATION
   BillingStreet?: string;
+  Billing_Street?: string;
   BillingCity?: string;
+  Billing_City?: string;
   BillingState?: string;
+  Billing_State?: string;
   BillingDistrict?: string;
+  Billing_District?: string;
   BillingCountry?: string;
   BillingPostalCode?: string;
 
@@ -35,74 +45,83 @@ export interface IVenue extends Document {
   venuetypedisplay?: string;
   venuecategory?: string;
   venuecategorydisplayname?: string;
+  venue_type?: string;
+  venue_type_display?: string;
+  venue_category?: string;
+  venue_category_display?: string;
 
   // RATINGS & SCORES
   Rating?: number;
-  Nomadfriendlyscore?: number;
-  Familyfrienlinessscore?: number;
+  Nomad_friendly_score?: number;
+  Family_frienliness_score?: number;
 
   // PRICING INFORMATION
-  HLPriceLevel?: number;
+  HL_Price_Level?: number;
   BudgetFriendly?: string;
-  Coffeepricerange?: string;
-  EntranceFee?: string;
+  Budget_Friendly?: string;
+  Coffee_price_range?: string;
+  Entrance_Fee?: string;
 
   // OPERATING HOURS & MEAL SERVICE
-  HLOpeningHoursText?: string;
-  OpenLate?: number;
-  Breakfastoffered?: number;
-  Brunchoffered?: number;
-  Dinneroffered?: number;
+  HL_Opening_Hours_Text?: string;
+  Opening_Hours?: string;
+  Open_Late?: boolean;
+  Breakfast_offered?: boolean;
+  Brunch_offered?: boolean;
+  Dinner_offered?: boolean;
 
   // FOOD & BEVERAGE
+  Cuisine_Tags?: string;
   CuisineTags?: string;
-  Dietarytags?: string;
-  Healthyfoodlevel?: string;
-  Vegonly?: number;
-  Alcoholserved?: number;
-  TypeOfCoffee?: string;
+  Dietary_tags?: string;
+  Healthy_food_level?: string;
+  Veg_only?: boolean;
+  Alcohol_served?: boolean;
+  Type_Of_Coffee?: string;
 
   // CONNECTIVITY & WIFI
-  PubWifi?: number;
-  WifiSSID?: string;
-  Wifibage?: string;
-  DLSPeedMBPS?: number;
-  ULSPeedMBPS?: number;
+  Pub_Wifi?: boolean | number;
+  PubWifi?: boolean | number;
+  Wifi_SSID?: string;
+  Wifi_bage?: string;
+  DL_SPeed_MBPS?: number;
+  UL_SPeed_MBPS?: number;
 
   // POWER & CHARGING
-  ChargingPorts?: number;
-  Poweroutletdensity?: string;
-  Powerbackup?: number;
+  Charging_Ports?: number;
+  Power_outlet_density?: string;
+  Power_backup?: boolean;
 
   // TV & ENTERTAINMENT
-  HasTVDisplay?: number;
-  NumberofTVs?: number;
-  ShowswhatonTV?: string;
+  Has_TV_Display?: boolean;
+  Number_of_TVs?: number;
+  Shows_what_on_TV?: string;
 
   // POLICIES
-  PetPolicy?: string;
+  Pet_Policy?: string;
   'Smoking Policy'?: string;
-  Kidsfriendlybadge?: string;
-  Grouppolicy?: string;
-  Takesbookings?: number;
+  Kids_friendly_badge?: string;
+  Group_policy?: string;
+  Takes_bookings?: boolean;
 
   // ATMOSPHERE & ENVIRONMENT
   View?: string;
-  NoiseLevel?: string;
-  Stafffriedlinessbage?: string;
-  HLzohoACFan?: string;
+  Noise_Level?: string;
+  Staff_friedliness_bage?: string;
+  HL_zoho_AC_Fan?: string;
 
   // PHYSICAL FEATURES
-  Outdoorseating?: number;
-  Offerswaterrefills?: number;
-  Daypassclub?: number;
-  Hotelpoolaccess?: number;
+  Outdoor_seating?: boolean;
+  Offers_water_refills?: boolean;
+  Day_pass_club?: boolean;
+  Hotel_pool_access?: boolean;
 
   // CONTACT & LOGISTICS
-  parkingoptions?: string;
+  parking_options?: string;
   Website?: string;
-  Intphonegooglemapsly?: string;
+  Int_phone_google_mapsly?: string;
   Phone?: string;
+  PaymentTypes?: string;
   'Payment types'?: string;
 
   // VITALS FIELDS
@@ -122,13 +141,22 @@ export interface IVenue extends Document {
     linkedin?: string;
   };
 
+  // Amenities object
+  Amenities?: {
+    wifi?: boolean;
+    charging?: boolean;
+    outdoor?: boolean;
+    parking?: string;
+    tv?: boolean;
+  };
+
   // METADATA
   ownerId?: mongoose.Schema.Types.ObjectId;
   isVerified?: boolean;
   isActive?: boolean;
   region: string;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt?: Date;
+  updatedAt?: Date;
 
   // Allow any other fields
   [key: string]: any;
@@ -137,6 +165,59 @@ export interface IVenue extends Document {
   getDistance(longitude: number, latitude: number): number | null;
   isNomadFriendly(): boolean;
   isFamilyFriendly(): boolean;
+}
+
+// Street Vendor interface (SEPARATE from IVenue)
+export interface IStreetVendor extends Document {
+  // VENDOR SPECIFIC
+  vendorName: string;
+  vendorType: 'static' | 'mobile';
+  
+  // Live Location Tracking (VENDOR ONLY)
+  currentLocation: {
+    type: 'Point';
+    coordinates: [number, number]; // [lng, lat]
+    timestamp: Date;
+    accuracy?: number;
+  };
+
+  // Availability
+  isOperational: boolean;
+  
+  // Service Area
+  serviceRadius?: number;
+  serviceArea?: {
+    type: 'Polygon';
+    coordinates: number[][][];
+  };
+
+  // Location History
+  locationHistory?: Array<{
+    coordinates: [number, number];
+    timestamp: Date;
+    accuracy?: number;
+  }>;
+
+  // Contact
+  vendorPhoneNumber?: string;
+  hotspot?: boolean;
+
+  // Shared fields with venues (for compatibility)
+  globalId?: string;
+  AccountName?: string;
+  phone?: string;
+  Cuisine_Tags?: string;
+  'Payment types'?: string;
+  BudgetFriendly?: string;
+  
+  // System
+  region: string;
+  isActive?: boolean;
+  ownerId?: mongoose.Schema.Types.ObjectId;
+  createdAt?: Date;
+  updatedAt?: Date;
+
+  [key: string]: any;
 }
 
 // Static methods interface
@@ -161,103 +242,180 @@ const pointSchema = new mongoose.Schema(
     },
     coordinates: {
       type: [Number],
-      required: true,
+      required: [true, 'Coordinates are required'],
       validate: {
         validator: function (coords: number[]) {
-          return coords.length === 2
-            && coords[0] >= -180 && coords[0] <= 180
-            && coords[1] >= -90 && coords[1] <= 90;
+          return coords && coords.length === 2 &&
+            coords[0] >= -180 && coords[0] <= 180 &&
+            coords[1] >= -90 && coords[1] <= 90;
         },
-        message: 'Invalid coordinates format: [longitude, latitude]',
+        message: 'Invalid coordinates: must be [longitude, latitude]',
       },
     },
   },
   { _id: false }
 );
 
+// GeoJSON Polygon schema
+const polygonSchema = new mongoose.Schema(
+  {
+    type: {
+      type: String,
+      enum: ['Polygon'],
+      required: true,
+      default: 'Polygon',
+    },
+    coordinates: {
+      type: [[[Number]]],
+      required: true,
+    },
+  },
+  { _id: false }
+);
+
+// ===== VENUE SCHEMA (FOR REGULAR VENUES) =====
 const VenueSchema = new mongoose.Schema<IVenue>(
   {
     // CORE IDENTIFIERS
-    globalId: { type: String, required: true, unique: true, sparse: true, index: true },
-    AccountName: { type: String, required: true, index: true },
+    globalId: {
+      type: String,
+      required: [true, 'globalId is required'],
+      unique: true,
+      sparse: true,
+      index: true
+    },
+    
+    AccountName: {
+      type: String,
+      required: [true, 'AccountName is required'],
+      index: true
+    },
+    Account_Name: String,
 
     groupid: { type: String, index: true },
     groupiddisplayname: String,
 
-    geometry: { type: pointSchema, required: true, index: '2dsphere' },
+    // ========== SINGLE GEOMETRY INDEX ==========
+    geometry: {
+      type: pointSchema,
+      required: [true, 'geometry with coordinates is required'],
+      index: '2dsphere'
+    },
+    // ============================================
+
+    // Backward compatibility fields (NOT indexed as geo)
     LatitudeMapslytextsingleLine: { type: Number, min: -90, max: 90 },
     LongitudeMapslytextsingleLine: { type: Number, min: -180, max: 180 },
+    Latitude_Mapsly_text_singleLine: { type: Number, min: -90, max: 90 },
+    Longitude_Mapsly_text_singleLine: { type: Number, min: -180, max: 180 },
 
+    // ADDRESS
     BillingStreet: String,
+    Billing_Street: String,
     BillingCity: { type: String, index: true },
+    Billing_City: String,
     BillingState: String,
+    Billing_State: String,
     BillingDistrict: { type: String, index: true },
+    Billing_District: String,
     BillingCountry: { type: String, index: true },
     BillingPostalCode: String,
 
+    // VENUE CLASSIFICATION
     venuetype: { type: String, index: true },
     venuetypedisplay: String,
     venuecategory: { type: String, index: true },
     venuecategorydisplayname: String,
+    venue_type: String,
+    venue_type_display: String,
+    venue_category: String,
+    venue_category_display: String,
 
-    Rating: { type: Number, min: 0, max: 5, index: -1 },
-    Nomadfriendlyscore: { type: Number, min: 1, max: 5 },
-    Familyfrienlinessscore: { type: Number, min: 1, max: 5 },
+    // RATINGS & SCORES
+    Rating: { type: Number, min: 0, max: 5, default: 0, index: -1 },
+    Nomad_friendly_score: { type: Number, min: 1, max: 5 },
+    Family_frienliness_score: { type: Number, min: 1, max: 5 },
 
-    HLPriceLevel: { type: Number, min: 1, max: 5 },
+    // PRICING
+    HL_Price_Level: { type: Number, min: 1, max: 5 },
     BudgetFriendly: { type: String, index: true },
-    Coffeepricerange: String,
-    EntranceFee: String,
+    Budget_Friendly: String,
+    Coffee_price_range: String,
+    Entrance_Fee: String,
 
-    HLOpeningHoursText: String,
-    OpenLate: { type: Number, enum: [0, 1], index: true },
-    Breakfastoffered: { type: Number, enum: [0, 1] },
-    Brunchoffered: { type: Number, enum: [0, 1] },
-    Dinneroffered: { type: Number, enum: [0, 1] },
+    // OPERATING HOURS
+    HL_Opening_Hours_Text: String,
+    Opening_Hours: String,
+    Open_Late: { type: Boolean, default: false },
+    Breakfast_offered: { type: Boolean, default: false },
+    Brunch_offered: { type: Boolean, default: false },
+    Dinner_offered: { type: Boolean, default: false },
 
+    // FOOD & BEVERAGE
+    Cuisine_Tags: String,
     CuisineTags: String,
-    Dietarytags: String,
-    Healthyfoodlevel: { type: String, enum: ['Low', 'Medium', 'High', ''] },
-    Vegonly: { type: Number, enum: [0, 1] },
-    Alcoholserved: { type: Number, enum: [0, 1], index: true },
-    TypeOfCoffee: String,
+    Dietary_tags: String,
+    Healthy_food_level: String,
+    Veg_only: { type: Boolean, default: false },
+    Alcohol_served: { type: Boolean, default: false, index: true },
+    Type_Of_Coffee: String,
 
-    PubWifi: { type: Number, enum: [0, 1], index: true },
-    WifiSSID: String,
-    Wifibage: { type: String, enum: ['Verified', 'Unverified', ''] },
-    DLSPeedMBPS: { type: Number, min: 0 },
-    ULSPeedMBPS: { type: Number, min: 0 },
+    // WIFI & CONNECTIVITY
+    Pub_Wifi: { type: Boolean, default: false, index: true },
+    PubWifi: Boolean,
+    Wifi_SSID: String,
+    Wifi_bage: String,
+    DL_SPeed_MBPS: { type: Number, min: 0 },
+    UL_SPeed_MBPS: { type: Number, min: 0 },
 
-    ChargingPorts: { type: Number, min: 0 },
-    Poweroutletdensity: { type: String, enum: ['Low', 'Medium', 'High', ''] },
-    Powerbackup: { type: Number, enum: [0, 1] },
+    // POWER & CHARGING
+    Charging_Ports: { type: Number, min: 0, default: 0 },
+    Power_outlet_density: String,
+    Power_backup: { type: Boolean, default: false },
 
-    HasTVDisplay: { type: Number, enum: [0, 1] },
-    NumberofTVs: { type: Number, min: 0 },
-    ShowswhatonTV: String,
+    // TV & ENTERTAINMENT
+    Has_TV_Display: { type: Boolean, default: false },
+    Number_of_TVs: { type: Number, min: 0, default: 0 },
+    Shows_what_on_TV: String,
 
-    PetPolicy: String,
+    // POLICIES
+    Pet_Policy: String,
     'Smoking Policy': String,
-    Kidsfriendlybadge: { type: String, enum: ['Allowed', 'Limited', 'Not Ideal', ''] },
-    Grouppolicy: String,
-    Takesbookings: { type: Number, enum: [0, 1] },
+    Kids_friendly_badge: String,
+    Group_policy: String,
+    Takes_bookings: { type: Boolean, default: false },
 
+    // ATMOSPHERE
     View: String,
-    NoiseLevel: { type: String, enum: ['Moderate', 'Lively', 'Quiet', ''] },
-    Stafffriedlinessbage: { type: String, enum: ['Very Friendly', 'Friendly', 'Neutral', ''] },
-    HLzohoACFan: { type: String, enum: ['AC', 'Fan', ''] },
+    Noise_Level: String,
+    Staff_friedliness_bage: String,
+    HL_zoho_AC_Fan: String,
 
-    Outdoorseating: { type: Number, enum: [0, 1] },
-    Offerswaterrefills: { type: Number, enum: [0, 1] },
-    Daypassclub: { type: Number, enum: [0, 1] },
-    Hotelpoolaccess: { type: Number, enum: [0, 1] },
+    // PHYSICAL FEATURES
+    Outdoor_seating: { type: Boolean, default: false },
+    Offers_water_refills: { type: Boolean, default: false },
+    Day_pass_club: { type: Boolean, default: false },
+    Hotel_pool_access: { type: Boolean, default: false },
 
-    parkingoptions: String,
+    // CONTACT & LOGISTICS
+    parking_options: String,
     Website: String,
-    Intphonegooglemapsly: String,
+    Int_phone_google_mapsly: String,
     Phone: String,
+    PaymentTypes: String,
     'Payment types': String,
 
+    // AMENITIES
+    Amenities: {
+      wifi: Boolean,
+      charging: Boolean,
+      outdoor: Boolean,
+      parking: String,
+      tv: Boolean,
+      _id: false
+    },
+
+    // VITALS
     operatingHours: {
       monday: String,
       tuesday: String,
@@ -265,55 +423,63 @@ const VenueSchema = new mongoose.Schema<IVenue>(
       thursday: String,
       friday: String,
       saturday: String,
-      sunday: String
+      sunday: String,
+      _id: false
     },
+    
     socialLinks: {
       instagram: String,
       facebook: String,
       twitter: String,
-      linkedin: String
+      linkedin: String,
+      _id: false
     },
 
-    ownerId: { type: Schema.Types.ObjectId, ref: 'User' },
-    isVerified: { type: Boolean, default: false },
+    // SYSTEM
+    ownerId: { type: Schema.Types.ObjectId, ref: 'User', index: true },
+    isVerified: { type: Boolean, default: false, index: true },
     isActive: { type: Boolean, default: true, index: true },
     region: { type: String, required: true, index: true, default: 'global' },
   },
   {
     timestamps: true,
     collection: 'venues',
-    strict: false, // Allow fields not in schema
+    strict: false
   }
 );
 
-// ───── INDEXES ─────
+// ───── VENUE INDEXES (ONLY ONE 2dsphere for geometry) ─────
+VenueSchema.index({ 'geometry': '2dsphere', Rating: -1 });
 VenueSchema.index({ groupid: 1, venuecategory: 1 });
-VenueSchema.index({ groupid: 1, Rating: -1 });
 VenueSchema.index({ venuetype: 1, BillingDistrict: 1 });
 VenueSchema.index({ BudgetFriendly: 1, Rating: -1 });
-VenueSchema.index({ PubWifi: 1, Nomadfriendlyscore: -1 });
-VenueSchema.index({ Alcoholserved: 1, venuecategory: 1 });
-VenueSchema.index({ geometry: '2dsphere', Rating: -1 });
+VenueSchema.index({ Pub_Wifi: 1, Nomad_friendly_score: -1 });
+VenueSchema.index({ Alcohol_served: 1, venuecategory: 1 });
 VenueSchema.index({ region: 1, isActive: 1 });
 VenueSchema.index({ BillingCountry: 1, BillingCity: 1 });
-VenueSchema.index({ globalId: 1, region: 1 });
-VenueSchema.index({ isActive: 1, region: 1 });
+VenueSchema.index({ globalId: 1, region: 1 }, { unique: true, sparse: true });
+VenueSchema.index({ createdAt: -1 });
 
-// ───── VIRTUALS ─────
+// ───── VENUE VIRTUALS ─────
 VenueSchema.virtual('coordinates').get(function (this: IVenue) {
-  return this.geometry ? this.geometry.coordinates : null;
-});
-VenueSchema.virtual('cuisineArray').get(function (this: IVenue) {
-  return this.CuisineTags ? this.CuisineTags.split(/[|;,]/) : [];
-});
-VenueSchema.virtual('dietaryArray').get(function (this: IVenue) {
-  return this.Dietarytags ? this.Dietarytags.split(/[|;,]/) : [];
-});
-VenueSchema.virtual('paymentArray').get(function (this: IVenue) {
-  return this['Payment types'] ? this['Payment types'].split(/[|;,]/) : [];
+  return this.geometry?.coordinates || null;
 });
 
-// ───── STATIC METHODS ─────
+VenueSchema.virtual('cuisineArray').get(function (this: IVenue) {
+  const tags = this.Cuisine_Tags || this.CuisineTags;
+  return tags ? tags.split(/[|;,]/).map((t: string) => t.trim()) : [];
+});
+
+VenueSchema.virtual('dietaryArray').get(function (this: IVenue) {
+  return this.Dietary_tags ? this.Dietary_tags.split(/[|;,]/).map((t: string) => t.trim()) : [];
+});
+
+VenueSchema.virtual('paymentArray').get(function (this: IVenue) {
+  const payments = this.PaymentTypes || this['Payment types'];
+  return payments ? payments.split(/[|;,]/).map((t: string) => t.trim()) : [];
+});
+
+// ───── VENUE STATIC METHODS ─────
 VenueSchema.statics.findNearby = function (longitude: number, latitude: number, maxDistance: number = 5000) {
   return this.find({
     geometry: {
@@ -328,24 +494,28 @@ VenueSchema.statics.findNearby = function (longitude: number, latitude: number, 
     isActive: true,
   });
 };
+
 VenueSchema.statics.findByFilters = function (filters: any) {
   const query: any = { isActive: true };
   if (filters.venueType) query.venuetype = filters.venueType;
   if (filters.district) query.BillingDistrict = filters.district;
   if (filters.budget) query.BudgetFriendly = filters.budget;
-  if (filters.wifi) query.PubWifi = 1;
-  if (filters.alcohol) query.Alcoholserved = 1;
+  if (filters.wifi) query.Pub_Wifi = true;
+  if (filters.alcohol) query.Alcohol_served = true;
   if (filters.minRating) query.Rating = { $gte: filters.minRating };
   if (filters.country) query.BillingCountry = filters.country;
   if (filters.region) query.region = filters.region;
   return this.find(query).sort({ Rating: -1 });
 };
+
 VenueSchema.statics.findByGroup = function (groupId: string) {
   return this.find({ groupid: groupId, isActive: true }).sort({ Rating: -1 });
 };
+
 VenueSchema.statics.findByCategory = function (categoryId: string) {
   return this.find({ venuecategory: categoryId, isActive: true }).sort({ Rating: -1 });
 };
+
 VenueSchema.statics.getGroupStats = async function () {
   return this.aggregate([
     { $match: { isActive: true } },
@@ -355,16 +525,15 @@ VenueSchema.statics.getGroupStats = async function () {
         displayName: { $first: '$groupiddisplayname' },
         count: { $sum: 1 },
         avgRating: { $avg: '$Rating' },
-        categories: { $addToSet: { id: '$venuecategory', name: '$venuecategorydisplayname' } },
       },
     },
     { $sort: { count: -1 } },
   ]);
 };
 
-// ───── INSTANCE METHODS ─────
+// ───── VENUE INSTANCE METHODS ─────
 VenueSchema.methods.getDistance = function (this: IVenue, longitude: number, latitude: number): number | null {
-  if (!this.geometry || !this.geometry.coordinates) return null;
+  if (!this.geometry?.coordinates) return null;
   const [venueLng, venueLat] = this.geometry.coordinates;
   const R = 6371;
   const dLat = ((venueLat - latitude) * Math.PI) / 180;
@@ -378,41 +547,151 @@ VenueSchema.methods.getDistance = function (this: IVenue, longitude: number, lat
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
 };
+
 VenueSchema.methods.isNomadFriendly = function (this: IVenue): boolean {
-  return (
-    this.PubWifi === 1 &&
-    this.ChargingPorts !== undefined &&
-    this.ChargingPorts > 0 &&
-    this.Nomadfriendlyscore !== undefined &&
-    this.Nomadfriendlyscore >= 3
-  );
-};
-VenueSchema.methods.isFamilyFriendly = function (this: IVenue): boolean {
-  return (
-    this.Kidsfriendlybadge === 'Allowed' ||
-    (this.Familyfrienlinessscore !== undefined && this.Familyfrienlinessscore >= 3)
+  return !!(
+    this.Pub_Wifi &&
+    this.Charging_Ports && this.Charging_Ports > 0 &&
+    this.Nomad_friendly_score && this.Nomad_friendly_score >= 3
   );
 };
 
-// ───── PRE-SAVE MIDDLEWARE ─────
+VenueSchema.methods.isFamilyFriendly = function (this: IVenue): boolean {
+  return !!(
+    (this.Kids_friendly_badge === 'Allowed' || this.Kids_friendly_badge === 'Very Kid Friendly') ||
+    (this.Family_frienliness_score && this.Family_frienliness_score >= 3)
+  );
+};
+
+// ───── VENUE PRE-SAVE MIDDLEWARE ─────
 VenueSchema.pre<IVenue>('save', function (next) {
-  if (this.LatitudeMapslytextsingleLine && this.LongitudeMapslytextsingleLine) {
-    if (!this.geometry) {
+  // Sync geometry from individual coordinates if provided
+  if ((this.LatitudeMapslytextsingleLine || this.Latitude_Mapsly_text_singleLine) && 
+      (this.LongitudeMapslytextsingleLine || this.Longitude_Mapsly_text_singleLine)) {
+    
+    const lat = this.LatitudeMapslytextsingleLine || this.Latitude_Mapsly_text_singleLine;
+    const lng = this.LongitudeMapslytextsingleLine || this.Longitude_Mapsly_text_singleLine;
+    
+    if (lat && lng) {
       this.geometry = {
         type: 'Point',
-        coordinates: [this.LongitudeMapslytextsingleLine, this.LatitudeMapslytextsingleLine],
+        coordinates: [lng, lat]
       };
-    } else {
-      this.geometry.coordinates = [this.LongitudeMapslytextsingleLine, this.LatitudeMapslytextsingleLine];
     }
   }
+
+  // Ensure geometry is valid before save
+  if (!this.geometry || !this.geometry.coordinates || this.geometry.coordinates.length !== 2) {
+    throw new Error('Invalid geometry: coordinates must be [longitude, latitude]');
+  }
+
   next();
 });
+
+// ===== STREET VENDOR SCHEMA (SEPARATE) =====
+const StreetVendorSchema = new mongoose.Schema<IStreetVendor>(
+  {
+    // VENDOR IDENTIFIERS
+    vendorName: {
+      type: String,
+      required: [true, 'vendorName is required']
+    },
+
+    vendorType: {
+      type: String,
+      enum: ['static', 'mobile'],
+      required: true,
+      index: true
+    },
+
+    // LIVE LOCATION (VENDOR ONLY)
+    currentLocation: {
+      type: {
+        type: String,
+        enum: ['Point'],
+        default: 'Point'
+      },
+      coordinates: {
+        type: [Number],
+        required: [true, 'Current location coordinates are required'],
+        validate: {
+          validator: function(coords: number[]) {
+            return coords.length === 2 && 
+              coords[0] >= -180 && coords[0] <= 180 &&
+              coords[1] >= -90 && coords[1] <= 90;
+          },
+          message: 'Invalid coordinates for currentLocation: [longitude, latitude]'
+        }
+      },
+      timestamp: {
+        type: Date,
+        default: Date.now
+      },
+      accuracy: Number
+    },
+
+    // AVAILABILITY
+    isOperational: {
+      type: Boolean,
+      default: false,
+      index: true
+    },
+
+    // SERVICE AREA
+    serviceRadius: {
+      type: Number,
+      default: 500
+    },
+
+    serviceArea: polygonSchema,
+
+    // LOCATION HISTORY
+    locationHistory: [{
+      coordinates: [Number],
+      timestamp: Date,
+      accuracy: Number,
+      _id: false
+    }],
+
+    // VENDOR CONTACT
+    vendorPhoneNumber: String,
+    phone: String,
+    hotspot: Boolean,
+
+    // SHARED FIELDS
+    globalId: String,
+    AccountName: String,
+    Cuisine_Tags: String,
+    'Payment types': String,
+    BudgetFriendly: String,
+
+    // SYSTEM
+    region: { type: String, required: true, index: true },
+    isActive: { type: Boolean, default: true, index: true },
+    ownerId: { type: Schema.Types.ObjectId, ref: 'User' },
+  },
+  {
+    timestamps: true,
+    collection: 'street_vendors',
+    strict: false
+  }
+);
+
+// ───── STREET VENDOR INDEXES ─────
+StreetVendorSchema.index({ 'currentLocation': '2dsphere' });
+StreetVendorSchema.index({ isOperational: 1, vendorType: 1 });
+StreetVendorSchema.index({ 'currentLocation.timestamp': -1 });
+StreetVendorSchema.index({ region: 1, isActive: 1 });
 
 // ───── REGION HELPER ─────
 export const getVenueModel = (region: Region) => {
   return getRegionalModel<IVenue>('Venue', VenueSchema, region);
 };
 
-// ───── DEFAULT EXPORT (GLOBAL) ─────
+export const getStreetVendorModel = (region: Region) => {
+  return getRegionalModel<IStreetVendor>('StreetVendor', StreetVendorSchema, region);
+};
+
+// ───── DEFAULT EXPORTS ─────
 export default mongoose.model<IVenue, IVenueModel>('Venue', VenueSchema);
+export const StreetVendorModel = mongoose.model<IStreetVendor>('StreetVendor', StreetVendorSchema);
