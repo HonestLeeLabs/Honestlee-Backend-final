@@ -36,6 +36,7 @@ export interface IOffer extends Document {
   categories: string[];
   isActive: boolean;
   qrRotationMinutes: number;
+  region?: 'ae' | 'th' | 'in' | 'global'; // ✅ NEW: Optional region tracking
   createdAt: Date;
   updatedAt: Date;
   
@@ -66,7 +67,8 @@ const OfferSchema = new Schema<IOffer>({
   conditions: [{ type: String }],
   categories: [{ type: String }],
   isActive: { type: Boolean, default: true },
-  qrRotationMinutes: { type: Number, default: 2, min: 1, max: 60 }
+  qrRotationMinutes: { type: Number, default: 2, min: 1, max: 60 },
+  region: { type: String, enum: ['ae', 'th', 'in', 'global'], default: 'global', index: true } // ✅ NEW
 }, {
   timestamps: true
 });
@@ -75,6 +77,7 @@ const OfferSchema = new Schema<IOffer>({
 OfferSchema.index({ venueId: 1, isActive: 1, validFrom: 1, validUntil: 1 });
 OfferSchema.index({ validFrom: 1, validUntil: 1 });
 OfferSchema.index({ categories: 1 });
+OfferSchema.index({ region: 1, isActive: 1 }); // ✅ NEW: Region-based query optimization
 
 // Methods implementation
 OfferSchema.methods.isValidNow = function(this: IOffer): boolean {
