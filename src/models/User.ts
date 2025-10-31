@@ -4,7 +4,9 @@ export enum Role {
   ADMIN = 'ADMIN',
   STAFF = 'STAFF',
   CONSUMER = 'CONSUMER',
-  AGENT = 'AGENT'
+  AGENT = 'AGENT',
+  MANAGER = 'MANAGER',
+  OWNER = 'OWNER'
 }
 
 export enum LoginMethod {

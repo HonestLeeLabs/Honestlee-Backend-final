@@ -1,21 +1,45 @@
+// ===== FILE: src/routes/venueRoutes.ts =====
+
 import express, { Request, Response, NextFunction, RequestHandler } from 'express';
 import { authenticate, AuthRequest } from '../middlewares/authMiddleware';
-import { createVenue, getVenues, getVenueById, updateVenue } from '../controllers/venueController';
+import { RegionRequest } from '../middlewares/regionMiddleware';
+import {
+  createVenue,
+  getVenues,
+  getVenueById,
+  updateVenue,
+  deleteVenue,
+  getVenuesByCategory,
+  getVenueVitals,
+  updateVenueVitals
+} from '../controllers/venueController';
+
+// Combine Auth and Region types for requests
+type CombinedRequest = AuthRequest & RegionRequest;
 
 const router = express.Router();
 
-// Wrapper utility to cast Request to AuthRequest for handlers
-function wrapAuthHandler(
-  handler: (req: AuthRequest, res: Response, next?: NextFunction) => any
+// Wrapper utility: Casts Request to CombinedRequest for handlers
+function wrapCombinedHandler(
+  handler: (req: CombinedRequest, res: Response, next?: NextFunction) => any
 ): RequestHandler {
   return (req: Request, res: Response, next: NextFunction) => {
-    return handler(req as AuthRequest, res, next);
+    return handler(req as CombinedRequest, res, next);
   };
 }
 
-router.post('/', authenticate, wrapAuthHandler(createVenue));  // role checks inside controller
-router.get('/', authenticate, wrapAuthHandler(getVenues));    // role checks inside controller
-router.get('/:id', authenticate, wrapAuthHandler(getVenueById));
-router.put('/:id', authenticate, wrapAuthHandler(updateVenue));
+// Basic CRUD routes
+router.post('/', authenticate, wrapCombinedHandler(createVenue));
+router.get('/', authenticate, wrapCombinedHandler(getVenues));
+router.get('/:id', authenticate, wrapCombinedHandler(getVenueById));
+router.put('/:id', authenticate, wrapCombinedHandler(updateVenue));
+router.delete('/:id', authenticate, wrapCombinedHandler(deleteVenue));
+
+// Category routes
+router.get('/category/:category', authenticate, wrapCombinedHandler(getVenuesByCategory));
+
+// ✅ NEW: Vitals endpoints (must be before /:id to avoid conflict)
+router.get('/:id/vitals', authenticate, wrapCombinedHandler(getVenueVitals));
+router.put('/:id/vitals', authenticate, wrapCombinedHandler(updateVenueVitals));
 
 export default router;

@@ -1,35 +1,44 @@
-// src/app.ts or src/index.ts
+// ===== FILE: src/app.ts =====
+
 import express from 'express';
 import cors from 'cors';
 import 'express-async-errors';
-import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import session from 'express-session';
 import passport from './config/passport';
+import mongoose from 'mongoose';
+
+import { dbManager } from './config/database';
+import { detectRegion } from './middlewares/regionMiddleware';
+import { errorHandler } from './utils/errorHandler';
+import { testEmailConfig } from './services/emailService';
+import { startSyncJobs } from './jobs/syncJob';
+
+// API Route imports
 import authRoutes from './routes/authRoutes';
 import googleAuthRoutes from './routes/googleAuthRoutes';
 import wifiRoutes from './routes/wifiRoutes';
 import reviewRoutes from './routes/reviewRoutes';
 import venueRoutes from './routes/venueRoutes';
+import venueDubaiRoutes from './routes/venueDubaiRoutes';
+import eventDubaiRoutes from './routes/eventDubaiRoutes';
 import userRoutes from './routes/userRoutes';
 import adminRoutes from './routes/adminRoutes';
 import zohoRoutes from './routes/zohoRoutes';
 import webhookRoutes from './routes/webhookRoutes';
-import venueDubaiRoutes from './routes/venueDubaiRoutes';
-import eventDubaiRoutes from './routes/eventDubaiRoutes';
-import { startSyncJobs } from './jobs/syncJob';
-import { errorHandler } from './utils/errorHandler';
-import { testEmailConfig } from './services/emailService';
 import uploadRoutes from './routes/uploadRoutes';
+import offerRoutes from './routes/offerRoutes';
+import redemptionRoutes from './routes/redemptionRoutes';
+import staffRoutes from './routes/staffRoutes';
+import eventRoutes from './routes/eventRoutes';
+import paymentRoutes from './routes/paymentRoutes';
 
-console.log('✅ eventDubaiRoutes imported:', typeof eventDubaiRoutes);
-console.log('✅ eventDubaiRoutes is Router?', eventDubaiRoutes?.stack ? 'Yes' : 'No');
-
+// Load environment variables
 dotenv.config();
 
 const app = express();
 
-// CORS Configuration for Frontend Access
+// ===== CORS CONFIGURATION =====
 const corsOptions = {
   origin: [
     'http://localhost:3000',
@@ -49,6 +58,8 @@ const corsOptions = {
     'https://api.honestlee.ae',
     'https://hlee.app',
     'https://www.hlee.app',
+    'https://th.honestlee.app',
+    'https://admin.honestlee.app'
   ],
   credentials: true,
   optionsSuccessStatus: 200,
@@ -62,17 +73,19 @@ const corsOptions = {
     'Cache-Control',
     'X-File-Name',
     'x-region',
-    'X-Region'
+    'X-Region',
+    'accept-language',
+    'x-device-id',
+    'x-platform'
   ]
 };
 
 app.use(cors(corsOptions));
-
-// ⭐ INCREASED TO 1GB for massive bulk imports
 app.use(express.json({ limit: '1gb' }));
 app.use(express.urlencoded({ limit: '1gb', extended: true }));
+app.options('*', cors(corsOptions));
 
-// Session support for OAuth state
+// ===== SESSION SUPPORT =====
 app.use(session({
   secret: process.env.SESSION_SECRET || 'your-session-secret-change-this',
   resave: false,
@@ -80,65 +93,82 @@ app.use(session({
   cookie: {
     secure: process.env.NODE_ENV === 'production',
     httpOnly: true,
-    maxAge: 10 * 60 * 1000 // 10 minutes
+    maxAge: 10 * 60 * 1000
   }
 }));
 
 app.use(passport.initialize());
 app.use(passport.session());
 
-// Add preflight handler for complex CORS requests
-app.options('*', cors(corsOptions));
+// ===== REGION DETECTION MIDDLEWARE =====
+app.use(detectRegion);
 
-// Add additional headers for streaming responses
+// ===== ADDITIONAL CORS HEADERS =====
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, Cache-Control, X-File-Name, x-region, X-Region');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, Cache-Control, X-File-Name, x-region, X-Region, x-device-id, x-platform, accept-language');
   res.header('Access-Control-Allow-Credentials', 'true');
   next();
-}); 
+});
 
-mongoose.connect(process.env.MONGODB_URI || '')
-  .then(async () => {
-    console.log('✅ MongoDB connected');
-    console.log('📦 Max request body size: 1GB (for bulk imports)');
+// ===== DATABASE CONNECTION LOGIC =====
+const connectDatabases = async () => {
+  try {
+    // Connect to shared DB (MongoDB Atlas global/shared DB)
+    await dbManager.connectShared();
 
-    try {
-      const db = mongoose.connection.db;
-      const collection = db.collection('users');
+    // Pre-connect to regional DBs that will be frequently accessed (AE, TH)
+    await Promise.all([
+      dbManager.connectRegion('ae'),
+      dbManager.connectRegion('th')
+    ]);
+    console.log('✅ All databases connected successfully');
 
-      // Drop old indexes
+    // Global connection for jobs, admin, etc.
+    const mongoURI = process.env.MONGODB_URI;
+    if (mongoURI) {
+      await mongoose.connect(mongoURI, {
+        serverSelectionTimeoutMS: 10000,
+        socketTimeoutMS: 45000,
+      });
+      console.log('✅ Global MongoDB connected:', mongoose.connection.name);
+
+      // Index fixes
       try {
-        await collection.dropIndex('phone_1');
-        console.log('✅ Dropped phone_1 index');
-      } catch (e) {
-        console.log('⚠️  phone_1 index not found or already dropped');
+        const db = mongoose.connection.db;
+        const userColl = db.collection('users');
+        try {
+          await userColl.dropIndex('phone_1');
+          console.log('✅ Dropped phone_1 index');
+        } catch (e) {
+          console.log('⚠️  phone_1 index not found');
+        }
+        try {
+          await userColl.dropIndex('email_1');
+          console.log('✅ Dropped email_1 index');
+        } catch (e) {
+          console.log('⚠️  email_1 index not found');
+        }
+        await userColl.createIndex({ phone: 1 }, { unique: true, sparse: true });
+        await userColl.createIndex({ email: 1 }, { unique: true, sparse: true });
+        console.log('✅ Created sparse indexes for phone/email');
+      } catch (indexError) {
+        console.error('❌ Error fixing indexes:', indexError);
       }
-
-      try {
-        await collection.dropIndex('email_1');
-        console.log('✅ Dropped email_1 index');
-      } catch (e) {
-        console.log('⚠️  email_1 index not found or already dropped');
-      }
-
-      // Create sparse indexes
-      await collection.createIndex({ phone: 1 }, { unique: true, sparse: true });
-      await collection.createIndex({ email: 1 }, { unique: true, sparse: true });
-      console.log('✅ Created sparse indexes for phone and email');
-
-    } catch (error) {
-      console.error('❌ Error fixing indexes:', error);
+      // Kick off services
+      testEmailConfig();
+      startSyncJobs();
     }
-  })
-  .catch(err => console.error('❌ MongoDB connection error:', err));
+  } catch (error: any) {
+    console.error('❌ Database connection error:', error.message);
+    process.exit(1);
+  }
+};
 
-// Initialize services
-testEmailConfig();
-startSyncJobs();
+connectDatabases();
 
-// API Routes
+// ===== API ROUTES =====
 app.use('/api/auth', authRoutes);
 app.use('/api/auth', googleAuthRoutes);
 app.use('/api/wifi', wifiRoutes);
@@ -151,26 +181,45 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/zoho', zohoRoutes);
 app.use('/webhooks', webhookRoutes);
 app.use('/api/upload', uploadRoutes);
+app.use('/api/offers', offerRoutes);
+app.use('/api/redemptions', redemptionRoutes);
+app.use('/api/staff', staffRoutes);
+app.use('/api/events', eventRoutes);
+app.use('/api/payments', paymentRoutes);
 
-// Health check endpoint
+// ===== HEALTH CHECK ENDPOINT =====
 app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'OK', 
+  const dbStatus = mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected';
+  res.json({
+    status: 'OK',
     timestamp: new Date().toISOString(),
+    database: {
+      status: dbStatus,
+      name: mongoose.connection.name || 'Not connected'
+    },
     cors: 'Enabled for ports 3000, 3001 and production domains',
     maxBodySize: '1GB',
+    regions: {
+      ae: 'Dubai/UAE',
+      th: 'Thailand'
+    },
     routes: {
       venues_dubai: '/api/venues-dubai',
       events_dubai: '/api/events-dubai',
+      events: '/api/events',
       auth: '/api/auth',
       google_auth: '/api/auth/google',
       users: '/api/users',
+      venues: '/api/venues',
+      offers: '/api/offers',
+      redemptions: '/api/redemptions',
+      staff: '/api/staff',
       bulk_import: '/api/venues-dubai/bulk-import'
     }
   });
 });
 
-// Error handler
+// ===== ERROR HANDLER =====
 app.use(errorHandler);
 
 export default app;
