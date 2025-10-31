@@ -1,3 +1,4 @@
+// ===== FILE: src/models/Event.ts =====
 import mongoose, { Schema, Document } from 'mongoose';
 
 export enum EventType {
@@ -39,11 +40,11 @@ export interface IEvent extends Document {
   conditions?: string[];
   isActive: boolean;
   imageUrl?: string;
+  region?: 'ae' | 'th' | 'in' | 'global'; // ✅ NEW
   createdBy: mongoose.Types.ObjectId;
   createdAt: Date;
   updatedAt: Date;
   
-  // Method declarations
   isValidNow(): boolean;
   isUpcoming(): boolean;
   hasCapacity(): boolean;
@@ -74,6 +75,7 @@ const EventSchema = new Schema<IEvent>({
   conditions: [{ type: String }],
   isActive: { type: Boolean, default: true, index: true },
   imageUrl: { type: String },
+  region: { type: String, enum: ['ae', 'th', 'in', 'global'], default: 'global', index: true }, // ✅ NEW
   createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true }
 }, {
   timestamps: true
@@ -83,22 +85,19 @@ const EventSchema = new Schema<IEvent>({
 EventSchema.index({ venueId: 1, isActive: 1, eventStartsAt: 1 });
 EventSchema.index({ eventStartsAt: 1, eventEndsAt: 1 });
 EventSchema.index({ eventType: 1, eventStartsAt: 1 });
+EventSchema.index({ region: 1, isActive: 1 }); // ✅ NEW
 
 // Methods implementation
 EventSchema.methods.isValidNow = function(this: IEvent): boolean {
   const now = new Date();
   if (now < this.eventStartsAt || now > this.eventEndsAt) return false;
   if (!this.isActive) return false;
-  
-  // Check capacity
   if (this.capacity && this.currentAttendees >= this.capacity) return false;
   
-  // Check day of week for recurring events
   if (this.eventRecurrence !== EventRecurrence.NONE && this.daysOfWeek && this.daysOfWeek.length > 0) {
     if (!this.daysOfWeek.includes(now.getDay())) return false;
   }
   
-  // Check time slots for recurring events
   if (this.eventRecurrence !== EventRecurrence.NONE && this.timeSlots && this.timeSlots.length > 0) {
     const currentTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
     const inTimeSlot = this.timeSlots.some(slot => 
