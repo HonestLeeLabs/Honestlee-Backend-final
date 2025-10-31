@@ -32,6 +32,7 @@ import redemptionRoutes from './routes/redemptionRoutes';
 import staffRoutes from './routes/staffRoutes';
 import eventRoutes from './routes/eventRoutes';
 import paymentRoutes from './routes/paymentRoutes';
+import streetVendorRoutes from './routes/streetVendorRoutes';
 
 // Load environment variables
 dotenv.config();
@@ -187,6 +188,9 @@ app.use('/api/staff', staffRoutes);
 app.use('/api/events', eventRoutes);
 app.use('/api/payments', paymentRoutes);
 
+// ===== STREET VENDOR ROUTES WITH REGION DETECTION =====
+app.use('/api/street-vendors', detectRegion, streetVendorRoutes);
+
 // ===== HEALTH CHECK ENDPOINT =====
 app.get('/health', (req, res) => {
   const dbStatus = mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected';
@@ -214,6 +218,7 @@ app.get('/health', (req, res) => {
       offers: '/api/offers',
       redemptions: '/api/redemptions',
       staff: '/api/staff',
+      street_vendors: '/api/street-vendors',
       bulk_import: '/api/venues-dubai/bulk-import'
     }
   });
