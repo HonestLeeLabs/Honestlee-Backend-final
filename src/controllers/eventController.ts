@@ -145,6 +145,7 @@ export const getAllEvents = async (req: StaffRequest, res: Response, next?: Next
 };
 
 // GET /api/events/venue/:venueId - Get all events for a venue BY NAME
+// GET /api/events/venue/:venueId - Get all events for a venue BY ID OR NAME
 export const getEventsByVenue = async (req: StaffRequest, res: Response, next?: NextFunction) => {
   try {
     const region = (req.region || 'ae') as Region;
@@ -157,10 +158,22 @@ export const getEventsByVenue = async (req: StaffRequest, res: Response, next?: 
     const regionalConnection = dbManager.getConnection(region);
     const RegionalVenue = regionalConnection.model('Venue', Venue.schema);
 
-    // Find venue by name in regional database
-    const venue = await RegionalVenue.findOne({ 
-      AccountName: { $regex: new RegExp(`^${venueId}$`, 'i') }
-    });
+    // ✅ FIXED: Try to find venue by ID first, then by name
+    let venue;
+    
+    // Check if venueId is a valid MongoDB ObjectId
+    if (mongoose.Types.ObjectId.isValid(venueId)) {
+      venue = await RegionalVenue.findById(venueId);
+      console.log(`🔍 Searching by ObjectId: ${venueId}`);
+    }
+    
+    // If not found by ID, try searching by name
+    if (!venue) {
+      console.log(`🔍 Searching by name: ${venueId}`);
+      venue = await RegionalVenue.findOne({ 
+        AccountName: { $regex: new RegExp(`^${venueId}$`, 'i') }
+      });
+    }
 
     if (!venue) {
       console.log('❌ Venue not found:', venueId);
@@ -191,9 +204,12 @@ export const getEventsByVenue = async (req: StaffRequest, res: Response, next?: 
       query.eventStartsAt = { $gte: new Date() };
     }
 
+    console.log('📋 Event query:', JSON.stringify(query, null, 2));
+
     const events = await Event.find(query)
       .populate('createdBy', 'name email')
-      .sort({ eventStartsAt: 1 });
+      .sort({ eventStartsAt: 1 })
+      .lean();
 
     console.log(`✅ Found ${events.length} events for venue ${venue.AccountName}`);
 
