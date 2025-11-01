@@ -16,7 +16,7 @@ import {
   getMyRosterEntries,
   getMyInvitations,
   acceptStaffInvitation,
-  fixAndAddToRoster // ✅ NEW
+  cleanupInvalidRosters // ✅ NEW - replaces fixAndAddToRoster
 } from '../controllers/staffRosterController';
 import { authenticateToken, AuthRequest } from '../middlewares/authMiddleware';
 
@@ -40,12 +40,14 @@ router.get('/dashboard/:venueId', authenticateToken, authRoute(getDashboardOverv
 router.post('/session/refresh', authenticateToken, authRoute(refreshSession));
 router.post('/session/lock', authenticateToken, authRoute(lockSession));
 
-// Roster routes - ORDER MATTERS! Specific routes BEFORE parameterized routes
+// ✅ CRITICAL: Specific routes BEFORE parameterized routes
 router.get('/roster/my-roster', authenticateToken, authRoute(getMyRosterEntries)); 
 router.get('/roster/my-invitations', authenticateToken, authRoute(getMyInvitations));
-router.post('/roster/fix-and-add', authenticateToken, authRoute(fixAndAddToRoster)); // ✅ NEW FIX ENDPOINT
-router.put('/roster/:rosterId/accept', authenticateToken, authRoute(acceptStaffInvitation));
+router.post('/roster/cleanup', authenticateToken, authRoute(cleanupInvalidRosters)); // ✅ NEW CLEANUP
 router.post('/roster/test-add', authenticateToken, authRoute(testAddStaffToRoster));
+router.put('/roster/:rosterId/accept', authenticateToken, authRoute(acceptStaffInvitation));
+
+// Venue roster management (these can stay as is)
 router.get('/roster/:venueId', authenticateToken, authRoute(getVenueRoster));
 router.post('/roster/invite', authenticateToken, authRoute(inviteStaffMember));
 router.put('/roster/:rosterId/role', authenticateToken, authRoute(updateStaffRole));
