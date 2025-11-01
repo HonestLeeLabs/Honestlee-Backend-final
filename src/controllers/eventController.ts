@@ -1,13 +1,20 @@
-import { Response } from 'express';
+// ===== FILE: src/controllers/eventController.ts =====
+import { Response, NextFunction } from 'express';
 import Event, { IEvent } from '../models/Event';
 import User from '../models/User';
 import Venue from '../models/Venue';
 import { AuthRequest } from '../middlewares/authMiddleware';
+import { RegionRequest } from '../middlewares/regionMiddleware';
+import { dbManager, Region } from '../config/database';
 import mongoose from 'mongoose';
 
+// ✅ Combined type with region support
+type StaffRequest = AuthRequest & RegionRequest;
+
 // GET /api/events - Get all events with filters (PUBLIC or AUTHENTICATED)
-export const getAllEvents = async (req: AuthRequest, res: Response) => {
+export const getAllEvents = async (req: StaffRequest, res: Response, next?: NextFunction) => {
   try {
+    const region = (req.region || 'ae') as Region;
     const {
       page = 1,
       limit = 50,
@@ -23,24 +30,20 @@ export const getAllEvents = async (req: AuthRequest, res: Response) => {
       Event_Age_Restriction,
       isFree,
       isPaid,
-      sortBy = 'eventStartsAt',
-      region,
-      country
+      sortBy = 'eventStartsAt'
     } = req.query;
 
-    console.log('🔍 Fetching all events with filters:', {
+    console.log(`🎭 Fetching all events (region: ${region}):`, {
       page,
       limit,
       upcoming,
       category: category || Event_Category,
       event_type,
-      search,
-      region,
-      country
+      search
     });
 
     // Build query
-    const query: any = { isActive: true };
+    const query: any = { isActive: true, region };
 
     // Date filters
     if (upcoming === 'true') {
@@ -52,7 +55,7 @@ export const getAllEvents = async (req: AuthRequest, res: Response) => {
       }
       if (endDate) {
         const endDateTime = new Date(endDate as string);
-        endDateTime.setHours(23, 59, 59, 999); // End of day
+        endDateTime.setHours(23, 59, 59, 999);
         query.eventStartsAt.$lte = endDateTime;
       }
     }
@@ -90,7 +93,7 @@ export const getAllEvents = async (req: AuthRequest, res: Response) => {
       query.eventAgeRestriction = Event_Age_Restriction;
     }
 
-    // Search filter - Fixed TypeScript error
+    // Search filter
     if (search && typeof search === 'string' && search.trim()) {
       const searchTerm = search.trim();
       query.$or = [
@@ -117,9 +120,8 @@ export const getAllEvents = async (req: AuthRequest, res: Response) => {
       Event.countDocuments(query)
     ]);
 
-    console.log(`✅ Found ${events.length} events (total: ${totalCount})`);
+    console.log(`✅ Found ${events.length} events (total: ${totalCount}) in region ${region}`);
 
-    // Return response
     res.json({
       success: true,
       data: events,
@@ -128,7 +130,8 @@ export const getAllEvents = async (req: AuthRequest, res: Response) => {
         totalPages: Math.ceil(totalCount / limitNum),
         totalCount,
         limit: limitNum
-      }
+      },
+      region
     });
 
   } catch (error: any) {
@@ -142,17 +145,35 @@ export const getAllEvents = async (req: AuthRequest, res: Response) => {
 };
 
 // GET /api/events/venue/:venueId - Get all events for a venue BY NAME
-export const getEventsByVenue = async (req: AuthRequest, res: Response) => {
+// GET /api/events/venue/:venueId - Get all events for a venue BY ID OR NAME
+export const getEventsByVenue = async (req: StaffRequest, res: Response, next?: NextFunction) => {
   try {
-    const { venueId } = req.params; // This is actually the venue name from the URL
+    const region = (req.region || 'ae') as Region;
+    const { venueId } = req.params;
     const { activeOnly = 'true', upcoming = 'false' } = req.query;
 
-    console.log('🔍 Fetching events for venue:', venueId);
+    console.log(`🎭 Fetching events for venue: ${venueId}, region: ${region}`);
 
-    // First, find the venue by name to get its ObjectId
-    const venue = await Venue.findOne({ 
-      AccountName: { $regex: new RegExp(`^${venueId}$`, 'i') } // Case-insensitive exact match
-    });
+    // ✅ NEW: Get regional venue connection
+    const regionalConnection = dbManager.getConnection(region);
+    const RegionalVenue = regionalConnection.model('Venue', Venue.schema);
+
+    // ✅ FIXED: Try to find venue by ID first, then by name
+    let venue;
+    
+    // Check if venueId is a valid MongoDB ObjectId
+    if (mongoose.Types.ObjectId.isValid(venueId)) {
+      venue = await RegionalVenue.findById(venueId);
+      console.log(`🔍 Searching by ObjectId: ${venueId}`);
+    }
+    
+    // If not found by ID, try searching by name
+    if (!venue) {
+      console.log(`🔍 Searching by name: ${venueId}`);
+      venue = await RegionalVenue.findOne({ 
+        AccountName: { $regex: new RegExp(`^${venueId}$`, 'i') }
+      });
+    }
 
     if (!venue) {
       console.log('❌ Venue not found:', venueId);
@@ -162,14 +183,18 @@ export const getEventsByVenue = async (req: AuthRequest, res: Response) => {
           events: [], 
           eventCount: 0 
         },
-        message: 'Venue not found'
+        message: 'Venue not found',
+        region
       });
     }
 
-    console.log('✅ Venue found:', venue._id, venue.AccountName);
+    console.log(`✅ Venue found: ${venue._id} (${venue.AccountName})`);
 
-    // Build query using the venue's ObjectId
-    const query: any = { venueId: venue._id };
+    // Build query using venue's ObjectId
+    const query: any = { 
+      venueId: venue._id,
+      region
+    };
     
     if (activeOnly === 'true') {
       query.isActive = true;
@@ -179,9 +204,12 @@ export const getEventsByVenue = async (req: AuthRequest, res: Response) => {
       query.eventStartsAt = { $gte: new Date() };
     }
 
+    console.log('📋 Event query:', JSON.stringify(query, null, 2));
+
     const events = await Event.find(query)
       .populate('createdBy', 'name email')
-      .sort({ eventStartsAt: 1 });
+      .sort({ eventStartsAt: 1 })
+      .lean();
 
     console.log(`✅ Found ${events.length} events for venue ${venue.AccountName}`);
 
@@ -194,7 +222,8 @@ export const getEventsByVenue = async (req: AuthRequest, res: Response) => {
           id: venue._id,
           name: venue.AccountName
         }
-      }
+      },
+      region
     });
 
   } catch (error: any) {
@@ -208,9 +237,12 @@ export const getEventsByVenue = async (req: AuthRequest, res: Response) => {
 };
 
 // GET /api/events/:id - Get event details
-export const getEventById = async (req: AuthRequest, res: Response) => {
+export const getEventById = async (req: StaffRequest, res: Response, next?: NextFunction) => {
   try {
     const { id } = req.params;
+    const region = (req.region || 'ae') as Region;
+
+    console.log(`📋 Fetching event ${id} from region ${region}`);
 
     const event = await Event.findById(id)
       .populate('venueId')
@@ -220,17 +252,24 @@ export const getEventById = async (req: AuthRequest, res: Response) => {
       return res.status(404).json({ success: false, message: 'Event not found' });
     }
 
-    res.json({ success: true, data: event });
+    res.json({ success: true, data: event, region });
 
   } catch (error: any) {
     res.status(500).json({ success: false, message: 'Error fetching event', error: error.message });
   }
 };
 
-// GET /api/events/eligible - Get upcoming events for user (with filters)
-export const getUpcomingEvents = async (req: AuthRequest, res: Response) => {
+// GET /api/events/upcoming - Get upcoming events for user (with filters)
+export const getUpcomingEvents = async (req: StaffRequest, res: Response, next?: NextFunction) => {
   try {
+    const region = (req.region || 'ae') as Region;
     const { lat, lng, radius = 5000, eventType, category, startDate, endDate } = req.query;
+
+    console.log(`🎭 Fetching upcoming events (region: ${region})`);
+
+    // ✅ NEW: Get regional venue connection
+    const regionalConnection = dbManager.getConnection(region);
+    const RegionalVenue = regionalConnection.model('Venue', Venue.schema);
 
     let venueQuery: any = { isActive: true };
     
@@ -247,14 +286,17 @@ export const getUpcomingEvents = async (req: AuthRequest, res: Response) => {
       };
     }
 
-    const venues = await Venue.find(venueQuery).select('_id');
+    const venues = await RegionalVenue.find(venueQuery).select('_id');
     const venueIds = venues.map(v => v._id);
+
+    console.log(`✅ Found ${venueIds.length} venues in region ${region}`);
 
     if (venueIds.length === 0) {
       return res.json({
         success: true,
         data: [],
-        message: 'No venues found in the specified area'
+        message: 'No venues found in the specified area',
+        region
       });
     }
 
@@ -262,7 +304,8 @@ export const getUpcomingEvents = async (req: AuthRequest, res: Response) => {
     const eventQuery: any = {
       venueId: { $in: venueIds },
       isActive: true,
-      eventStartsAt: { $gte: new Date() }
+      eventStartsAt: { $gte: new Date() },
+      region
     };
 
     if (eventType) eventQuery.eventType = eventType;
@@ -276,14 +319,17 @@ export const getUpcomingEvents = async (req: AuthRequest, res: Response) => {
       .sort({ eventStartsAt: 1 })
       .limit(50);
 
+    console.log(`✅ Found ${events.length} upcoming events`);
+
     res.json({
       success: true,
       data: events,
-      count: events.length
+      count: events.length,
+      region
     });
 
   } catch (error: any) {
-    console.error('Error fetching upcoming events:', error);
+    console.error('❌ Error fetching upcoming events:', error);
     res.status(500).json({ 
       success: false, 
       message: 'Error fetching events', 
@@ -293,18 +339,27 @@ export const getUpcomingEvents = async (req: AuthRequest, res: Response) => {
 };
 
 // POST /api/events - Create event (Manager/Owner/Admin only)
-export const createEvent = async (req: AuthRequest, res: Response) => {
+export const createEvent = async (req: StaffRequest, res: Response, next?: NextFunction) => {
   try {
     if (!req.user || !['MANAGER', 'OWNER', 'ADMIN'].includes(req.user.role)) {
       return res.status(403).json({ message: 'Insufficient permissions' });
     }
 
+    const region = (req.region || 'ae') as Region;
     const eventData = req.body;
 
-    // Validate venue access
-    const venue = await Venue.findById(eventData.venueId);
+    console.log(`✏️ Creating event (region: ${region}):`, { venueId: eventData.venueId, eventName: eventData.eventName });
+
+    // ✅ NEW: Verify venue exists in regional database
+    const regionalConnection = dbManager.getConnection(region);
+    const RegionalVenue = regionalConnection.model('Venue', Venue.schema);
+
+    const venue = await RegionalVenue.findById(eventData.venueId);
     if (!venue) {
-      return res.status(404).json({ message: 'Venue not found' });
+      return res.status(404).json({ 
+        success: false,
+        message: `Venue not found in region ${region}` 
+      });
     }
 
     // Calculate duration if not provided
@@ -317,6 +372,9 @@ export const createEvent = async (req: AuthRequest, res: Response) => {
       eventData.eventDuration = `${hours}h ${minutes}m`;
     }
 
+    // ✅ NEW: Add region to event data
+    eventData.region = region;
+
     const newEvent = new Event({
       ...eventData,
       createdBy: req.user.userId
@@ -324,23 +382,28 @@ export const createEvent = async (req: AuthRequest, res: Response) => {
 
     await newEvent.save();
 
+    console.log(`✅ Event created: ${newEvent._id}`);
+
     res.status(201).json({ success: true, data: newEvent });
 
   } catch (error: any) {
-    console.error('Error creating event:', error);
+    console.error('❌ Error creating event:', error);
     res.status(400).json({ success: false, message: 'Error creating event', error: error.message });
   }
 };
 
 // PUT /api/events/:id - Update event
-export const updateEvent = async (req: AuthRequest, res: Response) => {
+export const updateEvent = async (req: StaffRequest, res: Response, next?: NextFunction) => {
   try {
     if (!req.user || !['MANAGER', 'OWNER', 'ADMIN'].includes(req.user.role)) {
       return res.status(403).json({ message: 'Insufficient permissions' });
     }
 
     const { id } = req.params;
+    const region = (req.region || 'ae') as Region;
     const updates = req.body;
+
+    console.log(`🔄 Updating event ${id} in region ${region}`);
 
     // Recalculate duration if dates changed
     if (updates.eventStartsAt && updates.eventEndsAt) {
@@ -358,21 +421,27 @@ export const updateEvent = async (req: AuthRequest, res: Response) => {
       return res.status(404).json({ success: false, message: 'Event not found' });
     }
 
-    res.json({ success: true, data: updatedEvent });
+    console.log(`✅ Event updated: ${updatedEvent._id}`);
+
+    res.json({ success: true, data: updatedEvent, region });
 
   } catch (error: any) {
+    console.error('❌ Error updating event:', error);
     res.status(400).json({ success: false, message: 'Error updating event', error: error.message });
   }
 };
 
 // DELETE /api/events/:id - Soft delete event
-export const deleteEvent = async (req: AuthRequest, res: Response) => {
+export const deleteEvent = async (req: StaffRequest, res: Response, next?: NextFunction) => {
   try {
     if (!req.user || !['MANAGER', 'OWNER', 'ADMIN'].includes(req.user.role)) {
       return res.status(403).json({ message: 'Insufficient permissions' });
     }
 
     const { id } = req.params;
+    const region = (req.region || 'ae') as Region;
+
+    console.log(`🗑️ Deactivating event ${id} in region ${region}`);
 
     const event = await Event.findByIdAndUpdate(id, { isActive: false }, { new: true });
 
@@ -380,21 +449,27 @@ export const deleteEvent = async (req: AuthRequest, res: Response) => {
       return res.status(404).json({ success: false, message: 'Event not found' });
     }
 
-    res.json({ success: true, message: 'Event deactivated successfully' });
+    console.log(`✅ Event deactivated: ${id}`);
+
+    res.json({ success: true, message: 'Event deactivated successfully', region });
 
   } catch (error: any) {
+    console.error('❌ Error deleting event:', error);
     res.status(500).json({ success: false, message: 'Error deleting event', error: error.message });
   }
 };
 
 // POST /api/events/:id/register - Register user for event
-export const registerForEvent = async (req: AuthRequest, res: Response) => {
+export const registerForEvent = async (req: StaffRequest, res: Response, next?: NextFunction) => {
   try {
     if (!req.user) {
       return res.status(401).json({ message: 'Unauthorized' });
     }
 
     const { id } = req.params;
+    const region = (req.region || 'ae') as Region;
+
+    console.log(`📝 Registering user for event ${id}`);
 
     const event = await Event.findById(id);
     if (!event) {
@@ -413,13 +488,17 @@ export const registerForEvent = async (req: AuthRequest, res: Response) => {
     event.currentAttendees += 1;
     await event.save();
 
+    console.log(`✅ User registered for event: ${id}`);
+
     res.json({ 
       success: true, 
       message: 'Successfully registered for event',
-      data: event
+      data: event,
+      region
     });
 
   } catch (error: any) {
+    console.error('❌ Error registering for event:', error);
     res.status(500).json({ success: false, message: 'Error registering for event', error: error.message });
   }
 };
