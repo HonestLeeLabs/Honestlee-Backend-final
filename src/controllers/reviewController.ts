@@ -86,7 +86,7 @@ export const getReviewsByVenue = async (req: Request, res: Response) => {
     const reviews = await Review.find({ 
       venue: venueIdentifier,
       venueRegion: region 
-    })
+    }) 
       .populate('user', 'name')
       .sort({ createdAt: -1 });
     
