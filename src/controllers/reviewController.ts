@@ -1,10 +1,12 @@
 import { Request, Response } from 'express';
 import Review from '../models/Review';
 import { getVenueModel } from '../models/Venue';
+import { dbManager } from '../config/database';
+import { Region } from '../config/database';
 
 export const createReview = async (req: Request, res: Response) => {
   const userId = (req as any).user.userId;
-  const region = (req as any).region || 'th';
+  const region = ((req as any).region || 'th') as Region;
   const { venueId, rating, comment, tags } = req.body;
 
   if (!venueId || !rating) {
@@ -12,10 +14,11 @@ export const createReview = async (req: Request, res: Response) => {
   }
 
   try {
-    // Get the correct venue model for the region
+    // ✅ Connect to regional database to verify venue exists
+    await dbManager.connectRegion(region);
     const Venue = getVenueModel(region);
     
-    // ✅ FIXED: Support multiple venue ID formats
+    // ✅ Find venue using multiple ID formats
     const venue = await Venue.findOne({
       $or: [
         { _id: venueId },
@@ -28,10 +31,14 @@ export const createReview = async (req: Request, res: Response) => {
       return res.status(404).json({ message: 'Venue not found' });
     }
 
-    // ✅ Use the MongoDB _id for the review
+    // ✅ Store the venue's actual ID (prefer globalId, then id, then _id)
+    const venueIdentifier = venue.globalId || venue.id || venue._id.toString();
+
+    // ✅ Create review in SHARED database
     const newReview = new Review({
       user: userId,
-      venue: venue._id,  // Use the actual MongoDB _id
+      venue: venueIdentifier,
+      venueRegion: region,
       rating,
       comment,
       tags,
@@ -43,19 +50,23 @@ export const createReview = async (req: Request, res: Response) => {
     res.status(201).json(newReview);
   } catch (error: any) {
     console.error('Error creating review:', error);
-    res.status(500).json({ message: 'Failed to create review', error: error.message });
+    res.status(500).json({ 
+      message: 'Failed to create review', 
+      error: error.message 
+    });
   }
 };
 
 export const getReviewsByVenue = async (req: Request, res: Response) => {
   const { venueId } = req.params;
-  const region = (req as any).region || 'th';
+  const region = ((req as any).region || 'th') as Region;
 
   try {
-    // Get the correct venue model for the region
+    // ✅ Connect to regional database to verify venue
+    await dbManager.connectRegion(region);
     const Venue = getVenueModel(region);
     
-    // ✅ FIXED: Support multiple venue ID formats
+    // ✅ Find venue using multiple ID formats
     const venue = await Venue.findOne({
       $or: [
         { _id: venueId },
@@ -68,14 +79,23 @@ export const getReviewsByVenue = async (req: Request, res: Response) => {
       return res.status(404).json({ message: 'Venue not found' });
     }
 
-    // ✅ Use the MongoDB _id to find reviews
-    const reviews = await Review.find({ venue: venue._id })
+    // ✅ Get the venue identifier
+    const venueIdentifier = venue.globalId || venue.id || venue._id.toString();
+
+    // ✅ Find reviews from SHARED database
+    const reviews = await Review.find({ 
+      venue: venueIdentifier,
+      venueRegion: region 
+    })
       .populate('user', 'name')
       .sort({ createdAt: -1 });
     
     res.json(reviews);
   } catch (error: any) {
     console.error('Error fetching reviews:', error);
-    res.status(500).json({ message: 'Failed to fetch reviews', error: error.message });
+    res.status(500).json({ 
+      message: 'Failed to fetch reviews', 
+      error: error.message 
+    });
   }
 };
