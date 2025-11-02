@@ -1,3 +1,4 @@
+// ===== FIXED: src/controllers/authController.ts =====
 import { Request, Response } from 'express';
 import User, { Role, LoginMethod } from '../models/User';
 import { generateOtpHash, verifyOtpHash } from '../services/otpService';
@@ -67,7 +68,7 @@ export const sendOtp = async (req: Request, res: Response) => {
   res.json({ message: 'OTP sent to phone' });
 };
 
-// Send OTP via Email
+// ✅ FIXED: Send OTP via Email
 export const sendEmailOtp = async (req: Request, res: Response) => {
   const { email, region } = req.body;
   if (!email) return res.status(400).json({ message: 'Email is required' });
@@ -81,28 +82,38 @@ export const sendEmailOtp = async (req: Request, res: Response) => {
   const otpHash = await generateOtpHash(otp);
   const otpExpiry = new Date(Date.now() + (parseInt(process.env.OTP_EXPIRY || '300') * 1000));
 
-  let user = await User.findOne({ email });
+  // ✅ FIX: Use case-insensitive email lookup
+  const normalizedEmail = email.toLowerCase().trim();
+  let user = await User.findOne({ email: { $regex: new RegExp(`^${normalizedEmail}$`, 'i') } });
 
   if (!user) {
     user = new User({
-      email,
+      email: normalizedEmail, // ✅ Store normalized email
       otpCode: otpHash,
       otpExpiresAt: otpExpiry,
       role: Role.CONSUMER,
       loginMethod: LoginMethod.EMAIL
     });
+    console.log(`📝 Creating NEW user with email: ${normalizedEmail}`);
   } else {
     user.otpCode = otpHash;
     user.otpExpiresAt = otpExpiry;
     if (!user.loginMethod) {
       user.loginMethod = LoginMethod.EMAIL;
     }
+    console.log(`♻️ EXISTING user found: ${user._id} for email: ${normalizedEmail}`);
   }
   await user.save();
 
   try {
     await sendOtpEmail(email, otp);
-    res.json({ message: 'OTP sent to email' });
+    res.json({ 
+      message: 'OTP sent to email',
+      debug: {
+        userId: user._id.toString(),
+        isNewUser: !user.createdAt || (Date.now() - user.createdAt.getTime() < 5000)
+      }
+    });
   } catch (error) {
     res.status(500).json({ message: 'Failed to send OTP email' });
   }
@@ -135,6 +146,8 @@ export const verifyOtp = async (req: Request, res: Response) => {
 
   const token = signJwt({ userId: user._id.toString(), role: user.role, region });
 
+  console.log(`✅ Login successful for phone ${phone}, userId: ${user._id}`);
+
   res.json({
     token,
     role: user.role,
@@ -142,27 +155,37 @@ export const verifyOtp = async (req: Request, res: Response) => {
     name: user.name,
     email: user.email,
     loginMethod: user.loginMethod,
+    userId: user._id.toString(), // ✅ Include for debugging
     hl_source_token: user.hl_source_token,
     hl_utm_data: user.hl_utm_data
   });
 };
 
-// Verify OTP for Email
+// ✅ FIXED: Verify OTP for Email
 export const verifyEmailOtp = async (req: Request, res: Response) => {
   const { email, otp, region, hl_src } = req.body;
   if (!email || !otp) return res.status(400).json({ message: 'Email and OTP are required' });
 
-  const user = await User.findOne({ email });
+  // ✅ FIX: Use case-insensitive email lookup
+  const normalizedEmail = email.toLowerCase().trim();
+  const user = await User.findOne({ email: { $regex: new RegExp(`^${normalizedEmail}$`, 'i') } });
+  
   if (!user || !user.otpCode || !user.otpExpiresAt) {
+    console.error(`❌ OTP verification failed: User not found or OTP not set for ${normalizedEmail}`);
     return res.status(400).json({ message: 'OTP not requested' });
   }
+
+  console.log(`🔍 Verifying OTP for userId: ${user._id}, email: ${user.email}`);
 
   if (user.otpExpiresAt.getTime() < Date.now()) {
     return res.status(400).json({ message: 'OTP expired' });
   }
 
   const isValid = await verifyOtpHash(otp, user.otpCode);
-  if (!isValid) return res.status(400).json({ message: 'Invalid OTP' });
+  if (!isValid) {
+    console.error(`❌ Invalid OTP for userId: ${user._id}`);
+    return res.status(400).json({ message: 'Invalid OTP' });
+  }
 
   user.otpCode = undefined;
   user.otpExpiresAt = undefined;
@@ -172,7 +195,10 @@ export const verifyEmailOtp = async (req: Request, res: Response) => {
   
   await user.save();
 
+  // ✅ CRITICAL: Use the SAME userId from database
   const token = signJwt({ userId: user._id.toString(), role: user.role, region });
+
+  console.log(`✅ Login successful for ${normalizedEmail}, userId: ${user._id}, token generated`);
 
   res.json({
     token,
@@ -181,6 +207,7 @@ export const verifyEmailOtp = async (req: Request, res: Response) => {
     name: user.name,
     phone: user.phone,
     loginMethod: user.loginMethod,
+    userId: user._id.toString(), // ✅ Include userId for debugging
     hl_source_token: user.hl_source_token,
     hl_utm_data: user.hl_utm_data
   });
