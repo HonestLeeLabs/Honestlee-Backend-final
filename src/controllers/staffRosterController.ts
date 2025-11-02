@@ -1,4 +1,5 @@
 // ===== FILE: src/controllers/staffRosterController.ts =====
+// ✅ CRITICAL FIX: Import the actual street vendor model getter
 import { Response, NextFunction } from 'express';
 import { AuthRequest } from '../middlewares/authMiddleware';
 import { RegionRequest } from '../middlewares/regionMiddleware';
@@ -6,16 +7,15 @@ import VenueRoster from '../models/VenueRoster';
 import User from '../models/User';
 import StaffSession from '../models/StaffSession';
 import { dbManager, Region } from '../config/database';
-import Venue from '../models/Venue';
+import Venue, { getStreetVendorModel } from '../models/Venue'; // ✅ ADDED getStreetVendorModel
 import mongoose from 'mongoose';
 
 type StaffRequest = AuthRequest & RegionRequest;
 
-// ✅ FIXED TYPE: Roster entry with enriched venueId
 interface EnrichedRosterEntry {
   _id: mongoose.Types.ObjectId;
   staffUserId: mongoose.Types.ObjectId;
-  venueId: any; // Can be ObjectId or full venue object
+  venueId: any;
   role: string;
   status: string;
   permissions: string[];
@@ -38,14 +38,12 @@ export const getMyRosterEntries = async (req: StaffRequest, res: Response, next?
     const region = (req.region || 'ae') as Region;
     console.log(`🔍 Fetching roster for userId: ${req.user.userId}, region: ${region}`);
 
-    // ✅ Get ALL roster entries
     const allRosterEntries = await VenueRoster.find({
       staffUserId: req.user.userId
     }).lean();
 
     console.log(`📊 Total roster entries: ${allRosterEntries.length}`);
 
-    // ✅ Filter valid ACTIVE entries
     const validRosterEntries = allRosterEntries.filter(entry => 
       entry.status === 'ACTIVE' && 
       entry.venueId && 
@@ -63,34 +61,36 @@ export const getMyRosterEntries = async (req: StaffRequest, res: Response, next?
       });
     }
 
-    // ✅ Connect to regional database
+    // ✅ CRITICAL FIX: Use proper street vendor model
     await dbManager.connectRegion(region);
+    const StreetVendor = getStreetVendorModel(region); // ✅ Proper model
     const regionalConnection = dbManager.getConnection(region);
-    
     const RegionalVenue = regionalConnection.model('Venue', Venue.schema);
-    const RegionalStreetVendor = regionalConnection.model('StreetVendor', Venue.schema);
 
-    // ✅ Enrich with venue/vendor data
     const enrichedRosters: EnrichedRosterEntry[] = await Promise.all(
       validRosterEntries.map(async (roster): Promise<EnrichedRosterEntry> => {
         const venueIdStr = roster.venueId.toString();
         
         try {
-          // Try regular venue first
+          // ✅ Try regular venue first
           let venueData = await RegionalVenue.findById(venueIdStr).lean();
           
-          // If not found, try street vendor
+          // ✅ If not found, try street vendor with PROPER MODEL
           if (!venueData) {
-            venueData = await RegionalStreetVendor.findById(venueIdStr).lean();
+            console.log(`🔍 Not found in venues, checking street_vendors for ${venueIdStr}`);
+            venueData = await StreetVendor.findById(venueIdStr).lean();
+            if (venueData) {
+              console.log(`✅ Found street vendor: ${venueData.vendorName}`);
+            }
           }
 
           if (venueData) {
             return {
               ...roster,
-              venueId: venueData // Replace with full object
+              venueId: venueData
             } as EnrichedRosterEntry;
           } else {
-            console.warn(`⚠️ Venue/Vendor ${venueIdStr} not found`);
+            console.warn(`⚠️ Venue/Vendor ${venueIdStr} not found in ${region}`);
             return {
               ...roster,
               venueId: null
@@ -106,7 +106,6 @@ export const getMyRosterEntries = async (req: StaffRequest, res: Response, next?
       })
     );
 
-    // ✅ Filter out failed enrichments
     const successfullyEnriched = enrichedRosters.filter(r => r.venueId !== null);
 
     console.log(`✅ Successfully enriched ${successfullyEnriched.length} entries`);
@@ -122,6 +121,155 @@ export const getMyRosterEntries = async (req: StaffRequest, res: Response, next?
     res.status(500).json({
       success: false,
       message: 'Error fetching roster',
+      error: error.message
+    });
+  }
+};
+
+// ✅ POST /api/staff/roster/test-add - FIXED STREET VENDOR CHECK
+export const testAddStaffToRoster = async (req: StaffRequest, res: Response, next?: NextFunction) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    const { venueId } = req.body;
+    const region = (req.region || req.body.region || req.headers['x-region'] || 'ae') as Region;
+
+    if (!venueId) {
+      return res.status(400).json({ success: false, message: 'venueId is required' });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(venueId)) {
+      return res.status(400).json({ success: false, message: 'Invalid venueId format' });
+    }
+
+    console.log(`➕ Adding to roster: venueId=${venueId}, userId=${req.user.userId}, region=${region}`);
+
+    // Check if already exists
+    const existing = await VenueRoster.findOne({
+      staffUserId: req.user.userId,
+      venueId: new mongoose.Types.ObjectId(venueId)
+    });
+
+    if (existing) {
+      if (existing.status === 'ACTIVE') {
+        console.log(`ℹ️ Already in roster`);
+        return res.json({ 
+          success: true, 
+          message: 'Already in roster', 
+          data: existing 
+        });
+      } else {
+        existing.status = 'ACTIVE';
+        existing.activatedAt = new Date();
+        await existing.save();
+        console.log(`✅ Reactivated roster entry`);
+        return res.json({
+          success: true,
+          message: 'Roster entry reactivated',
+          data: existing
+        });
+      }
+    }
+
+    // ✅ CRITICAL FIX: Check BOTH collections properly
+    await dbManager.connectRegion(region);
+    const StreetVendor = getStreetVendorModel(region); // ✅ Use proper model
+    const regionalConnection = dbManager.getConnection(region);
+    const RegionalVenue = regionalConnection.model('Venue', Venue.schema);
+    
+    console.log(`🔍 Checking if ${venueId} exists in region ${region}...`);
+    
+    // Try venue first
+    let venue = await RegionalVenue.findById(venueId).lean();
+    let entityType = 'venue';
+    
+    // If not found, try street vendor
+    if (!venue) {
+      console.log(`🔍 Not found in venues, checking street_vendors...`);
+      venue = await StreetVendor.findById(venueId).lean();
+      entityType = 'street_vendor';
+    }
+    
+    if (!venue) {
+      console.error(`❌ ${venueId} not found in EITHER venues or street_vendors in ${region}`);
+      return res.status(404).json({ 
+        success: false, 
+        message: `Venue/Vendor ${venueId} not found in region ${region}. Checked both venues and street_vendors collections.`
+      });
+    }
+    
+    const name = venue.AccountName || venue.vendorName || 'Unknown';
+    console.log(`✅ Found ${entityType}: ${name}`);
+
+    // Create roster entry
+    const roster = new VenueRoster({
+      staffUserId: new mongoose.Types.ObjectId(req.user.userId),
+      venueId: new mongoose.Types.ObjectId(venueId),
+      role: 'OWNER',
+      status: 'ACTIVE',
+      permissions: [
+        'VIEW_DASHBOARD', 
+        'MANAGE_STAFF', 
+        'VIEW_REDEMPTIONS', 
+        'APPROVE_REDEMPTIONS'
+      ],
+      joinedAt: new Date(),
+      activatedAt: new Date(),
+      invitedBy: new mongoose.Types.ObjectId(req.user.userId)
+    });
+
+    await roster.save();
+
+    console.log(`✅ Added ${entityType} to roster: ${roster._id}`);
+
+    res.json({ 
+      success: true, 
+      message: `Added ${entityType} to roster successfully`, 
+      data: roster,
+      entityType,
+      entityName: name
+    });
+
+  } catch (error: any) {
+    console.error('❌ Error adding to roster:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Error adding to roster', 
+      error: error.message 
+    });
+  }
+};
+
+// ✅ POST /api/staff/roster/cleanup
+export const cleanupInvalidRosters = async (req: StaffRequest, res: Response, next?: NextFunction) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    const result = await VenueRoster.deleteMany({
+      staffUserId: req.user.userId,
+      $or: [
+        { venueId: { $exists: false } },
+        { venueId: null }
+      ]
+    });
+
+    console.log(`🗑️ Removed ${result.deletedCount} invalid entries`);
+
+    res.json({
+      success: true,
+      message: `Cleaned up ${result.deletedCount} invalid entries`,
+      deletedCount: result.deletedCount
+    });
+
+  } catch (error: any) {
+    console.error('❌ Error cleaning rosters:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error cleaning rosters',
       error: error.message
     });
   }
@@ -186,141 +334,6 @@ export const getMyInvitations = async (req: StaffRequest, res: Response, next?: 
     res.status(500).json({ 
       success: false, 
       message: 'Error fetching invitations', 
-      error: error.message 
-    });
-  }
-};
-
-// ✅ POST /api/staff/roster/cleanup
-export const cleanupInvalidRosters = async (req: StaffRequest, res: Response, next?: NextFunction) => {
-  try {
-    if (!req.user) {
-      return res.status(401).json({ message: 'Unauthorized' });
-    }
-
-    const result = await VenueRoster.deleteMany({
-      staffUserId: req.user.userId,
-      $or: [
-        { venueId: { $exists: false } },
-        { venueId: null }
-      ]
-    });
-
-    console.log(`🗑️ Removed ${result.deletedCount} invalid entries`);
-
-    res.json({
-      success: true,
-      message: `Cleaned up ${result.deletedCount} invalid entries`,
-      deletedCount: result.deletedCount
-    });
-
-  } catch (error: any) {
-    console.error('❌ Error cleaning rosters:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error cleaning rosters',
-      error: error.message
-    });
-  }
-};
-
-// ✅ POST /api/staff/roster/test-add
-export const testAddStaffToRoster = async (req: StaffRequest, res: Response, next?: NextFunction) => {
-  try {
-    if (!req.user) {
-      return res.status(401).json({ message: 'Unauthorized' });
-    }
-
-    const { venueId } = req.body;
-    const region = (req.region || req.body.region || req.headers['x-region'] || 'ae') as Region;
-
-    if (!venueId) {
-      return res.status(400).json({ success: false, message: 'venueId is required' });
-    }
-
-    if (!mongoose.Types.ObjectId.isValid(venueId)) {
-      return res.status(400).json({ success: false, message: 'Invalid venueId format' });
-    }
-
-    console.log(`➕ Adding to roster: venueId=${venueId}, userId=${req.user.userId}, region=${region}`);
-
-    // Check if already exists
-    const existing = await VenueRoster.findOne({
-      staffUserId: req.user.userId,
-      venueId: new mongoose.Types.ObjectId(venueId)
-    });
-
-    if (existing) {
-      if (existing.status === 'ACTIVE') {
-        return res.json({ 
-          success: true, 
-          message: 'Already in roster', 
-          data: existing 
-        });
-      } else {
-        existing.status = 'ACTIVE';
-        existing.activatedAt = new Date();
-        await existing.save();
-        return res.json({
-          success: true,
-          message: 'Roster entry reactivated',
-          data: existing
-        });
-      }
-    }
-
-    // Verify venue exists
-    await dbManager.connectRegion(region);
-    const regionalConnection = dbManager.getConnection(region);
-    const RegionalVenue = regionalConnection.model('Venue', Venue.schema);
-    const RegionalStreetVendor = regionalConnection.model('StreetVendor', Venue.schema);
-    
-    let venue = await RegionalVenue.findById(venueId);
-    if (!venue) {
-      venue = await RegionalStreetVendor.findById(venueId);
-    }
-    
-    if (!venue) {
-      return res.status(404).json({ 
-        success: false, 
-        message: `Venue/Vendor ${venueId} not found in region ${region}` 
-      });
-    }
-    
-    console.log(`✅ Verified exists: ${venue.AccountName || venue.vendorName}`);
-
-    // Create roster entry
-    const roster = new VenueRoster({
-      staffUserId: new mongoose.Types.ObjectId(req.user.userId),
-      venueId: new mongoose.Types.ObjectId(venueId),
-      role: 'OWNER',
-      status: 'ACTIVE',
-      permissions: [
-        'VIEW_DASHBOARD', 
-        'MANAGE_STAFF', 
-        'VIEW_REDEMPTIONS', 
-        'APPROVE_REDEMPTIONS'
-      ],
-      joinedAt: new Date(),
-      activatedAt: new Date(),
-      invitedBy: new mongoose.Types.ObjectId(req.user.userId)
-    });
-
-    await roster.save();
-
-    console.log(`✅ Added to roster: ${roster._id}`);
-
-    res.json({ 
-      success: true, 
-      message: 'Added to roster successfully', 
-      data: roster 
-    });
-
-  } catch (error: any) {
-    console.error('❌ Error adding to roster:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Error adding to roster', 
       error: error.message 
     });
   }
