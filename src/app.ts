@@ -60,7 +60,8 @@ const corsOptions = {
     'https://hlee.app',
     'https://www.hlee.app',
     'https://th.honestlee.app',
-    'https://admin.honestlee.app'
+    'https://admin.honestlee.app',
+    'https://venue-dashboard.honestlee.app'
   ],
   credentials: true,
   optionsSuccessStatus: 200,
