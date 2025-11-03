@@ -5,14 +5,115 @@ import { AuthRequest } from '../middlewares/authMiddleware';
 import { RegionRequest } from '../middlewares/regionMiddleware';
 import { getStreetVendorModel } from '../models/Venue';
 import { dbManager } from '../config/database';
+import { io } from '../app'; // ✅ Import Socket.IO instance
 import mongoose from 'mongoose';
 
 type CombinedRequest = AuthRequest & RegionRequest;
 
+// ===== UPDATE VENDOR LOCATION (Real-time with Socket.IO) =====
+export const updateVendorLocation = async (req: CombinedRequest, res: Response) => {
+  try {
+    const region = req.region || 'ae';
+    await dbManager.connectRegion(region);
+    const StreetVendor = getStreetVendorModel(region);
+
+    const { id } = req.params;
+    const { latitude, longitude, accuracy } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid vendor ID' 
+      });
+    }
+
+    if (latitude === undefined || longitude === undefined) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'latitude and longitude are required' 
+      });
+    }
+
+    const lat = parseFloat(latitude);
+    const lng = parseFloat(longitude);
+
+    if (isNaN(lat) || isNaN(lng)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Coordinates must be numbers' 
+      });
+    }
+
+    const timestamp = new Date();
+    
+    const updateData = {
+      currentLocation: {
+        type: 'Point',
+        coordinates: [lng, lat],
+        timestamp,
+        accuracy: accuracy ? parseFloat(accuracy) : undefined
+      }
+    };
+
+    const updatedVendor = await StreetVendor.findByIdAndUpdate(
+      id,
+      {
+        $set: updateData,
+        $push: {
+          locationHistory: {
+            $each: [{
+              coordinates: [lng, lat],
+              timestamp,
+              accuracy: accuracy ? parseFloat(accuracy) : undefined
+            }],
+            $slice: -100 // Keep last 100 locations
+          }
+        }
+      },
+      { new: true }
+    );
+
+    if (!updatedVendor) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Vendor not found' 
+      });
+    }
+
+    // ✅ EMIT REAL-TIME UPDATE TO ALL CLIENTS TRACKING THIS VENDOR
+    const locationUpdate = {
+      vendorId: id,
+      vendorName: updatedVendor.vendorName,
+      coordinates: [lng, lat],
+      latitude: lat,
+      longitude: lng,
+      timestamp,
+      accuracy: accuracy ? parseFloat(accuracy) : undefined,
+      isOperational: updatedVendor.isOperational
+    };
+
+    io.to(`vendor-${id}`).emit('vendor-location-update', locationUpdate);
+    console.log(`📡 Emitted location update for vendor ${id} to room vendor-${id}`);
+
+    res.json({
+      success: true,
+      message: 'Vendor location updated',
+      data: updatedVendor
+    });
+
+  } catch (error: any) {
+    console.error('Error updating vendor location:', error);
+    res.status(400).json({ 
+      success: false, 
+      message: 'Location update failed', 
+      error: error.message 
+    });
+  }
+};
+
 // ===== CREATE STREET VENDOR (PUBLIC ENDPOINT) =====
 export const createStreetVendor = async (req: CombinedRequest, res: Response) => {
   try {
-    // ===== FIX: Get region from multiple sources =====
     const region = req.region || req.body?.region || req.headers['x-region'] as string || 'ae';
     await dbManager.connectRegion(region);
     const StreetVendor = getStreetVendorModel(region);
@@ -20,7 +121,6 @@ export const createStreetVendor = async (req: CombinedRequest, res: Response) =>
     const vendorData = { ...req.body };
     vendorData.region = region;
 
-    // ===== VALIDATION =====
     if (!vendorData.vendorName) {
       return res.status(400).json({ 
         success: false, 
@@ -63,7 +163,6 @@ export const createStreetVendor = async (req: CombinedRequest, res: Response) =>
       });
     }
 
-    // Set defaults
     vendorData.vendorType = vendorData.vendorType || 'mobile';
     vendorData.isActive = vendorData.isActive !== undefined ? vendorData.isActive : true;
     vendorData.isOperational = vendorData.isOperational !== undefined ? vendorData.isOperational : false;
@@ -212,87 +311,6 @@ export const getActiveVendorsNearby = async (req: CombinedRequest, res: Response
   }
 };
 
-// ===== UPDATE VENDOR LOCATION (Real-time) =====
-export const updateVendorLocation = async (req: CombinedRequest, res: Response) => {
-  try {
-    const region = req.region || 'ae';
-    await dbManager.connectRegion(region);
-    const StreetVendor = getStreetVendorModel(region);
-
-    const { id } = req.params;
-    const { latitude, longitude, accuracy } = req.body;
-
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Invalid vendor ID' 
-      });
-    }
-
-    if (latitude === undefined || longitude === undefined) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'latitude and longitude are required' 
-      });
-    }
-
-    const lat = parseFloat(latitude);
-    const lng = parseFloat(longitude);
-
-    if (isNaN(lat) || isNaN(lng)) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Coordinates must be numbers' 
-      });
-    }
-
-    const updateData = {
-      currentLocation: {
-        type: 'Point',
-        coordinates: [lng, lat],
-        timestamp: new Date(),
-        accuracy: accuracy ? parseFloat(accuracy) : undefined
-      }
-    };
-
-    const updatedVendor = await StreetVendor.findByIdAndUpdate(
-      id,
-      {
-        $set: updateData,
-        $push: {
-          locationHistory: {
-            coordinates: [lng, lat],
-            timestamp: new Date(),
-            accuracy: accuracy ? parseFloat(accuracy) : undefined
-          }
-        }
-      },
-      { new: true }
-    );
-
-    if (!updatedVendor) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Vendor not found' 
-      });
-    }
-
-    res.json({
-      success: true,
-      message: 'Vendor location updated',
-      data: updatedVendor
-    });
-
-  } catch (error: any) {
-    console.error('Error updating vendor location:', error);
-    res.status(400).json({ 
-      success: false, 
-      message: 'Location update failed', 
-      error: error.message 
-    });
-  }
-};
-
 // ===== GET VENDOR TRAJECTORY =====
 export const getVendorTrajectory = async (req: CombinedRequest, res: Response) => {
   try {
@@ -383,6 +401,14 @@ export const toggleVendorOperational = async (req: CombinedRequest, res: Respons
         message: 'Vendor not found' 
       });
     }
+
+    // ✅ EMIT STATUS CHANGE TO TRACKING CLIENTS
+    io.to(`vendor-${id}`).emit('vendor-status-change', {
+      vendorId: id,
+      vendorName: updatedVendor.vendorName,
+      isOperational,
+      timestamp: new Date()
+    });
 
     res.json({
       success: true,

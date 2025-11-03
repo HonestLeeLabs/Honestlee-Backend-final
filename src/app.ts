@@ -7,6 +7,8 @@ import dotenv from 'dotenv';
 import session from 'express-session';
 import passport from './config/passport';
 import mongoose from 'mongoose';
+import http from 'http';
+import { Server as SocketIOServer } from 'socket.io';
 
 import { dbManager } from './config/database';
 import { detectRegion } from './middlewares/regionMiddleware';
@@ -38,6 +40,60 @@ import streetVendorRoutes from './routes/streetVendorRoutes';
 dotenv.config();
 
 const app = express();
+const server = http.createServer(app);
+
+// ===== SOCKET.IO SETUP =====
+export const io = new SocketIOServer(server, {
+  cors: {
+    origin: [
+      'http://localhost:3000',
+      'http://localhost:3001',
+      'https://honestlee.app',
+      'https://www.honestlee.app',
+      'https://api.honestlee.app',
+      'https://honestlee-frontend.netlify.app',
+      'http://in.honestlee.app.s3-website.ap-south-1.amazonaws.com',
+      'http://ae.honestlee.app.s3-website.ap-south-1.amazonaws.com',
+      'http://ae.honestlee.app',
+      'http://in.honestlee.app',
+      'https://ae.honestlee.app',
+      'https://in.honestlee.app',
+      'https://honestlee.ae',
+      'http://honestlee.ae',
+      'https://api.honestlee.ae',
+      'https://hlee.app',
+      'https://www.hlee.app',
+      'https://th.honestlee.app',
+      'https://admin.honestlee.app',
+      'https://venue-dashboard.honestlee.app'
+    ],
+    credentials: true
+  }
+});
+
+// Socket.IO connection handling
+io.on('connection', (socket) => {
+  console.log('👤 Client connected:', socket.id);
+
+  // Join vendor tracking room
+  socket.on('track-vendor', (vendorId: string) => {
+    console.log(`📍 Client ${socket.id} tracking vendor: ${vendorId}`);
+    socket.join(`vendor-${vendorId}`);
+  });
+
+  // Stop tracking vendor
+  socket.on('untrack-vendor', (vendorId: string) => {
+    console.log(`⏹️ Client ${socket.id} stopped tracking vendor: ${vendorId}`);
+    socket.leave(`vendor-${vendorId}`);
+  });
+
+  socket.on('disconnect', () => {
+    console.log('👋 Client disconnected:', socket.id);
+  });
+});
+
+// Export io for use in controllers
+export { server };
 
 // ===== CORS CONFIGURATION =====
 const corsOptions = {
@@ -117,17 +173,13 @@ app.use((req, res, next) => {
 // ===== DATABASE CONNECTION LOGIC =====
 const connectDatabases = async () => {
   try {
-    // Connect to shared DB (MongoDB Atlas global/shared DB)
     await dbManager.connectShared();
-
-    // Pre-connect to regional DBs that will be frequently accessed (AE, TH)
     await Promise.all([
       dbManager.connectRegion('ae'),
       dbManager.connectRegion('th')
     ]);
     console.log('✅ All databases connected successfully');
 
-    // Global connection for jobs, admin, etc.
     const mongoURI = process.env.MONGODB_URI;
     if (mongoURI) {
       await mongoose.connect(mongoURI, {
@@ -136,7 +188,6 @@ const connectDatabases = async () => {
       });
       console.log('✅ Global MongoDB connected:', mongoose.connection.name);
 
-      // Index fixes
       try {
         const db = mongoose.connection.db;
         const userColl = db.collection('users');
@@ -144,13 +195,13 @@ const connectDatabases = async () => {
           await userColl.dropIndex('phone_1');
           console.log('✅ Dropped phone_1 index');
         } catch (e) {
-          console.log('⚠️  phone_1 index not found');
+          console.log('⚠️  phone_1 index not found');
         }
         try {
           await userColl.dropIndex('email_1');
           console.log('✅ Dropped email_1 index');
         } catch (e) {
-          console.log('⚠️  email_1 index not found');
+          console.log('⚠️  email_1 index not found');
         }
         await userColl.createIndex({ phone: 1 }, { unique: true, sparse: true });
         await userColl.createIndex({ email: 1 }, { unique: true, sparse: true });
@@ -158,7 +209,7 @@ const connectDatabases = async () => {
       } catch (indexError) {
         console.error('❌ Error fixing indexes:', indexError);
       }
-      // Kick off services
+      
       testEmailConfig();
       startSyncJobs();
     }
@@ -188,8 +239,6 @@ app.use('/api/redemptions', redemptionRoutes);
 app.use('/api/staff', staffRoutes);
 app.use('/api/events', eventRoutes);
 app.use('/api/payments', paymentRoutes);
-
-// ===== STREET VENDOR ROUTES WITH REGION DETECTION =====
 app.use('/api/street-vendors', detectRegion, streetVendorRoutes);
 
 // ===== HEALTH CHECK ENDPOINT =====
@@ -202,30 +251,16 @@ app.get('/health', (req, res) => {
       status: dbStatus,
       name: mongoose.connection.name || 'Not connected'
     },
+    socketio: 'Enabled for real-time updates',
     cors: 'Enabled for ports 3000, 3001 and production domains',
     maxBodySize: '1GB',
     regions: {
       ae: 'Dubai/UAE',
       th: 'Thailand'
-    },
-    routes: {
-      venues_dubai: '/api/venues-dubai',
-      events_dubai: '/api/events-dubai',
-      events: '/api/events',
-      auth: '/api/auth',
-      google_auth: '/api/auth/google',
-      users: '/api/users',
-      venues: '/api/venues',
-      offers: '/api/offers',
-      redemptions: '/api/redemptions',
-      staff: '/api/staff',
-      street_vendors: '/api/street-vendors',
-      bulk_import: '/api/venues-dubai/bulk-import'
     }
   });
 });
 
-// ===== ERROR HANDLER =====
 app.use(errorHandler);
 
 export default app;
