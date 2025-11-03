@@ -12,6 +12,7 @@
     "@aws-sdk/client-s3": "^3.896.0",
     "@types/express-session": "^1.18.2",
     "@types/multer": "^2.0.0",
+    "@types/socket.io": "^3.0.1",
     "@types/uuid": "^10.0.0",
     "aws-sdk": "^2.1692.0",
     "axios": "^1.12.2",
@@ -31,6 +32,7 @@
     "nodemailer": "^6.10.1",
     "passport": "^0.7.0",
     "passport-google-oauth20": "^2.0.0",
+    "socket.io": "^4.8.1",
     "speed-test": "^3.0.0",
     "uuid": "^13.0.0"
   },
