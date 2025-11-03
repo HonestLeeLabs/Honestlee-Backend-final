@@ -7,7 +7,7 @@ import {
   createStreetVendor,
   getMobileVendors,
   getActiveVendorsNearby,
-  updateVendorLocation,
+  updateVendorLocation, 
   getVendorTrajectory,
   toggleVendorOperational
 } from '../controllers/streetVendorController';
