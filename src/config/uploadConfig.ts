@@ -1,9 +1,10 @@
-import { S3Client } from '@aws-sdk/client-s3';
+import { S3Client, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import multer from 'multer';
 import multerS3 from 'multer-s3';
 import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
 
+// ===== AWS S3 CLIENT CONFIGURATION =====
 const s3 = new S3Client({
   credentials: {
     accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
@@ -12,6 +13,7 @@ const s3 = new S3Client({
   region: process.env.AWS_REGION || 'ap-south-1'
 });
 
+// ===== FILE FILTER =====
 const fileFilter = (req: any, file: any, cb: any) => {
   if (!file.originalname.match(/\.(jpg|JPG|jpeg|JPEG|png|PNG|gif|GIF|webp|WEBP)$/)) {
     req.fileValidationError = 'Only image files are allowed!';
@@ -20,7 +22,7 @@ const fileFilter = (req: any, file: any, cb: any) => {
   cb(null, true);
 };
 
-// ✅ Review images upload
+// ===== REVIEW IMAGES UPLOAD =====
 export const uploadReviewImages = multer({
   storage: multerS3({
     s3: s3,
@@ -44,6 +46,7 @@ export const uploadReviewImages = multer({
   }
 });
 
+// ===== PROFILE IMAGE UPLOAD =====
 export const uploadProfileImage = multer({
   storage: multerS3({
     s3: s3,
@@ -62,6 +65,37 @@ export const uploadProfileImage = multer({
   }),
   fileFilter: fileFilter,
   limits: {
-    fileSize: 5 * 1024 * 1024
+    fileSize: 5 * 1024 * 1024 // 5MB limit
   }
 });
+
+// ===== S3 FILE OPERATIONS =====
+
+// Function to delete file from S3
+export const deleteFileFromS3 = async (fileKey: string): Promise<boolean> => {
+  try {
+    const command = new DeleteObjectCommand({
+      Bucket: process.env.S3_BUCKET_NAME || 'honestlee-user-upload',
+      Key: fileKey
+    });
+    
+    await s3.send(command);
+    console.log(`✅ File deleted from S3: ${fileKey}`);
+    return true;
+  } catch (error) {
+    console.error('❌ Error deleting file from S3:', error);
+    return false;
+  }
+};
+
+// Function to extract S3 key from URL
+export const getS3KeyFromUrl = (url: string): string | null => {
+  try {
+    const urlObj = new URL(url);
+    // Remove the leading slash to get the S3 key
+    return urlObj.pathname.substring(1);
+  } catch (error) {
+    console.error('❌ Error parsing S3 URL:', error);
+    return null;
+  }
+};
