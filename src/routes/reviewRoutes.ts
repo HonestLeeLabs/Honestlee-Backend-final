@@ -10,7 +10,8 @@ import { uploadReviewImages } from '../config/uploadConfig';
 const router = express.Router();
 
 // ✅ Create review with photo upload
-router.post('/', authenticate, uploadReviewImages.array('photos', 5), createReview);
+// Updated: Changed from 5 to 20 max photos
+router.post('/', authenticate, uploadReviewImages.array('photos', 20), createReview);
 
 // ✅ Get reviews with pagination
 router.get('/venue/:venueId', getReviewsByVenue);

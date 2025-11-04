@@ -4,6 +4,7 @@ import multerS3 from 'multer-s3';
 import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
 
+
 // ===== AWS S3 CLIENT CONFIGURATION =====
 const s3 = new S3Client({
   credentials: {
@@ -13,6 +14,7 @@ const s3 = new S3Client({
   region: process.env.AWS_REGION || 'ap-south-1'
 });
 
+
 // ===== FILE FILTER =====
 const fileFilter = (req: any, file: any, cb: any) => {
   if (!file.originalname.match(/\.(jpg|JPG|jpeg|JPEG|png|PNG|gif|GIF|webp|WEBP)$/)) {
@@ -21,6 +23,7 @@ const fileFilter = (req: any, file: any, cb: any) => {
   }
   cb(null, true);
 };
+
 
 // ===== REVIEW IMAGES UPLOAD =====
 export const uploadReviewImages = multer({
@@ -41,10 +44,11 @@ export const uploadReviewImages = multer({
   }),
   fileFilter: fileFilter,
   limits: {
-    fileSize: 5 * 1024 * 1024, // 5MB per file
-    files: 5 // Max 5 photos per review
+    fileSize: 50 * 1024 * 1024, // ✅ 50MB per file (increased from 5MB)
+    files: 20 // Max 20 photos per review
   }
 });
+
 
 // ===== PROFILE IMAGE UPLOAD =====
 export const uploadProfileImage = multer({
@@ -65,9 +69,10 @@ export const uploadProfileImage = multer({
   }),
   fileFilter: fileFilter,
   limits: {
-    fileSize: 5 * 1024 * 1024 // 5MB limit
+    fileSize: 50 * 1024 * 1024 // ✅ 50MB limit (increased from 5MB)
   }
 });
+
 
 // ===== S3 FILE OPERATIONS =====
 
@@ -87,6 +92,7 @@ export const deleteFileFromS3 = async (fileKey: string): Promise<boolean> => {
     return false;
   }
 };
+
 
 // Function to extract S3 key from URL
 export const getS3KeyFromUrl = (url: string): string | null => {
