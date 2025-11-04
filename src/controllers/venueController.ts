@@ -268,6 +268,7 @@ export const updateVenue = async (req: CombinedRequest, res: Response) => {
 };
 
 // GET VENUES (keep existing)
+// GET VENUES (keep existing)
 export const getVenues = async (req: CombinedRequest, res: Response) => {
   try {
     const region = req.region || 'ae';
@@ -280,7 +281,7 @@ export const getVenues = async (req: CombinedRequest, res: Response) => {
 
     const {
       page = 1,
-      limit = 10,
+      limit,
       venuetype,
       venuecategory,
       groupid,
@@ -294,7 +295,8 @@ export const getVenues = async (req: CombinedRequest, res: Response) => {
       sortOrder = 'desc',
       latitude,
       longitude,
-      radius = 5000
+      radius = 5000,
+      fetchAll = 'false'
     } = req.query;
 
     const query: any = { isActive: true, region };
@@ -329,27 +331,43 @@ export const getVenues = async (req: CombinedRequest, res: Response) => {
       };
     }
 
-    const pageNum = Number(page);
-    const limitNum = Number(limit);
+    // ✅ FIXED: Define sortObj BEFORE using it
     const sortObj: any = {};
     sortObj[sortBy.toString()] = sortOrder === 'asc' ? 1 : -1;
 
-    const venues = await Venue.find(query)
-      .sort(sortObj)
-      .skip((pageNum - 1) * limitNum)
-      .limit(limitNum);
+    const pageNum = Number(page);
+    const shouldFetchAll = fetchAll === 'true' || fetchAll === '1';
+    
+    let query_result;
+    
+    if (shouldFetchAll) {
+      // Fetch ALL venues without pagination
+      query_result = await Venue.find(query)
+        .sort(sortObj);
+    } else {
+      // Use pagination with limit (default to 10 if not specified)
+      const limitNum = limit ? Number(limit) : 10;
+      query_result = await Venue.find(query)
+        .sort(sortObj)
+        .skip((pageNum - 1) * limitNum)
+        .limit(limitNum);
+    }
 
     const total = await Venue.countDocuments(query);
 
     res.json({
       success: true,
       region,
-      data: venues,
-      pagination: {
+      data: query_result,
+      pagination: shouldFetchAll ? {
+        total,
+        fetchAll: true,
+        returned: query_result.length
+      } : {
         total,
         page: pageNum,
-        limit: limitNum,
-        totalPages: Math.ceil(total / limitNum)
+        limit: limit ? Number(limit) : 10,
+        totalPages: Math.ceil(total / (limit ? Number(limit) : 10))
       }
     });
 
