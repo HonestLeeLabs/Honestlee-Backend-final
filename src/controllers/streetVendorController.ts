@@ -55,23 +55,24 @@ export const updateVendorLocation = async (req: CombinedRequest, res: Response) 
       }
     };
 
-    const updatedVendor = await StreetVendor.findByIdAndUpdate(
-      id,
-      {
-        $set: updateData,
-        $push: {
-          locationHistory: {
-            $each: [{
-              coordinates: [lng, lat],
-              timestamp,
-              accuracy: accuracy ? parseFloat(accuracy) : undefined
-            }],
-            $slice: -100 // Keep last 100 locations
-          }
-        }
-      },
-      { new: true }
-    );
+  const updatedVendor = await StreetVendor.findByIdAndUpdate(
+  id,
+  {
+    $set: updateData,
+    $push: {
+      locationHistory: {
+        $each: [{
+          coordinates: [lng, lat],
+          timestamp,
+          accuracy: accuracy ? parseFloat(accuracy) : undefined
+        }],
+        $slice: -9640 // ✅ Keep last 9,640 locations (24 hours at 10s intervals)
+      }
+    }
+  },
+  { new: true }
+);
+
 
     if (!updatedVendor) {
       return res.status(404).json({ 
