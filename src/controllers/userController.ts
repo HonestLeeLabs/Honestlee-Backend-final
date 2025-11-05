@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import User, { Role, LoginMethod } from '../models/User';
 import { AuthRequest } from '../middlewares/authMiddleware';
 
+
 // GET /api/users/me
 export const getMyUserDetails = async (req: AuthRequest, res: Response) => {
   if (!req.user || !req.user.userId) {
@@ -27,6 +28,7 @@ export const getMyUserDetails = async (req: AuthRequest, res: Response) => {
     ...userObj
   });
 };
+
 
 // PUT /api/users/me - Update current user's profile with extended fields and auth protection
 export const updateMyProfile = async (req: AuthRequest, res: Response) => {
@@ -86,10 +88,23 @@ export const updateMyProfile = async (req: AuthRequest, res: Response) => {
   // Pick only allowed fields from input
   const updateData: any = {};
   allowedFields.forEach(field => {
-    if (input[field] !== undefined) {
+    if (input[field] !== undefined && input[field] !== null && input[field] !== '') {
       updateData[field] = input[field];
     }
   });
+
+  // ✅ FIX: If email/phone haven't changed, don't include them in update
+  if (updateData.email === currentUser.email) {
+    delete updateData.email;
+  }
+  if (updateData.phone === currentUser.phone) {
+    delete updateData.phone;
+  }
+
+  // ✅ FIX: If referralCode hasn't changed, don't include it
+  if (updateData.referralCode === currentUser.referralCode) {
+    delete updateData.referralCode;
+  }
 
   // Prevent changing sensitive fields
   delete updateData.otpCode;
@@ -98,6 +113,19 @@ export const updateMyProfile = async (req: AuthRequest, res: Response) => {
   delete updateData._id;
   delete updateData.createdAt;
   delete updateData.updatedAt;
+
+  // ✅ FIX: If no fields to update, return current user
+  if (Object.keys(updateData).length === 0) {
+    const userObj = currentUser.toObject();
+    delete userObj.otpCode;
+    delete userObj.otpExpiresAt;
+    delete userObj.__v;
+
+    return res.json({
+      message: 'No changes detected',
+      user: userObj
+    });
+  }
 
   try {
     const updatedUser = await User.findByIdAndUpdate(
@@ -120,12 +148,36 @@ export const updateMyProfile = async (req: AuthRequest, res: Response) => {
       user: updatedUserObj
     });
   } catch (error: any) {
+    console.error('Update error:', error);
+
+    // ✅ Better error handling for duplicate keys
     if (error.code === 11000) {
-      return res.status(400).json({ message: 'Duplicate field value error.' });
+      const field = Object.keys(error.keyPattern || {})[0];
+      const fieldName = field === 'phone' ? 'Phone number' : 
+                       field === 'email' ? 'Email address' : 
+                       field === 'referralCode' ? 'Referral code' : 'This value';
+
+      return res.status(400).json({ 
+        message: `${fieldName} is already in use by another account`,
+        field 
+      });
     }
-    res.status(400).json({ message: 'Update failed', error: error.message });
+
+    if (error.name === 'ValidationError') {
+      const messages = Object.values(error.errors).map((err: any) => err.message);
+      return res.status(400).json({ 
+        message: 'Validation error', 
+        errors: messages 
+      });
+    }
+
+    res.status(400).json({ 
+      message: 'Update failed', 
+      error: error.message 
+    });
   }
 };
+
 
 // GET /api/users/:id (admin-only endpoint)
 export const getUserById = async (req: AuthRequest, res: Response) => {
@@ -145,6 +197,7 @@ export const getUserById = async (req: AuthRequest, res: Response) => {
 
   res.json(userObj);
 };
+
 
 // PUT /api/users/:id/role (admin-only endpoint)
 export const updateUserRole = async (req: AuthRequest, res: Response) => {
