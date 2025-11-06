@@ -40,6 +40,7 @@ export interface IEvent extends Document {
   conditions?: string[];
   isActive: boolean;
   imageUrl?: string;
+  images?: string[];
   region?: 'ae' | 'th' | 'in' | 'global'; // ✅ NEW
   createdBy: mongoose.Types.ObjectId;
   createdAt: Date;
@@ -74,7 +75,8 @@ const EventSchema = new Schema<IEvent>({
   }],
   conditions: [{ type: String }],
   isActive: { type: Boolean, default: true, index: true },
-  imageUrl: { type: String },
+  imageUrl: { type: String }, // Keep for backward compatibility
+  images: { type: [String], default: [] }, 
   region: { type: String, enum: ['ae', 'th', 'in', 'global'], default: 'global', index: true }, // ✅ NEW
   createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true }
 }, {

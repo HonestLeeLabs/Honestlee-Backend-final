@@ -7,6 +7,7 @@ import { AuthRequest } from '../middlewares/authMiddleware';
 import { RegionRequest } from '../middlewares/regionMiddleware';
 import { dbManager, Region } from '../config/database';
 import mongoose from 'mongoose';
+import { getS3KeyFromUrl, deleteFileFromS3 } from '../config/uploadConfig';
 
 // ✅ Combined type with region support
 type StaffRequest = AuthRequest & RegionRequest;
@@ -339,6 +340,7 @@ export const getUpcomingEvents = async (req: StaffRequest, res: Response, next?:
 };
 
 // POST /api/events - Create event (Manager/Owner/Admin only)
+// CREATE EVENT with images
 export const createEvent = async (req: StaffRequest, res: Response, next?: NextFunction) => {
   try {
     if (!req.user || !['MANAGER', 'OWNER', 'ADMIN'].includes(req.user.role)) {
@@ -348,14 +350,28 @@ export const createEvent = async (req: StaffRequest, res: Response, next?: NextF
     const region = (req.region || 'ae') as Region;
     const eventData = req.body;
 
-    console.log(`✏️ Creating event (region: ${region}):`, { venueId: eventData.venueId, eventName: eventData.eventName });
+    console.log(`✏️ Creating event (region: ${region}):`, { 
+      venueId: eventData.venueId, 
+      eventName: eventData.eventName 
+    });
 
-    // ✅ NEW: Verify venue exists in regional database
+    // ✅ Handle images from multer S3 upload
+    const images = (req as any).files?.map((file: any) => file.location) || [];
+    console.log(`📷 Uploaded ${images.length} images for event`);
+
+    // Verify venue exists in regional database
     const regionalConnection = dbManager.getConnection(region);
     const RegionalVenue = regionalConnection.model('Venue', Venue.schema);
 
     const venue = await RegionalVenue.findById(eventData.venueId);
     if (!venue) {
+      // ✅ Delete uploaded images if venue not found
+      if (images.length > 0) {
+        for (const imageUrl of images) {
+          const key = getS3KeyFromUrl(imageUrl);
+          if (key) await deleteFileFromS3(key);
+        }
+      }
       return res.status(404).json({ 
         success: false,
         message: `Venue not found in region ${region}` 
@@ -372,8 +388,13 @@ export const createEvent = async (req: StaffRequest, res: Response, next?: NextF
       eventData.eventDuration = `${hours}h ${minutes}m`;
     }
 
-    // ✅ NEW: Add region to event data
     eventData.region = region;
+    eventData.images = images.length > 0 ? images : []; // ✅ Add images array
+    
+    // Keep first image as imageUrl for backward compatibility
+    if (images.length > 0 && !eventData.imageUrl) {
+      eventData.imageUrl = images[0];
+    }
 
     const newEvent = new Event({
       ...eventData,
@@ -381,18 +402,31 @@ export const createEvent = async (req: StaffRequest, res: Response, next?: NextF
     });
 
     await newEvent.save();
-
-    console.log(`✅ Event created: ${newEvent._id}`);
+    console.log(`✅ Event created with ${images.length} images: ${newEvent._id}`);
 
     res.status(201).json({ success: true, data: newEvent });
 
   } catch (error: any) {
     console.error('❌ Error creating event:', error);
-    res.status(400).json({ success: false, message: 'Error creating event', error: error.message });
+    
+    // ✅ Clean up uploaded images on error
+    const files = (req as any).files;
+    if (files && files.length > 0) {
+      for (const file of files) {
+        const key = getS3KeyFromUrl(file.location);
+        if (key) await deleteFileFromS3(key);
+      }
+    }
+    
+    res.status(400).json({ 
+      success: false, 
+      message: 'Error creating event', 
+      error: error.message 
+    });
   }
 };
 
-// PUT /api/events/:id - Update event
+// UPDATE EVENT with images
 export const updateEvent = async (req: StaffRequest, res: Response, next?: NextFunction) => {
   try {
     if (!req.user || !['MANAGER', 'OWNER', 'ADMIN'].includes(req.user.role)) {
@@ -405,6 +439,9 @@ export const updateEvent = async (req: StaffRequest, res: Response, next?: NextF
 
     console.log(`🔄 Updating event ${id} in region ${region}`);
 
+    // ✅ Handle new images from multer
+    const newImages = (req as any).files?.map((file: any) => file.location) || [];
+    
     // Recalculate duration if dates changed
     if (updates.eventStartsAt && updates.eventEndsAt) {
       const start = new Date(updates.eventStartsAt);
@@ -415,23 +452,49 @@ export const updateEvent = async (req: StaffRequest, res: Response, next?: NextF
       updates.eventDuration = `${hours}h ${minutes}m`;
     }
 
-    const updatedEvent = await Event.findByIdAndUpdate(id, updates, { new: true, runValidators: true });
-
-    if (!updatedEvent) {
+    // ✅ Get existing event to append new images
+    const existingEvent = await Event.findById(id);
+    if (!existingEvent) {
+      // Clean up uploaded images
+      if (newImages.length > 0) {
+        for (const imageUrl of newImages) {
+          const key = getS3KeyFromUrl(imageUrl);
+          if (key) await deleteFileFromS3(key);
+        }
+      }
       return res.status(404).json({ success: false, message: 'Event not found' });
     }
 
-    console.log(`✅ Event updated: ${updatedEvent._id}`);
+    // ✅ Append new images to existing images
+    if (newImages.length > 0) {
+      updates.images = [...(existingEvent.images || []), ...newImages];
+      // Update imageUrl if not set
+      if (!existingEvent.imageUrl && updates.images.length > 0) {
+        updates.imageUrl = updates.images[0];
+      }
+    }
+
+    const updatedEvent = await Event.findByIdAndUpdate(
+      id, 
+      updates, 
+      { new: true, runValidators: true }
+    );
+
+    console.log(`✅ Event updated with ${newImages.length} new images: ${updatedEvent?._id}`);
 
     res.json({ success: true, data: updatedEvent, region });
 
   } catch (error: any) {
     console.error('❌ Error updating event:', error);
-    res.status(400).json({ success: false, message: 'Error updating event', error: error.message });
+    res.status(400).json({ 
+      success: false, 
+      message: 'Error updating event', 
+      error: error.message 
+    });
   }
 };
 
-// DELETE /api/events/:id - Soft delete event
+// DELETE EVENT (with image cleanup)
 export const deleteEvent = async (req: StaffRequest, res: Response, next?: NextFunction) => {
   try {
     if (!req.user || !['MANAGER', 'OWNER', 'ADMIN'].includes(req.user.role)) {
@@ -443,11 +506,28 @@ export const deleteEvent = async (req: StaffRequest, res: Response, next?: NextF
 
     console.log(`🗑️ Deactivating event ${id} in region ${region}`);
 
-    const event = await Event.findByIdAndUpdate(id, { isActive: false }, { new: true });
-
+    const event = await Event.findById(id);
+    
     if (!event) {
       return res.status(404).json({ success: false, message: 'Event not found' });
     }
+
+    // ✅ Optional: Delete images from S3 when event is deleted
+    // Uncomment if you want to permanently remove images
+    /*
+    if (event.images && event.images.length > 0) {
+      for (const imageUrl of event.images) {
+        const key = getS3KeyFromUrl(imageUrl);
+        if (key) {
+          await deleteFileFromS3(key);
+        }
+      }
+    }
+    */
+
+    // Soft delete
+    event.isActive = false;
+    await event.save();
 
     console.log(`✅ Event deactivated: ${id}`);
 
@@ -455,7 +535,11 @@ export const deleteEvent = async (req: StaffRequest, res: Response, next?: NextF
 
   } catch (error: any) {
     console.error('❌ Error deleting event:', error);
-    res.status(500).json({ success: false, message: 'Error deleting event', error: error.message });
+    res.status(500).json({ 
+      success: false, 
+      message: 'Error deleting event', 
+      error: error.message 
+    });
   }
 };
 
