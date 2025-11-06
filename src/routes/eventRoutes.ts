@@ -1,6 +1,6 @@
-// ===== FILE: src/routes/eventRoutes.ts =====
 import { Router, Request, Response, NextFunction } from 'express';
 import { detectRegion, RegionRequest } from '../middlewares/regionMiddleware';
+import { uploadEventImages } from '../config/uploadConfig'; // ✅ Import event image upload
 import {
   getAllEvents,
   getUpcomingEvents,
@@ -15,30 +15,40 @@ import { authenticateToken, AuthRequest } from '../middlewares/authMiddleware';
 
 const router = Router();
 
-// ✅ ADD REGION DETECTION MIDDLEWARE
 router.use(detectRegion);
 
 type StaffRequest = AuthRequest & RegionRequest;
 
-// Type-safe wrapper for authenticated routes
 const authRoute = (handler: (req: StaffRequest, res: Response, next?: NextFunction) => Promise<any>) => {
   return (req: Request, res: Response, next: NextFunction) => {
     return handler(req as StaffRequest, res, next);
   };
 };
 
-// ✅ PUBLIC ROUTES - No authentication required
+// PUBLIC ROUTES
 router.get('/', authRoute(getAllEvents));
 router.get('/venue/:venueId', authRoute(getEventsByVenue));
 
-// ✅ AUTHENTICATED ROUTES
+// AUTHENTICATED ROUTES
 router.get('/upcoming', authenticateToken, authRoute(getUpcomingEvents));
 router.get('/:id', authenticateToken, authRoute(getEventById));
 router.post('/:id/register', authenticateToken, authRoute(registerForEvent));
 
-// ✅ PROTECTED ROUTES - Manager/Owner/Admin only
-router.post('/', authenticateToken, authRoute(createEvent));
-router.put('/:id', authenticateToken, authRoute(updateEvent));
+// ✅ PROTECTED ROUTES with image upload
+router.post(
+  '/', 
+  authenticateToken, 
+  uploadEventImages.array('images', 10), // ✅ Accept up to 10 images
+  authRoute(createEvent)
+);
+
+router.put(
+  '/:id', 
+  authenticateToken, 
+  uploadEventImages.array('images', 10), // ✅ Accept up to 10 images for updates
+  authRoute(updateEvent)
+);
+
 router.delete('/:id', authenticateToken, authRoute(deleteEvent));
 
 export default router;

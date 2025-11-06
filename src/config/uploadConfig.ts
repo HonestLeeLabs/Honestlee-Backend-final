@@ -73,6 +73,29 @@ export const uploadProfileImage = multer({
   }
 });
 
+// ===== EVENT IMAGES UPLOAD =====
+export const uploadEventImages = multer({
+  storage: multerS3({
+    s3: s3,
+    bucket: process.env.S3_BUCKET_NAME || 'honestlee-user-upload',
+    metadata: function (req, file, cb) {
+      cb(null, { fieldName: file.fieldname });
+    },
+    key: function (req: any, file, cb) {
+      const userId = req.user?.userId || 'anonymous';
+      const fileExtension = path.extname(file.originalname);
+      const uniqueId = uuidv4();
+      const fileName = `event-images/${userId}-${uniqueId}${fileExtension}`;
+      cb(null, fileName);
+    },
+    contentType: multerS3.AUTO_CONTENT_TYPE
+  }),
+  fileFilter: fileFilter,
+  limits: {
+    fileSize: 50 * 1024 * 1024, // 50MB per file
+    files: 10 // Max 10 photos per event
+  }
+});
 
 // ===== S3 FILE OPERATIONS =====
 
