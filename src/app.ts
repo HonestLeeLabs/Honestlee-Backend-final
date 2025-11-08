@@ -135,7 +135,9 @@ const corsOptions = {
     'accept-language',
     'x-device-id',
     'x-platform'
-  ]
+  ],
+  exposedHeaders: ['Content-Length', 'Content-Type'],
+  maxAge: 86400
 };
 
 app.use(cors(corsOptions));
