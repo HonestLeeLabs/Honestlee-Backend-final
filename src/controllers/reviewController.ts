@@ -27,7 +27,13 @@ export const createReview = async (req: Request, res: Response) => {
   const region = ((req as any).region || 'th') as Region;
   const { venueId, rating, title, comment, tags } = req.body;
 
-  console.log('📝 Creating review:', { venueId, rating, region });
+  console.log('📝 Creating review:', { 
+    venueId, 
+    rating, 
+    region,
+    hasFiles: !!(req as any).files,
+    fileCount: (req as any).files?.length || 0
+  });
 
   if (!venueId || !rating) {
     return res.status(400).json({ message: 'Venue ID and rating are required' });
@@ -61,15 +67,19 @@ export const createReview = async (req: Request, res: Response) => {
 
     const venueIdentifier = venue.globalId || venue.id || venue._id.toString();
 
-    // Handle photos from multer S3 upload
-    const photos = (req as any).files?.map((file: any) => file.location) || [];
+    // ✅ Handle photos from multer S3 upload
+    const photos = (req as any).files?.map((file: any) => {
+      console.log('📸 Uploaded photo:', file.location);
+      return file.location;
+    }) || [];
 
-    // Parse tags safely
+    // ✅ Parse tags safely
     let parsedTags = [];
     if (tags) {
       try {
         parsedTags = typeof tags === 'string' ? JSON.parse(tags) : Array.isArray(tags) ? tags : [];
       } catch (e) {
+        console.log('⚠️ Failed to parse tags:', e);
         parsedTags = [];
       }
     }
@@ -82,7 +92,7 @@ export const createReview = async (req: Request, res: Response) => {
       title: title || '',
       comment: comment || '',
       tags: parsedTags,
-      photos: photos.length > 0 ? photos : [],
+      photos: photos,
       helpful: 0,
       helpfulBy: [],
       verified: false,
@@ -95,10 +105,17 @@ export const createReview = async (req: Request, res: Response) => {
     await newReview.populate('user', 'name profileImage');
 
     console.log('✅ Review created:', newReview._id);
-    res.status(201).json(newReview);
+    
+    // ✅ Return success response
+    res.status(201).json({
+      success: true,
+      message: 'Review created successfully',
+      data: newReview
+    });
   } catch (error: any) {
     console.error('❌ Error creating review:', error);
     res.status(500).json({ 
+      success: false,
       message: 'Failed to create review', 
       error: error.message 
     });
