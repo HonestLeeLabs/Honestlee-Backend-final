@@ -14,7 +14,6 @@ const s3 = new S3Client({
 });
 
 // File filter function
-// ===== IMPROVED FILE FILTER =====
 const fileFilter = (req: any, file: any, cb: any) => {
   // Accept images including HEIC/HEIF formats from iOS devices
   const allowedMimeTypes = [
@@ -25,10 +24,17 @@ const fileFilter = (req: any, file: any, cb: any) => {
     'image/webp',
     'image/heic',
     'image/heif',
-    ''
+    'application/octet-stream', // ✅ Mobile browsers often send this
+    '' // ✅ Some mobile browsers don't report MIME type
   ];
 
   const allowedExtensions = /\.(jpg|jpeg|png|gif|webp|heic|heif)$/i;
+
+  console.log('📸 File filter check:', {
+    name: file.originalname,
+    mimeType: file.mimetype,
+    size: file.size
+  });
 
   // ✅ Check MIME type (if provided)
   if (file.mimetype && allowedMimeTypes.includes(file.mimetype.toLowerCase())) {
@@ -42,6 +48,8 @@ const fileFilter = (req: any, file: any, cb: any) => {
     return;
   }
 
+  // ❌ Reject file
+  console.error('❌ File rejected:', file.originalname, file.mimetype);
   req.fileValidationError = 'Only image files are allowed (JPG, PNG, GIF, WEBP, HEIC)!';
   return cb(new Error('Only image files are allowed!'), false);
 };
@@ -55,18 +63,49 @@ export const uploadProfileImage = multer({
       cb(null, { fieldName: file.fieldname });
     },
     key: function (req: any, file, cb) {
-      // Generate unique filename
       const userId = req.user?.userId || 'anonymous';
-      const fileExtension = path.extname(file.originalname);
+      let fileExtension = path.extname(file.originalname).toLowerCase();
+      
+      // Convert HEIC to JPG for compatibility
+      if (fileExtension === '.heic' || fileExtension === '.heif') {
+        fileExtension = '.jpg';
+      }
+      
+      // Handle cases where extension is missing
+      if (!fileExtension || fileExtension === '.') {
+        fileExtension = '.jpg'; // Default to jpg
+      }
+      
       const uniqueId = uuidv4();
-      const fileName = `profile-images/${userId}-${uniqueId}${fileExtension}`;
+      const fileName = `review-images/${userId}-${uniqueId}${fileExtension}`;
       cb(null, fileName);
     },
-    contentType: multerS3.AUTO_CONTENT_TYPE
+    contentType: function (req, file, cb) {
+      // Force HEIC/HEIF to JPEG content type
+      if (file.mimetype === 'image/heic' || file.mimetype === 'image/heif') {
+        cb(null, 'image/jpeg');
+      } else if (!file.mimetype || file.mimetype === 'application/octet-stream') {
+        // Guess content type from extension
+        const ext = path.extname(file.originalname).toLowerCase();
+        const mimeMap: { [key: string]: string } = {
+          '.jpg': 'image/jpeg',
+          '.jpeg': 'image/jpeg',
+          '.png': 'image/png',
+          '.gif': 'image/gif',
+          '.webp': 'image/webp',
+          '.heic': 'image/jpeg',
+          '.heif': 'image/jpeg'
+        };
+        cb(null, mimeMap[ext] || 'image/jpeg');
+      } else {
+        cb(null, file.mimetype);
+      }
+    }
   }),
   fileFilter: fileFilter,
   limits: {
-    fileSize: 5 * 1024 * 1024 // 5MB limit
+    fileSize: 50 * 1024 * 1024, // 50MB per file
+    files: 20 // Max 20 photos per review
   }
 });
 
