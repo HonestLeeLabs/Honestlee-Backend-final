@@ -24,18 +24,19 @@ const fileFilter = (req: any, file: any, cb: any) => {
     'image/gif',
     'image/webp',
     'image/heic',
-    'image/heif'
+    'image/heif',
+    ''
   ];
 
   const allowedExtensions = /\.(jpg|jpeg|png|gif|webp|heic|heif)$/i;
 
-  // Check MIME type
-  if (allowedMimeTypes.includes(file.mimetype.toLowerCase())) {
+  // ✅ Check MIME type (if provided)
+  if (file.mimetype && allowedMimeTypes.includes(file.mimetype.toLowerCase())) {
     cb(null, true);
     return;
   }
 
-  // Check file extension as fallback
+  // ✅ Check file extension as fallback (important for mobile)
   if (file.originalname && allowedExtensions.test(file.originalname.toLowerCase())) {
     cb(null, true);
     return;
