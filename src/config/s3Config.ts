@@ -14,13 +14,35 @@ const s3 = new S3Client({
 });
 
 // File filter function
+// ===== IMPROVED FILE FILTER =====
 const fileFilter = (req: any, file: any, cb: any) => {
-  // Accept images only
-  if (!file.originalname.match(/\.(jpg|JPG|jpeg|JPEG|png|PNG|gif|GIF|webp|WEBP)$/)) {
-    req.fileValidationError = 'Only image files are allowed!';
-    return cb(new Error('Only image files are allowed!'), false);
+  // Accept images including HEIC/HEIF formats from iOS devices
+  const allowedMimeTypes = [
+    'image/jpeg',
+    'image/jpg', 
+    'image/png',
+    'image/gif',
+    'image/webp',
+    'image/heic',
+    'image/heif'
+  ];
+
+  const allowedExtensions = /\.(jpg|jpeg|png|gif|webp|heic|heif)$/i;
+
+  // Check MIME type
+  if (allowedMimeTypes.includes(file.mimetype.toLowerCase())) {
+    cb(null, true);
+    return;
   }
-  cb(null, true);
+
+  // Check file extension as fallback
+  if (file.originalname && allowedExtensions.test(file.originalname.toLowerCase())) {
+    cb(null, true);
+    return;
+  }
+
+  req.fileValidationError = 'Only image files are allowed (JPG, PNG, GIF, WEBP, HEIC)!';
+  return cb(new Error('Only image files are allowed!'), false);
 };
 
 // Configure multer for S3 upload

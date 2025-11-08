@@ -24,7 +24,6 @@ const fileFilter = (req: any, file: any, cb: any) => {
   cb(null, true);
 };
 
-
 // ===== REVIEW IMAGES UPLOAD =====
 export const uploadReviewImages = multer({
   storage: multerS3({
@@ -35,20 +34,32 @@ export const uploadReviewImages = multer({
     },
     key: function (req: any, file, cb) {
       const userId = req.user?.userId || 'anonymous';
-      const fileExtension = path.extname(file.originalname);
+      let fileExtension = path.extname(file.originalname);
+      
+      // Convert HEIC to JPG for compatibility
+      if (fileExtension.toLowerCase() === '.heic' || fileExtension.toLowerCase() === '.heif') {
+        fileExtension = '.jpg';
+      }
+      
       const uniqueId = uuidv4();
       const fileName = `review-images/${userId}-${uniqueId}${fileExtension}`;
       cb(null, fileName);
     },
-    contentType: multerS3.AUTO_CONTENT_TYPE
+    contentType: function (req, file, cb) {
+      // Force HEIC/HEIF to JPEG content type
+      if (file.mimetype === 'image/heic' || file.mimetype === 'image/heif') {
+        cb(null, 'image/jpeg');
+      } else {
+        cb(null, file.mimetype);
+      }
+    }
   }),
   fileFilter: fileFilter,
   limits: {
-    fileSize: 50 * 1024 * 1024, // ✅ 50MB per file (increased from 5MB)
+    fileSize: 50 * 1024 * 1024, // 50MB per file
     files: 20 // Max 20 photos per review
   }
 });
-
 
 // ===== PROFILE IMAGE UPLOAD =====
 export const uploadProfileImage = multer({
