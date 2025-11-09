@@ -25,7 +25,7 @@ const getFrontendUrl = (region: string, origin?: string): string => {
     global: 'https://honestlee.app'
   };
   
-  return regionUrls[region.toLowerCase()] || process.env.FRONTEND_URL || 'http://localhost:3000';
+  return regionUrls[region.toLowerCase()] || 'https://ae.honestlee.app';
 };
 
 // Initiate Google OAuth
@@ -59,7 +59,7 @@ export const googleAuth = (req: Request, res: Response, next: NextFunction) => {
 
 // Handle Google OAuth callback
 export const googleAuthCallback = (req: Request, res: Response, next: NextFunction) => {
-  passport.authenticate('google', { session: false }, (err, user, info) => {
+  passport.authenticate('google', { session: false }, (err: any, user: any, info: any) => {
     // Default frontend URL
     let frontendUrl = 'https://ae.honestlee.app';
     let region = 'ae';
@@ -79,12 +79,28 @@ export const googleAuthCallback = (req: Request, res: Response, next: NextFuncti
     // 🔥 Handle authentication errors
     if (err || !user) {
       console.error('❌ Google auth error:', err);
+      console.error('❌ User object:', user);
+      console.error('❌ Info:', info);
       
-      // Redirect to ROOT with error params (not /login)
+      // Redirect to ROOT with error params
       return res.redirect(`${frontendUrl}?error=authentication_failed&message=${encodeURIComponent(err?.message || 'Google authentication failed')}`);
     }
 
     try {
+      // 🔥 CHECK: Ensure user object has required fields
+      if (!user._id || !user.email || !user.role) {
+        console.error('❌ Invalid user object structure:', user);
+        throw new Error('User object missing required fields (_id, email, role)');
+      }
+
+      console.log('✅ User authenticated successfully:', {
+        id: user._id.toString(),
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        region: region
+      });
+
       // Generate JWT token with region
       const token = signJwt({
         userId: user._id.toString(),
@@ -92,30 +108,40 @@ export const googleAuthCallback = (req: Request, res: Response, next: NextFuncti
         region: region.toLowerCase()
       });
 
+      if (!token) {
+        throw new Error('JWT token generation returned null or undefined');
+      }
+
+      console.log('✅ JWT token generated successfully for region:', region);
+
       // Build query params with all user data
       const queryParams = new URLSearchParams({
         token: token,
         userId: user._id.toString(),
         email: user.email,
-        name: user.name || '',
+        name: user.name || user.email.split('@')[0],
         role: user.role,
         loginMethod: user.loginMethod || 'google',
         region: region,
+        ...(user.phone && { phone: user.phone }),
         ...(user.hl_source_token && { hl_source_token: user.hl_source_token }),
         ...(user.hl_utm_data?.utm_campaign && { utm_campaign: user.hl_utm_data.utm_campaign }),
         ...(user.hl_utm_data?.utm_source && { utm_source: user.hl_utm_data.utm_source }),
       });
 
-      console.log('✅ Google OAuth success, redirecting to:', `${frontendUrl}/?${queryParams.toString()}`);
+      const redirectUrl = `${frontendUrl}?${queryParams.toString()}`;
+      console.log('✅ Google OAuth success, redirecting to:', redirectUrl);
 
-      // Redirect to ROOT with token params (not /login)
-      res.redirect(`${frontendUrl}?${queryParams.toString()}`);
+      // Redirect to ROOT with token params
+      res.redirect(redirectUrl);
 
-    } catch (error) {
+    } catch (error: any) {
       console.error('❌ Token generation error:', error);
+      console.error('❌ Error stack:', error.stack);
+      console.error('❌ User object at error:', user);
       
-      // Redirect to ROOT with error params (not /login)
-      return res.redirect(`${frontendUrl}?error=token_generation_failed&message=${encodeURIComponent('Failed to generate authentication token')}`);
+      // Redirect to ROOT with error params
+      return res.redirect(`${frontendUrl}?error=token_generation_failed&message=${encodeURIComponent(error?.message || 'Failed to generate authentication token')}`);
     }
   })(req, res, next);
 };
