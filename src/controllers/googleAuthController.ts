@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import passport from '../config/passport';
 import { signJwt } from '../utils/jwt';
+import { IUser } from '../models/User';
 
 // Helper to get frontend URL based on region/origin
 const getFrontendUrl = (region: string, origin?: string): string => {
@@ -87,14 +88,20 @@ export const googleAuthCallback = (req: Request, res: Response, next: NextFuncti
     }
 
     try {
-      // 🔥 CHECK: Ensure user object has required fields
-      if (!user._id || !user.email || !user.role) {
-        console.error('❌ Invalid user object structure:', user);
-        throw new Error('User object missing required fields (_id, email, role)');
+      // ✅ FIX: User is now a plain object with userId property
+      // Check if required fields exist
+      if (!user.userId || !user.email || !user.role) {
+        console.error('❌ Invalid user object structure:', {
+          hasUserId: !!user.userId,
+          hasEmail: !!user.email,
+          hasRole: !!user.role,
+          user
+        });
+        throw new Error('User object missing required fields (userId, email, role)');
       }
 
       console.log('✅ User authenticated successfully:', {
-        id: user._id.toString(),
+        id: user.userId,
         email: user.email,
         name: user.name,
         role: user.role,
@@ -103,7 +110,7 @@ export const googleAuthCallback = (req: Request, res: Response, next: NextFuncti
 
       // Generate JWT token with region
       const token = signJwt({
-        userId: user._id.toString(),
+        userId: user.userId,
         role: user.role,
         region: region.toLowerCase()
       });
@@ -117,7 +124,7 @@ export const googleAuthCallback = (req: Request, res: Response, next: NextFuncti
       // Build query params with all user data
       const queryParams = new URLSearchParams({
         token: token,
-        userId: user._id.toString(),
+        userId: user.userId,
         email: user.email,
         name: user.name || user.email.split('@')[0],
         role: user.role,
