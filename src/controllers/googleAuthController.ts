@@ -38,6 +38,8 @@ export const googleAuth = (req: Request, res: Response, next: NextFunction) => {
   // Determine frontend URL
   const frontendUrl = getFrontendUrl(region as string, origin as string);
   
+  console.log('🔐 Initiating Google OAuth:', { region, frontendUrl, origin });
+  
   // Create state object with all tracking data
   const stateData = {
     region: region,
@@ -58,44 +60,39 @@ export const googleAuth = (req: Request, res: Response, next: NextFunction) => {
 // Handle Google OAuth callback
 export const googleAuthCallback = (req: Request, res: Response, next: NextFunction) => {
   passport.authenticate('google', { session: false }, (err, user, info) => {
-    if (err || !user) {
-      console.error('Google auth error:', err);
-      
-      // Try to get frontend URL from state
-      let frontendUrl = 'https://ae.honestlee.app';
-      try {
-        if (req.query.state) {
-          const stateData = JSON.parse(Buffer.from(req.query.state as string, 'base64').toString('utf-8'));
-          frontendUrl = stateData.frontendUrl || frontendUrl;
-        }
-      } catch (e) {
-        console.error('Failed to parse state:', e);
+    // Default frontend URL
+    let frontendUrl = 'https://ae.honestlee.app';
+    let region = 'ae';
+    
+    // Try to get frontend URL from state FIRST
+    try {
+      if (req.query.state) {
+        const stateData = JSON.parse(Buffer.from(req.query.state as string, 'base64').toString('utf-8'));
+        frontendUrl = stateData.frontendUrl || frontendUrl;
+        region = stateData.region || region;
+        console.log('✅ Decoded state:', stateData);
       }
+    } catch (e) {
+      console.error('❌ Failed to parse state:', e);
+    }
+    
+    // 🔥 Handle authentication errors
+    if (err || !user) {
+      console.error('❌ Google auth error:', err);
       
-      return res.redirect(`${frontendUrl}/login?error=authentication_failed&message=${encodeURIComponent(err?.message || 'Google authentication failed')}`);
+      // Redirect to ROOT with error params (not /login)
+      return res.redirect(`${frontendUrl}?error=authentication_failed&message=${encodeURIComponent(err?.message || 'Google authentication failed')}`);
     }
 
     try {
-      // Decode state to get region and frontend URL
-      let region = 'ae';
-      let frontendUrl = 'https://ae.honestlee.app';
-      
-      if (req.query.state) {
-        try {
-          const stateData = JSON.parse(Buffer.from(req.query.state as string, 'base64').toString('utf-8'));
-          region = stateData.region || 'ae';
-          frontendUrl = stateData.frontendUrl || frontendUrl;
-        } catch (e) {
-          console.error('Failed to parse state:', e);
-        }
-      }
-
+      // Generate JWT token with region
       const token = signJwt({
         userId: user._id.toString(),
         role: user.role,
         region: region.toLowerCase()
       });
 
+      // Build query params with all user data
       const queryParams = new URLSearchParams({
         token: token,
         userId: user._id.toString(),
@@ -109,24 +106,16 @@ export const googleAuthCallback = (req: Request, res: Response, next: NextFuncti
         ...(user.hl_utm_data?.utm_source && { utm_source: user.hl_utm_data.utm_source }),
       });
 
-      // Redirect to the correct regional frontend
-      res.redirect(`${frontendUrl}/?${queryParams.toString()}`);
+      console.log('✅ Google OAuth success, redirecting to:', `${frontendUrl}/?${queryParams.toString()}`);
+
+      // Redirect to ROOT with token params (not /login)
+      res.redirect(`${frontendUrl}?${queryParams.toString()}`);
 
     } catch (error) {
-      console.error('Token generation error:', error);
+      console.error('❌ Token generation error:', error);
       
-      // Try to get frontend URL from state for error redirect
-      let frontendUrl = 'https://ae.honestlee.app';
-      try {
-        if (req.query.state) {
-          const stateData = JSON.parse(Buffer.from(req.query.state as string, 'base64').toString('utf-8'));
-          frontendUrl = stateData.frontendUrl || frontendUrl;
-        }
-      } catch (e) {
-        console.error('Failed to parse state:', e);
-      }
-      
-      return res.redirect(`${frontendUrl}/login?error=token_generation_failed&message=${encodeURIComponent('Failed to generate authentication token')}`);
+      // Redirect to ROOT with error params (not /login)
+      return res.redirect(`${frontendUrl}?error=token_generation_failed&message=${encodeURIComponent('Failed to generate authentication token')}`);
     }
   })(req, res, next);
 };
