@@ -13,24 +13,18 @@ if (!clientID || !clientSecret) {
   throw new Error('Google OAuth client ID and secret must be set in environment variables');
 }
 
-console.log('✅ Google OAuth configured with callback:', callbackURL);
-
-// Serialize: always serialize by userId (as string)
-passport.serializeUser((user: Express.User, done) => {
-  done(null, user.userId);
+passport.serializeUser((user: any, done) => {
+  done(null, user._id ? user._id.toString() : user.userId);
 });
-
-// Deserialize: retrieve user and map to Express.User format
 passport.deserializeUser(async (userId: string, done) => {
   try {
     const user = await User.findById(userId);
     if (!user) return done(null, false);
-    const expressUser: Express.User = {
-      userId: user._id.toString(),
-      role: user.role,
-      email: user.email
-    };
-    done(null, expressUser);
+    done(null, {
+      _id: user._id,
+      email: user.email,
+      role: user.role
+    });
   } catch (err) {
     done(err);
   }
@@ -64,18 +58,13 @@ passport.use(new GoogleStrategy({
     const email = profile.emails?.[0]?.value;
     if (!email) throw new Error('No email found in Google profile');
 
-    // Get QR source from query param (legacy), or from OAuth state (preferred)
-    let hl_src: any = null;
     let region = 'ae';
+    let hl_src: any = null;
     if (req.query?.state) {
       try {
         const stateData = JSON.parse(Buffer.from(req.query.state as string, 'base64').toString('utf-8'));
         region = stateData.region || 'ae';
         hl_src = stateData.hl_src || null;
-      } catch (e) {}
-    } else if (req.query?.hl_src) {
-      try {
-        hl_src = JSON.parse(req.query.hl_src as string);
       } catch (e) {}
     }
 
@@ -87,7 +76,7 @@ passport.use(new GoogleStrategy({
         profileImage: profile.photos?.[0]?.value,
         role: Role.CONSUMER,
         loginMethod: LoginMethod.GOOGLE,
-        region,
+        region: region,
         isActive: true,
         googleId: profile.id
       });
@@ -95,6 +84,7 @@ passport.use(new GoogleStrategy({
       await user.save();
     } else {
       if (!user.loginMethod) user.loginMethod = LoginMethod.GOOGLE;
+      if (!user.googleId) user.googleId = profile.id;
       if (profile.displayName && !user.name) user.name = profile.displayName;
       if (profile.photos?.[0]?.value && !user.profileImage) user.profileImage = profile.photos[0].value;
       user.lastLogin = new Date();
@@ -102,17 +92,21 @@ passport.use(new GoogleStrategy({
       await user.save();
     }
 
-    // Only return fields your Express.User type expects (extend as needed)
-    const expressUser: Express.User = {
-      userId: user._id.toString(),
+    // Return a user object that matches the controller check: must include _id, email, and role
+    done(null, {
+      _id: user._id,
+      email: user.email,
       role: user.role,
-      email: user.email
-      // Add other fields if your Express.User definition expects them
-    };
-
-    done(null, expressUser);
+      name: user.name,
+      loginMethod: user.loginMethod,
+      region: user.region,
+      phone: user.phone,
+      googleId: user.googleId,
+      hl_source_token: user.hl_source_token,
+      hl_utm_data: user.hl_utm_data
+    });
   } catch (error) {
-    done(error as Error);
+    done(error);
   }
 }));
 
