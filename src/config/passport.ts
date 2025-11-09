@@ -15,32 +15,31 @@ if (!clientID || !clientSecret) {
 
 console.log('✅ Google OAuth configured with callback:', callbackURL);
 
-// ✅ Properly type the serializeUser
-passport.serializeUser((user: any, done) => {
-  done(null, user._id || user.userId);
+// Serialize: always serialize by userId (as string)
+passport.serializeUser((user: Express.User, done) => {
+  done(null, user.userId);
 });
 
-// ✅ Properly type the deserializeUser
-passport.deserializeUser(async (id: string, done) => {
+// Deserialize: retrieve user and map to Express.User format
+passport.deserializeUser(async (userId: string, done) => {
   try {
-    const user = await User.findById(id);
-    if (!user) {
-      return done(null, false);
-    }
-    done(null, user);
+    const user = await User.findById(userId);
+    if (!user) return done(null, false);
+    const expressUser: Express.User = {
+      userId: user._id.toString(),
+      role: user.role,
+      email: user.email
+    };
+    done(null, expressUser);
   } catch (err) {
     done(err);
   }
 });
 
-// Helper function to store QR source data
+// Helper for QR tracking source
 const storeQrSource = (user: IUser, hl_src: any) => {
   if (!hl_src) return;
-  
-  if (hl_src.t) {
-    user.hl_source_token = hl_src.t.toUpperCase();
-  }
-  
+  if (hl_src.t) user.hl_source_token = hl_src.t.toUpperCase();
   if (hl_src.utm_source || hl_src.utm_medium || hl_src.utm_campaign) {
     user.hl_utm_data = {
       utm_source: hl_src.utm_source || undefined,
@@ -50,11 +49,7 @@ const storeQrSource = (user: IUser, hl_src: any) => {
       utm_term: hl_src.utm_term || undefined
     };
   }
-  
-  if (hl_src.ts) {
-    user.qr_landing_timestamp = new Date(hl_src.ts);
-  }
-  
+  if (hl_src.ts) user.qr_landing_timestamp = new Date(hl_src.ts);
   user.qr_auth_timestamp = new Date();
   user.qr_flow_completed = true;
 };
@@ -66,105 +61,58 @@ passport.use(new GoogleStrategy({
   passReqToCallback: true,
 }, async (req, accessToken, refreshToken, profile: Profile, done) => {
   try {
-    console.log('🔍 Google profile received:', {
-      id: profile.id,
-      email: profile.emails?.[0]?.value,
-      name: profile.displayName
-    });
-
     const email = profile.emails?.[0]?.value;
-    if (!email) {
-      console.error('❌ No email found in Google profile');
-      throw new Error('No email found in Google profile');
-    }
+    if (!email) throw new Error('No email found in Google profile');
 
-    // Get region and QR source from OAuth state
+    // Get QR source from query param (legacy), or from OAuth state (preferred)
+    let hl_src: any = null;
     let region = 'ae';
-    let hl_src = null;
-    
-    try {
-      if (req.query?.state) {
+    if (req.query?.state) {
+      try {
         const stateData = JSON.parse(Buffer.from(req.query.state as string, 'base64').toString('utf-8'));
         region = stateData.region || 'ae';
         hl_src = stateData.hl_src || null;
-        console.log('✅ Decoded OAuth state:', stateData);
-      }
-    } catch (e) {
-      console.error('❌ Failed to parse OAuth state:', e);
+      } catch (e) {}
+    } else if (req.query?.hl_src) {
+      try {
+        hl_src = JSON.parse(req.query.hl_src as string);
+      } catch (e) {}
     }
 
     let user = await User.findOne({ email });
-    
     if (!user) {
-      console.log('🆕 Creating new user for:', email);
-      
       user = new User({
         email,
         name: profile.displayName || email.split('@')[0],
         profileImage: profile.photos?.[0]?.value,
         role: Role.CONSUMER,
         loginMethod: LoginMethod.GOOGLE,
-        googleId: profile.id,
-        region: region,
-        isActive: true
+        region,
+        isActive: true,
+        googleId: profile.id
       });
-      
-      // Store QR source for new users
       storeQrSource(user, hl_src);
-      
       await user.save();
-      console.log('✅ New user created:', user._id);
     } else {
-      console.log('✅ Existing user found:', user._id);
-      
-      // Update loginMethod and profile if not set
-      if (!user.loginMethod) {
-        user.loginMethod = LoginMethod.GOOGLE;
-      }
-      if (!user.googleId) {
-        user.googleId = profile.id;
-      }
-      if (profile.displayName && !user.name) {
-        user.name = profile.displayName;
-      }
-      if (profile.photos?.[0]?.value && !user.profileImage) {
-        user.profileImage = profile.photos[0].value;
-      }
-      
-      // Update last login
+      if (!user.loginMethod) user.loginMethod = LoginMethod.GOOGLE;
+      if (profile.displayName && !user.name) user.name = profile.displayName;
+      if (profile.photos?.[0]?.value && !user.profileImage) user.profileImage = profile.photos[0].value;
       user.lastLogin = new Date();
-      
-      // Store QR source for existing users
       storeQrSource(user, hl_src);
-      
       await user.save();
-      console.log('✅ User updated:', user._id);
     }
-    
-    // ✅ CRITICAL: Return full user object with all required fields
-    const userObject = {
-      _id: user._id,
-      email: user.email,
-      name: user.name || email.split('@')[0],
+
+    // Only return fields your Express.User type expects (extend as needed)
+    const expressUser: Express.User = {
+      userId: user._id.toString(),
       role: user.role,
-      loginMethod: LoginMethod.GOOGLE,
-      phone: user.phone,
-      googleId: user.googleId,
-      hl_source_token: user.hl_source_token,
-      hl_utm_data: user.hl_utm_data,
-      region: region
+      email: user.email
+      // Add other fields if your Express.User definition expects them
     };
-    
-    console.log('✅ Returning user object to passport:', {
-      _id: userObject._id.toString(),
-      email: userObject.email,
-      role: userObject.role
-    });
-    
-    done(null, userObject);
-  } catch (error: any) {
-    console.error('❌ Error in Google OAuth strategy:', error);
-    done(error);
+
+    done(null, expressUser);
+  } catch (error) {
+    done(error as Error);
   }
 }));
 
