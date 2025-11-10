@@ -224,6 +224,7 @@ const connectDatabases = async () => {
 connectDatabases();
 
 // ===== API ROUTES =====
+// ===== API ROUTES =====
 app.use('/api/auth', authRoutes);
 app.use('/api/auth', googleAuthRoutes);
 app.use('/api/wifi', wifiRoutes);
@@ -232,7 +233,7 @@ app.use('/api/venues', venueRoutes);
 app.use('/api/venues-dubai', venueDubaiRoutes);
 app.use('/api/events-dubai', eventDubaiRoutes);
 app.use('/api/users', userRoutes);
-app.use('/api/admin', adminRoutes);
+app.use('/api/admin', adminRoutes);  // ✅ MAKE SURE THIS LINE EXISTS
 app.use('/api/zoho', zohoRoutes);
 app.use('/webhooks', webhookRoutes);
 app.use('/api/upload', uploadRoutes);
