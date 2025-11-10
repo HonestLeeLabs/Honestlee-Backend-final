@@ -1,3 +1,4 @@
+// ===== COMPLETE FIXED FILE: src/routes/adminRoutes.ts =====
 import express from 'express';
 import { NextFunction, Request, Response } from 'express';
 import {
@@ -16,6 +17,7 @@ import { authorizeRoles } from '../middlewares/roleMiddleware';
 
 const router = express.Router();
 
+// ✅ Helper function to cast Request to AuthRequest
 function withAuthRequest(
   handler: (req: AuthRequest, res: Response, next: NextFunction) => any
 ) {
@@ -23,14 +25,19 @@ function withAuthRequest(
     handler(req as AuthRequest, res, next);
 }
 
+// ✅ Apply authentication to ALL routes
 router.use(withAuthRequest(authenticate));
-router.use(withAuthRequest(authorizeRoles('ADMIN')));
 
+// ✅ Apply role authorization to ALL routes (ADMIN and MANAGER allowed)
+router.use(withAuthRequest(authorizeRoles('ADMIN', 'MANAGER')));
+
+// ===== User Routes =====
 router.get('/users', withAuthRequest(getUsers));
 router.get('/users/:id', withAuthRequest(getUserById));
 router.put('/users/:id', withAuthRequest(updateUserById));
 router.delete('/users/:id', withAuthRequest(deleteUserById));
 
+// ===== Venue Routes =====
 router.post('/venues', withAuthRequest(createVenue));
 router.get('/venues', withAuthRequest(getVenues));
 router.get('/venues/:id', withAuthRequest(getVenueById));
