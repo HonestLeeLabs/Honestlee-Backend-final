@@ -1,10 +1,9 @@
-// ===== FIXED: src/middlewares/authorizeRolesMiddleware.ts =====
+// ===== FIXED: src/middlewares/roleMiddleware.ts =====
 import { Response, NextFunction } from 'express';
 import { AuthRequest } from './authMiddleware';
 
 export function authorizeRoles(...allowedRoles: string[]) {
   return function (req: AuthRequest, res: Response, next: NextFunction) {
-    // ✅ ADDED: Debug logging
     console.log('🔐 Role Authorization Check:');
     console.log('   User:', req.user ? req.user.userId : 'None');
     console.log('   User Role:', req.user ? req.user.role : 'None');
@@ -19,7 +18,6 @@ export function authorizeRoles(...allowedRoles: string[]) {
       console.log(`❌ Authorization failed: Role "${req.user.role}" not in [${allowedRoles.join(', ')}]`);
       return res.status(403).json({ 
         message: 'Forbidden: insufficient role',
-        // ✅ ADDED: Include debug info in response
         debug: {
           userRole: req.user.role,
           allowedRoles: allowedRoles

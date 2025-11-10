@@ -25,7 +25,7 @@ function withAuthRequest(
     handler(req as AuthRequest, res, next);
 }
 
-// ✅ Apply authentication to ALL routes
+// ✅ Apply authentication to ALL routes FIRST
 router.use(withAuthRequest(authenticate));
 
 // ✅ Apply role authorization to ALL routes (ADMIN and MANAGER allowed)
