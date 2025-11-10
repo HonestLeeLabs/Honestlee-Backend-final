@@ -1,13 +1,10 @@
 import { Request, Response, NextFunction } from 'express';
 import { verifyJwt } from '../utils/jwt';
 
+// ✅ Use the global Express.User interface defined in passport.ts
 export interface AuthRequest extends Request {
-  user?: {
-    userId: string;
-    role: string;
-    region?: string;
-  };
-  fileValidationError?: string; // Add this for multer file validation
+  user?: Express.User;  // ✅ Changed from custom type to Express.User
+  fileValidationError?: string;
 }
 
 function extractRegionFromRequest(req: Request): string | undefined {
@@ -20,9 +17,11 @@ function extractRegionFromRequest(req: Request): string | undefined {
 export function authenticate(req: Request, res: Response, next: NextFunction) {
   const authReq = req as AuthRequest;
   const authHeader = (authReq.headers.authorization || '').toString();
+  
   if (!authHeader.startsWith('Bearer ')) {
     return res.status(401).json({ message: 'Authorization header missing or malformed' });
   }
+  
   const token = authHeader.slice(7);
 
   // Decode token to check claimed region
@@ -40,7 +39,14 @@ export function authenticate(req: Request, res: Response, next: NextFunction) {
     return res.status(401).json({ message: 'Invalid or expired token' });
   }
 
-  authReq.user = payload;
+  // ✅ Map JWT payload to Express.User format
+  authReq.user = {
+    id: payload.userId,
+    userId: payload.userId,
+    role: payload.role,
+    region: payload.region,
+  };
+  
   next();
 }
 
