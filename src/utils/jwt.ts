@@ -1,6 +1,5 @@
-import jwt, { SignOptions } from 'jsonwebtoken';
-import ms from 'ms'; // You may need to install this: npm install ms @types/ms
-import dotenv from 'dotenv';
+import jwt, { SignOptions } from "jsonwebtoken";
+import dotenv from "dotenv";
 dotenv.config();
 
 type JwtPayload = {
@@ -11,67 +10,55 @@ type JwtPayload = {
 
 function getJwtSecret(region?: string): string {
   const regionMap: Record<string, string> = {
-    'global': process.env.JWT_SECRET_GLOBAL || '',
-    'india': process.env.JWT_SECRET_INDIA || '',
-    'in': process.env.JWT_SECRET_INDIA || '', // Alias
-    'uae': process.env.JWT_SECRET_UAE || '',
-    'ae': process.env.JWT_SECRET_UAE || '', // Alias
-    'thailand': process.env.JWT_SECRET_THAILAND || '',
-    'th': process.env.JWT_SECRET_THAILAND || '', // Alias
-    'brazil': process.env.JWT_SECRET_BRAZIL || ''
+    global: process.env.JWT_SECRET_GLOBAL!,
+    india: process.env.JWT_SECRET_INDIA!,
+    in: process.env.JWT_SECRET_INDIA!,
+    uae: process.env.JWT_SECRET_UAE!,
+    ae: process.env.JWT_SECRET_UAE!,
+    brazil: process.env.JWT_SECRET_BRAZIL!,
+    br: process.env.JWT_SECRET_BRAZIL!,
+    thailand: process.env.JWT_SECRET_THAILAND!,
+    th: process.env.JWT_SECRET_THAILAND!,
   };
-  
+
+  // Try to get region-specific secret
   if (region && regionMap[region.toLowerCase()]) {
-    const secret = regionMap[region.toLowerCase()];
-    console.log(`✅ JWT secret found for region: ${region}`);
-    return secret;
+    return regionMap[region.toLowerCase()];
   }
-  
-  if (regionMap['global']) {
-    console.log('⚠️ Using global JWT secret as fallback');
-    return regionMap['global'];
+
+  // Fallback to global secret
+  if (regionMap["global"]) {
+    console.log(`⚠️ No JWT secret for region '${region}', using global secret`);
+    return regionMap["global"];
   }
-  
-  console.error('❌ No JWT secret configured for region:', region);
-  throw new Error(`No JWT secret configured for region: ${region} or global`);
+
+  throw new Error(`No JWT secret configured for region '${region}' or global`);
 }
 
 export function signJwt(
   payload: JwtPayload,
-  expiresIn: string | number = '30d',
+  expiresIn: number | string = "1d"
 ): string {
   try {
     const secret = getJwtSecret(payload.region);
-    
-    // ✅ FIX: Type assertion for SignOptions
-    const options = {
-      expiresIn: expiresIn
-    } as SignOptions;
-    
-    console.log('🔐 Signing JWT for:', {
-      userId: payload.userId,
-      role: payload.role,
-      region: payload.region,
-      expiresIn: expiresIn
-    });
-    
-    const token = jwt.sign(payload, secret, options);
-    console.log('✅ JWT token generated successfully');
-    return token;
-  } catch (error: any) {
-    console.error('❌ Error signing JWT:', error.message);
+    const options: SignOptions = {
+      expiresIn: expiresIn as any,
+    };
+
+    console.log(`✅ Signing JWT for region: ${payload.region || "global"}`);
+    return jwt.sign(payload, secret, options);
+  } catch (error) {
+    console.error("❌ JWT signing error:", error);
     throw error;
   }
 }
 
 export function verifyJwt(token: string, region?: string): JwtPayload | null {
   try {
-    const secret = getJwtSecret(region || 'global');
-    const decoded = jwt.verify(token, secret) as JwtPayload;
-    console.log('✅ JWT verified successfully for region:', region);
-    return decoded;
-  } catch (error: any) {
-    console.error('❌ JWT verification failed:', error.message);
+    const secret = getJwtSecret(region || "global");
+    return jwt.verify(token, secret) as JwtPayload;
+  } catch (error) {
+    console.error("❌ JWT verification error:", error);
     return null;
   }
 }
