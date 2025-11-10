@@ -1,53 +1,112 @@
+// ===== COMPLETE FIXED FILE: src/middlewares/authMiddleware.ts =====
 import { Request, Response, NextFunction } from 'express';
-import { verifyJwt } from '../utils/jwt';
+import jwt from 'jsonwebtoken';
 
-// ✅ Use the global Express.User interface defined in passport.ts
+// ✅ Define AuthRequest interface
 export interface AuthRequest extends Request {
-  user?: Express.User;  // ✅ Changed from custom type to Express.User
+  user?: {
+    id: string;
+    userId: string;
+    role: string;
+    region?: string;
+  };
   fileValidationError?: string;
 }
 
-function extractRegionFromRequest(req: Request): string | undefined {
+// Helper function to extract region from request
+function extractRegionFromRequest(req: Request): string {
   if (req.headers['x-region']) {
     return (req.headers['x-region'] as string).toLowerCase();
   }
-  return undefined;
+  return 'ae'; // Default to Dubai/UAE
 }
 
+// ✅ MAIN AUTHENTICATION MIDDLEWARE
 export function authenticate(req: Request, res: Response, next: NextFunction) {
   const authReq = req as AuthRequest;
   const authHeader = (authReq.headers.authorization || '').toString();
   
+  console.log('🔐 Auth Middleware:');
+  console.log('   Path:', req.path);
+  console.log('   Method:', req.method);
+  console.log('   Authorization Header:', authHeader ? authHeader.substring(0, 30) + '...' : 'None');
+  
   if (!authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ message: 'Authorization header missing or malformed' });
+    console.log('❌ Authorization header missing or malformed');
+    return res.status(401).json({ 
+      success: false,
+      message: 'Authorization header missing or malformed' 
+    });
   }
   
-  const token = authHeader.slice(7);
+  const token = authHeader.slice(7); // Remove 'Bearer ' prefix
+  
+  // Get JWT_SECRET from environment
+  const JWT_SECRET = process.env.JWT_SECRET;
+  if (!JWT_SECRET) {
+    console.error('❌ JWT_SECRET not configured in environment');
+    return res.status(500).json({ 
+      success: false,
+      message: 'Server configuration error' 
+    });
+  }
 
-  // Decode token to check claimed region
-  let decoded: any = {};
   try {
-    decoded = require('jsonwebtoken').decode(token) || {};
-  } catch {}
+    // ✅ Verify JWT token
+    const decoded = jwt.verify(token, JWT_SECRET) as any;
+    
+    console.log('✅ Token decoded successfully:', {
+      userId: decoded.userId,
+      role: decoded.role,
+      region: decoded.region,
+      issued: decoded.iat ? new Date(decoded.iat * 1000).toISOString() : 'N/A',
+      expires: decoded.exp ? new Date(decoded.exp * 1000).toISOString() : 'N/A'
+    });
 
-  // Prefer region in token claim, then header, then fallback to 'global'
-  const region = (decoded.region as string) || extractRegionFromRequest(authReq) || 'global';
+    // Get region from token, header, or default
+    const region = decoded.region || extractRegionFromRequest(authReq);
 
-  const payload = verifyJwt(token, region);
+    // ✅ Map JWT payload to AuthRequest.user format
+    authReq.user = {
+      id: decoded.userId,
+      userId: decoded.userId,
+      role: decoded.role,
+      region: region
+    };
+    
+    console.log('✅ User authenticated:', {
+      userId: authReq.user.userId,
+      role: authReq.user.role,
+      region: authReq.user.region
+    });
+    
+    next();
+  } catch (error: any) {
+    console.error('❌ Token verification failed:', {
+      error: error.message,
+      name: error.name,
+      path: req.path
+    });
 
-  if (!payload) {
-    return res.status(401).json({ message: 'Invalid or expired token' });
+    if (error.name === 'TokenExpiredError') {
+      return res.status(401).json({ 
+        success: false,
+        message: 'Token has expired, please login again' 
+      });
+    }
+
+    if (error.name === 'JsonWebTokenError') {
+      return res.status(401).json({ 
+        success: false,
+        message: 'Invalid token format' 
+      });
+    }
+
+    return res.status(401).json({ 
+      success: false,
+      message: 'Invalid or expired token' 
+    });
   }
-
-  // ✅ Map JWT payload to Express.User format
-  authReq.user = {
-    id: payload.userId,
-    userId: payload.userId,
-    role: payload.role,
-    region: payload.region,
-  };
-  
-  next();
 }
 
 // Export alias for backward compatibility
