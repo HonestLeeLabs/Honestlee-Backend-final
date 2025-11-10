@@ -13,125 +13,115 @@ if (!clientID || !clientSecret) {
   throw new Error('Google OAuth client ID and secret must be set in environment variables');
 }
 
-// ✅ SerializeUser - store the userId
-passport.serializeUser((user: any, done) => {
-  done(null, user._id ? user._id.toString() : user.userId);
+// ✅ FIX: Properly type the serializeUser
+passport.serializeUser((user: Express.User, done) => {
+  done(null, user.userId);
 });
 
-// ✅ DeserializeUser - return a plain object matching Express.User interface
+// ✅ FIX: Properly type the deserializeUser
 passport.deserializeUser(async (userId: string, done) => {
   try {
-    const user = await User.findById(userId).lean();
-    if (!user) return done(null, false);
+    const user = await User.findById(userId);
+    if (!user) {
+      return done(null, false);
+    }
     
-    // ✅ Return a plain object with userId property (not _id)
-    done(null, {
+    // Convert Mongoose document to Express.User format
+    const expressUser: Express.User = {
       userId: user._id.toString(),
-      email: user.email,
-      name: user.name,
-      role: user.role as string,
-      loginMethod: user.loginMethod as string,
-      region: user.region,
-      phone: user.phone,
-      googleId: user.googleId,
-      profileImage: user.profileImage,
-      hl_source_token: user.hl_source_token,
-      hl_utm_data: user.hl_utm_data,
-    });
+      role: user.role,
+      email: user.email
+    };
+    
+    done(null, expressUser);
   } catch (err) {
     done(err);
   }
 });
 
+// Helper function to store QR source data
 const storeQrSource = (user: IUser, hl_src: any) => {
   if (!hl_src) return;
-  if (hl_src.t) user.hl_source_token = hl_src.t.toUpperCase();
+  
+  if (hl_src.t) {
+    user.hl_source_token = hl_src.t.toUpperCase();
+  }
+  
   if (hl_src.utm_source || hl_src.utm_medium || hl_src.utm_campaign) {
     user.hl_utm_data = {
       utm_source: hl_src.utm_source || undefined,
       utm_medium: hl_src.utm_medium || undefined,
       utm_campaign: hl_src.utm_campaign || undefined,
       utm_content: hl_src.utm_content || undefined,
-      utm_term: hl_src.utm_term || undefined,
+      utm_term: hl_src.utm_term || undefined
     };
   }
-  if (hl_src.ts) user.qr_landing_timestamp = new Date(hl_src.ts);
+  
+  if (hl_src.ts) {
+    user.qr_landing_timestamp = new Date(hl_src.ts);
+  }
+  
   user.qr_auth_timestamp = new Date();
   user.qr_flow_completed = true;
 };
 
-passport.use(
-  new GoogleStrategy(
-    {
-      clientID,
-      clientSecret,
-      callbackURL,
-      passReqToCallback: true,
-    },
-    async (req, accessToken, refreshToken, profile: Profile, done) => {
-      try {
-        const email = profile.emails?.[0]?.value;
-        if (!email) throw new Error('No email found in Google profile');
+passport.use(new GoogleStrategy({
+  clientID,
+  clientSecret,
+  callbackURL,
+  passReqToCallback: true,
+}, async (req, accessToken, refreshToken, profile: Profile, done) => {
+  try {
+    const email = profile.emails?.[0]?.value;
+    if (!email) throw new Error('No email found in Google profile');
 
-        let region = 'ae';
-        let hl_src: any = null;
-        if (req.query?.state) {
-          try {
-            const stateData = JSON.parse(
-              Buffer.from(req.query.state as string, 'base64').toString('utf-8'),
-            );
-            region = stateData.region || 'ae';
-            hl_src = stateData.hl_src || null;
-          } catch (e) {
-            // ignore error
-          }
-        }
+    // Get QR source from query params (passed from frontend)
+    const hl_src = req.query?.hl_src ? JSON.parse(req.query.hl_src as string) : null;
 
-        let user = await User.findOne({ email });
-        if (!user) {
-          user = new User({
-            email,
-            name: profile.displayName || email.split('@')[0],
-            profileImage: profile.photos?.[0]?.value,
-            role: Role.CONSUMER,
-            loginMethod: LoginMethod.GOOGLE,
-            region,
-            isActive: true,
-            googleId: profile.id,
-          });
-          storeQrSource(user, hl_src);
-          await user.save();
-        } else {
-          if (!user.loginMethod) user.loginMethod = LoginMethod.GOOGLE;
-          if (!user.googleId) user.googleId = profile.id;
-          if (profile.displayName && !user.name) user.name = profile.displayName;
-          if (profile.photos?.[0]?.value && !user.profileImage)
-            user.profileImage = profile.photos[0].value;
-          user.lastLogin = new Date();
-          storeQrSource(user, hl_src);
-          await user.save();
-        }
-
-        // ✅ CRITICAL FIX: Return a plain object with userId (not the Mongoose document)
-        // This matches your Express.User interface which requires userId property
-        done(null, {
-          userId: user._id.toString(),
-          email: user.email,
-          name: user.name,
-          role: user.role,
-          loginMethod: user.loginMethod,
-          region: region,
-          phone: user.phone,
-          googleId: user.googleId,
-          profileImage: user.profileImage,
-          hl_source_token: user.hl_source_token,
-          hl_utm_data: user.hl_utm_data,
-        });
-      } catch (error) {
-        done(error);
+    let user = await User.findOne({ email });
+    
+    if (!user) {
+      user = new User({
+        email,
+        name: profile.displayName,
+        profileImage: profile.photos?.[0]?.value,
+        role: Role.CONSUMER,
+        loginMethod: LoginMethod.GOOGLE,
+      });
+      
+      // Store QR source for new users
+      storeQrSource(user, hl_src);
+      
+      await user.save();
+    } else {
+      // Update loginMethod and profile if not set
+      if (!user.loginMethod) {
+        user.loginMethod = LoginMethod.GOOGLE;
       }
-    },
-  ),
-);
+      if (profile.displayName && !user.name) {
+        user.name = profile.displayName;
+      }
+      if (profile.photos?.[0]?.value && !user.profileImage) {
+        user.profileImage = profile.photos[0].value;
+      }
+      
+      // Store QR source for existing users
+      storeQrSource(user, hl_src);
+      
+      await user.save();
+    }
+    
+    // ✅ FIX: Convert to Express.User format before passing to done()
+    const expressUser: Express.User = {
+      userId: user._id.toString(),
+      role: user.role,
+      email: user.email
+    };
+    
+    done(null, expressUser);
+  } catch (error) {
+    done(error as Error); 
+  }
+}));
 
 export default passport;
