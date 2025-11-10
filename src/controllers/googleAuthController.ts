@@ -2,9 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import passport from "../config/passport";
 import { signJwt } from "../utils/jwt";
 
-// Helper to get frontend URL based on region/origin
 const getFrontendUrl = (region: string, origin?: string): string => {
-  // Try to detect from origin header
   if (origin) {
     if (origin.includes("ae.honestlee.app") || origin.includes("honestlee.ae")) {
       return "https://ae.honestlee.app";
@@ -17,7 +15,6 @@ const getFrontendUrl = (region: string, origin?: string): string => {
     }
   }
 
-  // Fallback based on region
   const regionUrls: Record<string, string> = {
     ae: "https://ae.honestlee.app",
     th: "https://th.honestlee.app",
@@ -28,19 +25,15 @@ const getFrontendUrl = (region: string, origin?: string): string => {
   return regionUrls[region.toLowerCase()] || process.env.FRONTEND_URL || "http://localhost:3000";
 };
 
-// Initiate Google OAuth
 export const googleAuth = (req: Request, res: Response, next: NextFunction) => {
-  // Get region from header or query
   const region = (req.headers["x-region"] as string) || req.query.region || "ae";
   const hlsrc = req.query.hlsrc;
   const origin = req.headers.origin || req.headers.referer;
 
-  // Determine frontend URL
   const frontendUrl = getFrontendUrl(region as string, origin as string);
 
   console.log(`🔐 Initiating Google OAuth: region=${region}, frontendUrl=${frontendUrl}, hlsrc=${hlsrc}`);
 
-  // Create state object with all tracking data
   const stateData = {
     region: region,
     frontendUrl: frontendUrl,
@@ -48,7 +41,6 @@ export const googleAuth = (req: Request, res: Response, next: NextFunction) => {
     timestamp: Date.now(),
   };
 
-  // Encode state as base64 JSON
   const stateString = Buffer.from(JSON.stringify(stateData)).toString("base64");
 
   passport.authenticate("google", {
@@ -57,13 +49,11 @@ export const googleAuth = (req: Request, res: Response, next: NextFunction) => {
   })(req, res, next);
 };
 
-// Handle Google OAuth callback
 export const googleAuthCallback = (req: Request, res: Response, next: NextFunction) => {
   passport.authenticate("google", { session: false }, (err, user, info) => {
     if (err || !user) {
       console.error("❌ Google auth error:", err);
 
-      // Try to get frontend URL from state
       let frontendUrl = "https://ae.honestlee.app";
       try {
         if (req.query.state) {
@@ -78,7 +68,11 @@ export const googleAuthCallback = (req: Request, res: Response, next: NextFuncti
     }
 
     try {
-      // Decode state to get region and frontend URL
+      // ✅ Validate user object
+      if (!user || !user.id || !user.userId) {
+        throw new Error("User object is missing required properties (id or userId)");
+      }
+
       let region = "ae";
       let frontendUrl = "https://ae.honestlee.app";
       let hlsrc = null;
@@ -95,12 +89,15 @@ export const googleAuthCallback = (req: Request, res: Response, next: NextFuncti
         }
       }
 
-      // Log user info
-      console.log(`👤 User authenticated: userId=${user.id}, email=${user.email}, role=${user.role}`);
+      console.log(`👤 User authenticated:`, {
+        id: user.id,
+        userId: user.userId,
+        email: user.email,
+        role: user.role,
+      });
 
-      // Generate JWT token with region
       console.log(`🔐 Generating JWT for userId=${user.id}, role=${user.role}, region=${region}`);
-      
+
       const token = signJwt({
         userId: user.id.toString(),
         role: user.role,
@@ -109,7 +106,6 @@ export const googleAuthCallback = (req: Request, res: Response, next: NextFuncti
 
       console.log(`✅ JWT token generated successfully`);
 
-      // Build query params
       const queryParams = new URLSearchParams({
         token: token,
         userId: user.id.toString(),
@@ -119,21 +115,20 @@ export const googleAuthCallback = (req: Request, res: Response, next: NextFuncti
         loginMethod: user.loginMethod || "google",
         region: region,
         ...(user.hlsourcetoken && { hlsourcetoken: user.hlsourcetoken }),
-        ...(user.hlutmdata?.utmcampaign && { utmcampaign: user.hlutmdata.utmcampaign }),
-        ...(user.hlutmdata?.utmsource && { utmsource: user.hlutmdata.utmsource }),
+        ...(user.hlutmdata?.utm_campaign && { utm_campaign: user.hlutmdata.utm_campaign }),
+        ...(user.hlutmdata?.utm_source && { utm_source: user.hlutmdata.utm_source }),
       });
 
-      // Redirect to the correct regional frontend
       const redirectUrl = `${frontendUrl}/?${queryParams.toString()}`;
       console.log(`🚀 Redirecting to: ${redirectUrl}`);
-      
+
       res.redirect(redirectUrl);
     } catch (error: any) {
       console.error("❌ Token generation error:", error);
       console.error("❌ Error message:", error.message);
       console.error("❌ Error stack:", error.stack);
+      console.error("❌ User object:", user);
 
-      // Try to get frontend URL from state for error redirect
       let frontendUrl = "https://ae.honestlee.app";
       try {
         if (req.query.state) {

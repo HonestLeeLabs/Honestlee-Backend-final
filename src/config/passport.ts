@@ -13,115 +13,136 @@ if (!clientID || !clientSecret) {
   throw new Error('Google OAuth client ID and secret must be set in environment variables');
 }
 
-// ✅ FIX: Properly type the serializeUser
-passport.serializeUser((user: Express.User, done) => {
-  done(null, user.userId);
+// ✅ SerializeUser
+passport.serializeUser((user: any, done) => {
+  done(null, user.userId || user.id);
 });
 
-// ✅ FIX: Properly type the deserializeUser
+// ✅ DeserializeUser
 passport.deserializeUser(async (userId: string, done) => {
   try {
-    const user = await User.findById(userId);
-    if (!user) {
-      return done(null, false);
-    }
+    const user = await User.findById(userId).lean();
+    if (!user) return done(null, false);
     
-    // Convert Mongoose document to Express.User format
-    const expressUser: Express.User = {
+    done(null, {
+      id: user._id.toString(),
       userId: user._id.toString(),
-      role: user.role,
-      email: user.email
-    };
-    
-    done(null, expressUser);
+      email: user.email,
+      name: user.name,
+      role: user.role as string,
+      loginMethod: user.loginMethod as string,
+      region: user.region,
+      phone: user.phone,
+      googleId: user.googleId,
+      profileImage: user.profileImage,
+      hlsourcetoken: user.hl_source_token,
+      hlutmdata: user.hl_utm_data,
+    });
   } catch (err) {
     done(err);
   }
 });
 
-// Helper function to store QR source data
 const storeQrSource = (user: IUser, hl_src: any) => {
   if (!hl_src) return;
-  
-  if (hl_src.t) {
-    user.hl_source_token = hl_src.t.toUpperCase();
-  }
-  
+  if (hl_src.t) user.hl_source_token = hl_src.t.toUpperCase();
   if (hl_src.utm_source || hl_src.utm_medium || hl_src.utm_campaign) {
     user.hl_utm_data = {
       utm_source: hl_src.utm_source || undefined,
       utm_medium: hl_src.utm_medium || undefined,
       utm_campaign: hl_src.utm_campaign || undefined,
       utm_content: hl_src.utm_content || undefined,
-      utm_term: hl_src.utm_term || undefined
+      utm_term: hl_src.utm_term || undefined,
     };
   }
-  
-  if (hl_src.ts) {
-    user.qr_landing_timestamp = new Date(hl_src.ts);
-  }
-  
+  if (hl_src.ts) user.qr_landing_timestamp = new Date(hl_src.ts);
   user.qr_auth_timestamp = new Date();
   user.qr_flow_completed = true;
 };
 
-passport.use(new GoogleStrategy({
-  clientID,
-  clientSecret,
-  callbackURL,
-  passReqToCallback: true,
-}, async (req, accessToken, refreshToken, profile: Profile, done) => {
-  try {
-    const email = profile.emails?.[0]?.value;
-    if (!email) throw new Error('No email found in Google profile');
+passport.use(
+  new GoogleStrategy(
+    {
+      clientID,
+      clientSecret,
+      callbackURL,
+      passReqToCallback: true,
+    },
+    async (req, accessToken, refreshToken, profile: Profile, done) => {
+      try {
+        const email = profile.emails?.[0]?.value;
+        if (!email) throw new Error('No email found in Google profile');
 
-    // Get QR source from query params (passed from frontend)
-    const hl_src = req.query?.hl_src ? JSON.parse(req.query.hl_src as string) : null;
+        let region = 'ae';
+        let hlsrc: any = null;
 
-    let user = await User.findOne({ email });
-    
-    if (!user) {
-      user = new User({
-        email,
-        name: profile.displayName,
-        profileImage: profile.photos?.[0]?.value,
-        role: Role.CONSUMER,
-        loginMethod: LoginMethod.GOOGLE,
-      });
-      
-      // Store QR source for new users
-      storeQrSource(user, hl_src);
-      
-      await user.save();
-    } else {
-      // Update loginMethod and profile if not set
-      if (!user.loginMethod) {
-        user.loginMethod = LoginMethod.GOOGLE;
+        // Parse state parameter
+        if (req.query?.state) {
+          try {
+            const stateData = JSON.parse(
+              Buffer.from(req.query.state as string, 'base64').toString('utf-8')
+            );
+            region = stateData.region || 'ae';
+            hlsrc = stateData.hlsrc || null;
+            console.log(`✅ Passport: Decoded state - region=${region}, hlsrc=${hlsrc}`);
+          } catch (e) {
+            console.error('❌ Passport: Failed to parse state:', e);
+          }
+        }
+
+        let user = await User.findOne({ email });
+
+        if (!user) {
+          user = new User({
+            email,
+            name: profile.displayName || email.split('@')[0],
+            profileImage: profile.photos?.[0]?.value,
+            role: Role.CONSUMER,
+            loginMethod: LoginMethod.GOOGLE,
+            region,
+            isActive: true,
+            googleId: profile.id,
+          });
+          storeQrSource(user, hlsrc);
+          await user.save();
+          console.log(`✅ New user created: ${user.email}`);
+        } else {
+          if (!user.loginMethod) user.loginMethod = LoginMethod.GOOGLE;
+          if (!user.googleId) user.googleId = profile.id;
+          if (profile.displayName && !user.name) user.name = profile.displayName;
+          if (profile.photos?.[0]?.value && !user.profileImage) {
+            user.profileImage = profile.photos[0].value;
+          }
+          user.lastLogin = new Date();
+          storeQrSource(user, hlsrc);
+          await user.save();
+          console.log(`✅ Existing user updated: ${user.email}`);
+        }
+
+        // ✅ Return full user object with ALL properties needed by controller
+        const userObject = {
+          id: user._id.toString(),
+          userId: user._id.toString(),
+          email: user.email,
+          name: user.name,
+          role: user.role,
+          loginMethod: user.loginMethod,
+          region: region,
+          phone: user.phone,
+          googleId: user.googleId,
+          profileImage: user.profileImage,
+          hlsourcetoken: user.hl_source_token,
+          hlutmdata: user.hl_utm_data,
+        };
+
+        console.log(`✅ Returning user object:`, userObject);
+        done(null, userObject);
+      } catch (error) {
+        console.error('❌ Passport Google Strategy error:', error);
+        done(error as Error);
       }
-      if (profile.displayName && !user.name) {
-        user.name = profile.displayName;
-      }
-      if (profile.photos?.[0]?.value && !user.profileImage) {
-        user.profileImage = profile.photos[0].value;
-      }
-      
-      // Store QR source for existing users
-      storeQrSource(user, hl_src);
-      
-      await user.save();
     }
-    
-    // ✅ FIX: Convert to Express.User format before passing to done()
-    const expressUser: Express.User = {
-      userId: user._id.toString(),
-      role: user.role,
-      email: user.email
-    };
-    
-    done(null, expressUser);
-  } catch (error) {
-    done(error as Error); 
-  }
-}));
+  )
+);
 
 export default passport;
