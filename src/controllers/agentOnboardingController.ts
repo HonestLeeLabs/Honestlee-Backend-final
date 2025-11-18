@@ -252,7 +252,6 @@ export const linkVenueToCRM = async (req: AgentRequest, res: Response): Promise<
     const { tempVenueId } = req.params;
     const { crmId, venueId, autoCreate } = req.body;
     
-    // ✅ FIX 1: Get region from multiple sources with fallback
     const region = (req.region || req.user.region || req.body.region || 'th') as Region;
 
     console.log(`🔗 Linking temp venue ${tempVenueId} to CRM/Venue in region: ${region}`);
@@ -266,7 +265,6 @@ export const linkVenueToCRM = async (req: AgentRequest, res: Response): Promise<
       });
     }
 
-    // ✅ FIX 2: Validate required fields
     if (!crmId || crmId.trim() === '') {
       return res.status(400).json({
         success: false,
@@ -296,7 +294,6 @@ export const linkVenueToCRM = async (req: AgentRequest, res: Response): Promise<
 
         let RegionalVenue;
         
-        // ✅ FIX 3: Better model handling
         if (regionalConnection.models.Venue) {
           console.log(`✅ Using existing Venue model for ${region}`);
           RegionalVenue = regionalConnection.models.Venue;
@@ -305,7 +302,12 @@ export const linkVenueToCRM = async (req: AgentRequest, res: Response): Promise<
           const venueSchema = new Schema({
             globalId: String,
             name: String,
+            AccountName: String, // ✅ Added
             address: Schema.Types.Mixed,
+            geometry: { // ✅ Added required geometry field
+              type: { type: String, default: 'Point' },
+              coordinates: [Number] // [longitude, latitude]
+            },
             category: [String],
             phone: String,
             socials: Schema.Types.Mixed,
@@ -320,20 +322,42 @@ export const linkVenueToCRM = async (req: AgentRequest, res: Response): Promise<
           RegionalVenue = regionalConnection.model('Venue', venueSchema);
         }
 
-        const newVenue = new RegionalVenue({
+        // ✅ FIX: Prepare venue data with all required fields
+        const venueData: any = {
           globalId: tempVenue.googleData?.placeId || `MANUAL-${uuidv4()}`,
           name: tempVenue.name,
+          AccountName: tempVenue.name, // ✅ FIX: Use name as AccountName
           address: tempVenue.address,
           category: tempVenue.category,
           phone: tempVenue.phone,
-          socials: tempVenue.socials,
+          socials: tempVenue.socials || {},
           hours: tempVenue.hours,
           isActive: true,
           status: 'active',
           region: region,
           createdBy: req.user.userId,
           googleData: tempVenue.googleData || {},
-        });
+        };
+
+        // ✅ FIX: Add geometry if coordinates exist
+        if (tempVenue.address?.lat && tempVenue.address?.lng) {
+          venueData.geometry = {
+            type: 'Point',
+            coordinates: [
+              tempVenue.address.lng, // longitude first (GeoJSON format)
+              tempVenue.address.lat  // latitude second
+            ]
+          };
+        } else {
+          // ✅ FIX: Provide default coordinates if missing
+          console.warn(`⚠️ No coordinates found for ${tempVenue.name}, using default [0, 0]`);
+          venueData.geometry = {
+            type: 'Point',
+            coordinates: [0, 0]
+          };
+        }
+
+        const newVenue = new RegionalVenue(venueData);
 
         const savedVenue = await newVenue.save();
         finalVenueId = savedVenue._id.toString();
@@ -350,7 +374,8 @@ export const linkVenueToCRM = async (req: AgentRequest, res: Response): Promise<
             tempVenueId,
             venueData: {
               name: tempVenue.name,
-              hasGoogleData: !!tempVenue.googleData
+              hasGoogleData: !!tempVenue.googleData,
+              hasCoordinates: !!(tempVenue.address?.lat && tempVenue.address?.lng)
             }
           }
         });
