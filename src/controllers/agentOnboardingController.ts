@@ -80,8 +80,10 @@ export const getAllRegionalVenues = async (req: AuthRequest, res: Response): Pro
     let VenueModel: Model<IRegionalVenue>;
     
     try {
-      VenueModel = regionalConnection.model<IRegionalVenue>('Venue');
+      // ✅ FIX: Check if model already exists before creating it
+      VenueModel = regionalConnection.models.Venue || regionalConnection.model<IRegionalVenue>('Venue');
     } catch (error) {
+      // ✅ FIX: Only define the schema if model doesn't exist
       const venueSchema = new Schema<IRegionalVenue>({
         name: { type: String },
         AccountName: { type: String },
@@ -268,7 +270,8 @@ export const linkVenueToCRM = async (req: AgentRequest, res: Response): Promise<
       
       let RegionalVenue;
       try {
-        RegionalVenue = regionalConnection.model('Venue');
+        // ✅ FIX: Check if model exists first
+        RegionalVenue = regionalConnection.models.Venue || regionalConnection.model('Venue');
       } catch (error) {
         const venueSchema = new Schema({
           globalId: String,
@@ -314,7 +317,8 @@ export const linkVenueToCRM = async (req: AgentRequest, res: Response): Promise<
       
       let RegionalVenue;
       try {
-        RegionalVenue = regionalConnection.model('Venue');
+        // ✅ FIX: Check if model exists first
+        RegionalVenue = regionalConnection.models.Venue || regionalConnection.model('Venue');
       } catch (error) {
         return res.status(500).json({ message: 'Venue model not found in regional database' });
       }
@@ -448,7 +452,7 @@ export const attachMainQR = async (req: AgentRequest, res: Response): Promise<Re
   }
 };
 
-// ✅ NEW: GET MAIN QR
+// ✅ GET MAIN QR
 
 export const getMainQR = async (req: AgentRequest, res: Response): Promise<Response> => {
   try {
@@ -577,7 +581,7 @@ export const createZone = async (req: AgentRequest, res: Response): Promise<Resp
   }
 };
 
-// ✅ NEW: GET VENUE ZONES
+// ✅ GET VENUE ZONES
 
 export const getVenueZones = async (req: AgentRequest, res: Response): Promise<Response> => {
   try {
@@ -612,7 +616,7 @@ export const getVenueZones = async (req: AgentRequest, res: Response): Promise<R
   }
 };
 
-// ✅ NEW: DELETE ZONE
+// ✅ DELETE ZONE
 
 export const deleteZone = async (req: AgentRequest, res: Response): Promise<Response> => {
   try {
@@ -732,7 +736,7 @@ export const linkTableQR = async (req: AgentRequest, res: Response): Promise<Res
   }
 };
 
-// ✅ NEW: GET TABLE QRS
+// ✅ GET TABLE QRS
 
 export const getTableQRs = async (req: AgentRequest, res: Response): Promise<Response> => {
   try {
@@ -766,7 +770,7 @@ export const getTableQRs = async (req: AgentRequest, res: Response): Promise<Res
   }
 };
 
-// ✅ NEW: DELETE TABLE QR
+// ✅ DELETE TABLE QR
 
 export const deleteTableQR = async (req: AgentRequest, res: Response): Promise<Response> => {
   try {
@@ -882,7 +886,7 @@ export const uploadVenuePhotos = async (req: AgentRequest, res: Response): Promi
   }
 };
 
-// ✅ NEW: GET VENUE PHOTOS
+// ✅ GET VENUE PHOTOS
 
 export const getVenuePhotos = async (req: AgentRequest, res: Response): Promise<Response> => {
   try {
@@ -918,7 +922,7 @@ export const getVenuePhotos = async (req: AgentRequest, res: Response): Promise<
   }
 };
 
-// ✅ NEW: DELETE PHOTO
+// ✅ DELETE PHOTO
 
 export const deleteVenuePhoto = async (req: AgentRequest, res: Response): Promise<Response> => {
   try {
@@ -1165,7 +1169,7 @@ export const runWiFiTest = async (req: AgentRequest, res: Response): Promise<Res
   }
 };
 
-// ✅ NEW: GET WIFI TESTS
+// ✅ GET WIFI TESTS
 
 export const getWiFiTests = async (req: AgentRequest, res: Response): Promise<Response> => {
   try {
