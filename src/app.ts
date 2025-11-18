@@ -35,6 +35,7 @@ import staffRoutes from './routes/staffRoutes';
 import eventRoutes from './routes/eventRoutes';
 import paymentRoutes from './routes/paymentRoutes';
 import streetVendorRoutes from './routes/streetVendorRoutes';
+import agentOnboardingRoutes from './routes/agentOnboarding';
 
 // Load environment variables
 dotenv.config();
@@ -117,7 +118,8 @@ const corsOptions = {
     'https://www.hlee.app',
     'https://th.honestlee.app',
     'https://admin.honestlee.app',
-    'https://venue-dashboard.honestlee.app'
+    'https://venue-dashboard.honestlee.app',
+    'https://agent.honestlee.app'
   ],
   credentials: true,
   optionsSuccessStatus: 200,
@@ -243,6 +245,8 @@ app.use('/api/staff', staffRoutes);
 app.use('/api/events', eventRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/street-vendors', detectRegion, streetVendorRoutes);
+app.use('/api/agent', agentOnboardingRoutes);
+
 
 // ===== HEALTH CHECK ENDPOINT =====
 app.get('/health', (req, res) => {
