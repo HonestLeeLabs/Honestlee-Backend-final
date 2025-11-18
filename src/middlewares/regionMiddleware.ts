@@ -1,3 +1,4 @@
+// src/middlewares/regionMiddleware.ts
 import { Request, Response, NextFunction } from 'express';
 
 export interface RegionRequest extends Request {
@@ -41,3 +42,6 @@ export const detectRegion = (req: Request, res: Response, next: NextFunction) =>
   
   next();
 };
+
+// Export as regionMiddleware for convenience
+export const regionMiddleware = detectRegion;

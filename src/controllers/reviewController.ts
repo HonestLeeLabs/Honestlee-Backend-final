@@ -39,6 +39,12 @@ export const createReview = async (req: Request, res: Response) => {
     return res.status(400).json({ message: 'Venue ID and rating are required' });
   }
 
+  // ✅ FIXED: Validate rating is a number
+  const numericRating = parseInt(rating, 10);
+  if (isNaN(numericRating) || numericRating < 1 || numericRating > 5) {
+    return res.status(400).json({ message: 'Rating must be a number between 1 and 5' });
+  }
+
   try {
     await dbManager.connectRegion(region);
     const Venue = getVenueModel(region);
@@ -67,11 +73,16 @@ export const createReview = async (req: Request, res: Response) => {
 
     const venueIdentifier = venue.globalId || venue.id || venue._id.toString();
 
-    // ✅ Handle photos from multer S3 upload
-    const photos = (req as any).files?.map((file: any) => {
-      console.log('📸 Uploaded photo:', file.location);
+    // ✅ FIXED: Handle ALL photos from multer S3 upload
+    const uploadedFiles = (req as any).files || [];
+    console.log(`📸 Processing ${uploadedFiles.length} uploaded files`);
+    
+    const photos = uploadedFiles.map((file: any, index: number) => {
+      console.log(`  - File ${index + 1}: ${file.originalname} -> ${file.location}`);
       return file.location;
-    }) || [];
+    });
+    
+    console.log(`✅ Total photos to save: ${photos.length}`);
 
     // ✅ Parse tags safely
     let parsedTags = [];
@@ -84,15 +95,16 @@ export const createReview = async (req: Request, res: Response) => {
       }
     }
 
+    // ✅ FIXED: Create review with proper rating and all photos
     const newReview = new Review({
       user: userId,
       venue: venueIdentifier,
       venueRegion: region,
-      rating: parseInt(rating),
+      rating: numericRating, // ✅ Use validated number
       title: title || '',
       comment: comment || '',
       tags: parsedTags,
-      photos: photos,
+      photos: photos, // ✅ All photos included
       helpful: 0,
       helpfulBy: [],
       verified: false,
@@ -100,11 +112,11 @@ export const createReview = async (req: Request, res: Response) => {
       updatedAt: new Date()
     });
 
-    console.log('💾 Saving review with', photos.length, 'photos');
+    console.log(`💾 Saving review with ${photos.length} photo(s)`);
     await newReview.save();
     await newReview.populate('user', 'name profileImage');
 
-    console.log('✅ Review created:', newReview._id);
+    console.log('✅ Review created:', newReview._id, `with ${newReview.photos?.length || 0} photos`);
     
     // ✅ Return success response
     res.status(201).json({
