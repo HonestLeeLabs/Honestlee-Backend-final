@@ -251,85 +251,156 @@ export const linkVenueToCRM = async (req: AgentRequest, res: Response): Promise<
 
     const { tempVenueId } = req.params;
     const { crmId, venueId, autoCreate } = req.body;
-    const region = (req.region || 'ae') as Region;
+    
+    // ✅ FIX 1: Get region from multiple sources with fallback
+    const region = (req.region || req.user.region || req.body.region || 'th') as Region;
 
-    console.log(`🔗 Linking temp venue ${tempVenueId} to CRM/Venue`);
+    console.log(`🔗 Linking temp venue ${tempVenueId} to CRM/Venue in region: ${region}`);
 
     const tempVenue = await AgentVenueTemp.findOne({ tempVenueId });
     
     if (!tempVenue) {
-      return res.status(404).json({ message: 'Temp venue not found' });
+      return res.status(404).json({ 
+        success: false,
+        message: 'Temp venue not found' 
+      });
+    }
+
+    // ✅ FIX 2: Validate required fields
+    if (!crmId || crmId.trim() === '') {
+      return res.status(400).json({
+        success: false,
+        message: 'CRM ID is required'
+      });
+    }
+
+    if (!autoCreate && (!venueId || venueId.trim() === '')) {
+      return res.status(400).json({
+        success: false,
+        message: 'Venue ID is required when not auto-creating'
+      });
     }
 
     let finalVenueId = venueId;
 
+    // ✅ AUTO-CREATE VENUE
     if (autoCreate && !venueId) {
-      console.log('🏗️ Auto-creating venue in regional database...');
+      console.log(`🏗️ Auto-creating venue in ${region} regional database...`);
       
-      const regionalConnection = dbManager.getConnection(region);
-      
-      let RegionalVenue;
       try {
-        // ✅ FIX: Check if model exists first
-        RegionalVenue = regionalConnection.models.Venue || regionalConnection.model('Venue');
-      } catch (error) {
-        const venueSchema = new Schema({
-          globalId: String,
-          name: String,
-          address: Schema.Types.Mixed,
-          category: [String],
-          phone: String,
-          socials: Schema.Types.Mixed,
-          hours: String,
-          isActive: Boolean,
-          status: String,
-          region: String,
-          createdBy: String,
-          googleData: Schema.Types.Mixed,
-        }, { strict: false, timestamps: true });
+        const regionalConnection = dbManager.getConnection(region);
         
-        RegionalVenue = regionalConnection.model('Venue', venueSchema);
+        if (!regionalConnection) {
+          throw new Error(`Failed to connect to regional database: ${region}`);
+        }
+
+        let RegionalVenue;
+        
+        // ✅ FIX 3: Better model handling
+        if (regionalConnection.models.Venue) {
+          console.log(`✅ Using existing Venue model for ${region}`);
+          RegionalVenue = regionalConnection.models.Venue;
+        } else {
+          console.log(`🔧 Creating new Venue model for ${region}`);
+          const venueSchema = new Schema({
+            globalId: String,
+            name: String,
+            address: Schema.Types.Mixed,
+            category: [String],
+            phone: String,
+            socials: Schema.Types.Mixed,
+            hours: String,
+            isActive: Boolean,
+            status: String,
+            region: String,
+            createdBy: String,
+            googleData: Schema.Types.Mixed,
+          }, { strict: false, timestamps: true });
+          
+          RegionalVenue = regionalConnection.model('Venue', venueSchema);
+        }
+
+        const newVenue = new RegionalVenue({
+          globalId: tempVenue.googleData?.placeId || `MANUAL-${uuidv4()}`,
+          name: tempVenue.name,
+          address: tempVenue.address,
+          category: tempVenue.category,
+          phone: tempVenue.phone,
+          socials: tempVenue.socials,
+          hours: tempVenue.hours,
+          isActive: true,
+          status: 'active',
+          region: region,
+          createdBy: req.user.userId,
+          googleData: tempVenue.googleData || {},
+        });
+
+        const savedVenue = await newVenue.save();
+        finalVenueId = savedVenue._id.toString();
+        
+        console.log(`✅ Venue created in ${region} regional DB: ${finalVenueId}`);
+      } catch (createError: any) {
+        console.error('❌ Error creating venue in regional database:', createError);
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to create venue in regional database',
+          error: createError.message,
+          details: {
+            region,
+            tempVenueId,
+            venueData: {
+              name: tempVenue.name,
+              hasGoogleData: !!tempVenue.googleData
+            }
+          }
+        });
       }
-
-      const newVenue = new RegionalVenue({
-        globalId: tempVenue.googleData?.placeId || `MANUAL-${uuidv4()}`,
-        name: tempVenue.name,
-        address: tempVenue.address,
-        category: tempVenue.category,
-        phone: tempVenue.phone,
-        socials: tempVenue.socials,
-        hours: tempVenue.hours,
-        isActive: true,
-        status: 'active',
-        region: region,
-        createdBy: req.user.userId,
-        googleData: tempVenue.googleData,
-      });
-
-      const savedVenue = await newVenue.save();
-      finalVenueId = savedVenue._id.toString();
-      
-      console.log(`✅ Venue created in regional DB: ${finalVenueId}`);
     }
 
+    // ✅ VALIDATE EXISTING VENUE
     if (!autoCreate && venueId) {
-      const regionalConnection = dbManager.getConnection(region);
+      console.log(`🔍 Validating existing venue ${venueId} in ${region} database...`);
       
-      let RegionalVenue;
       try {
-        // ✅ FIX: Check if model exists first
-        RegionalVenue = regionalConnection.models.Venue || regionalConnection.model('Venue');
-      } catch (error) {
-        return res.status(500).json({ message: 'Venue model not found in regional database' });
-      }
-      
-      const venue = await RegionalVenue.findById(venueId);
-      if (!venue) {
-        return res.status(404).json({ message: 'Venue not found in regional database' });
+        const regionalConnection = dbManager.getConnection(region);
+        
+        if (!regionalConnection) {
+          throw new Error(`Failed to connect to regional database: ${region}`);
+        }
+
+        let RegionalVenue;
+        
+        if (regionalConnection.models.Venue) {
+          RegionalVenue = regionalConnection.models.Venue;
+        } else {
+          return res.status(500).json({ 
+            success: false,
+            message: 'Venue model not found in regional database' 
+          });
+        }
+        
+        const venue = await RegionalVenue.findById(venueId);
+        if (!venue) {
+          return res.status(404).json({ 
+            success: false,
+            message: 'Venue not found in regional database',
+            details: { venueId, region }
+          });
+        }
+        
+        console.log(`✅ Venue validated: ${venue.name || venue.AccountName || 'Unnamed'}`);
+      } catch (validateError: any) {
+        console.error('❌ Error validating venue:', validateError);
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to validate venue',
+          error: validateError.message
+        });
       }
     }
 
-    tempVenue.crmId = crmId;
+    // ✅ UPDATE TEMP VENUE
+    tempVenue.crmId = crmId.trim();
     tempVenue.venueId = finalVenueId;
     tempVenue.status = 'linked';
     tempVenue.onboardingStatus = VenueOnboardingStatus.SOFT_ONBOARDED;
@@ -340,26 +411,30 @@ export const linkVenueToCRM = async (req: AgentRequest, res: Response): Promise<
       req.user.userId,
       req.user.role,
       'agent.venue_linked_crm',
-      { tempVenueId, crmId, venueId: finalVenueId, autoCreated: autoCreate },
+      { tempVenueId, crmId, venueId: finalVenueId, autoCreated: autoCreate, region },
       finalVenueId,
       req
     );
 
-    console.log(`✅ Venue linked to CRM: ${tempVenueId}`);
+    console.log(`✅ Venue linked to CRM: ${tempVenueId} -> ${finalVenueId}`);
 
     return res.json({
       success: true,
       data: tempVenue,
       message: 'Venue linked to CRM successfully',
-      autoCreated: autoCreate && !venueId
+      autoCreated: autoCreate && !venueId,
+      region
     });
 
   } catch (error: any) {
     console.error('❌ Error linking venue to CRM:', error);
+    console.error('Error stack:', error.stack);
+    
     return res.status(500).json({
       success: false,
       message: 'Error linking venue',
-      error: error.message
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 };
