@@ -1,7 +1,8 @@
+// src/controllers/agentOnboardingController.ts
 import { Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import crypto from 'crypto';
-import mongoose, { Schema, Model, Document } from 'mongoose';
+import mongoose, { Schema, Model } from 'mongoose';
 import AgentVenueTemp, { VenueOnboardingStatus } from '../models/AgentVenueTemp';
 import QRCodeKit, { QRKitType, QRKitStatus } from '../models/QRCodeKit';
 import QRBinding, { QRBindingType, QRBindingState } from '../models/QRBinding';
@@ -16,22 +17,6 @@ import { dbManager, Region } from '../config/database';
 import { getS3KeyFromUrl, deleteFileFromS3 } from '../config/uploadConfig';
 
 type AgentRequest = AuthRequest & RegionRequest;
-
-// ✅ NEW: Define Regional Venue Interface
-interface IRegionalVenue extends Document {
-  globalId: string;
-  name: string;
-  address?: any;
-  category?: string[];
-  phone?: string;
-  socials?: any;
-  hours?: string;
-  isActive: boolean;
-  status: string;
-  region: string;
-  createdBy?: string;
-  googleData?: any;
-}
 
 // ===== UTILITY FUNCTIONS =====
 
@@ -67,33 +52,6 @@ const generateColorToken = (): string => {
   return colors[Math.floor(Math.random() * colors.length)];
 };
 
-// ✅ NEW: Helper function to get or create Regional Venue Model
-const getRegionalVenueModel = (connection: mongoose.Connection): Model<IRegionalVenue> => {
-  try {
-    return connection.model<IRegionalVenue>('Venue');
-  } catch (error) {
-    const venueSchema = new Schema<IRegionalVenue>({
-      globalId: { type: String, required: true, unique: true },
-      name: { type: String, required: true },
-      address: Schema.Types.Mixed,
-      category: [String],
-      phone: String,
-      socials: Schema.Types.Mixed,
-      hours: String,
-      isActive: { type: Boolean, default: true },
-      status: { type: String, default: 'active' },
-      region: { type: String, required: true },
-      createdBy: String,
-      googleData: Schema.Types.Mixed,
-    }, { 
-      strict: false, 
-      timestamps: true 
-    });
-    
-    return connection.model<IRegionalVenue>('Venue', venueSchema);
-  }
-};
-
 // ===== GET ALL VENUES FROM REGIONAL DATABASE =====
 
 export const getAllRegionalVenues = async (req: AuthRequest, res: Response): Promise<Response> => {
@@ -108,14 +66,43 @@ export const getAllRegionalVenues = async (req: AuthRequest, res: Response): Pro
 
     const regionalConnection = dbManager.getConnection(region as Region);
 
-    const VenueModel = getRegionalVenueModel(regionalConnection);
+    interface IRegionalVenue {
+      _id: mongoose.Types.ObjectId;
+      name?: string;
+      AccountName?: string;
+      venueName?: string;
+      address?: any;
+      category?: string[];
+      status?: string;
+      isActive?: boolean;
+    }
+
+    let VenueModel: Model<IRegionalVenue>;
+    
+    try {
+      // ✅ FIX: Check if model already exists before creating it
+      VenueModel = regionalConnection.models.Venue || regionalConnection.model<IRegionalVenue>('Venue');
+    } catch (error) {
+      // ✅ FIX: Only define the schema if model doesn't exist
+      const venueSchema = new Schema<IRegionalVenue>({
+        name: { type: String },
+        AccountName: { type: String },
+        venueName: { type: String },
+        address: { type: Schema.Types.Mixed },
+        category: [{ type: String }],
+        status: { type: String },
+        isActive: { type: Boolean }
+      }, { strict: false, timestamps: true });
+
+      VenueModel = regionalConnection.model<IRegionalVenue>('Venue', venueSchema);
+    }
 
     const venues = await VenueModel
       .find({ isActive: { $ne: false } })
       .select('_id name AccountName venueName address category status')
       .sort({ name: 1, AccountName: 1 })
       .limit(1000)
-      .lean()
+      .lean<IRegionalVenue[]>()
       .exec();
 
     console.log(`✅ Found ${venues.length} venues in ${region} database`);
@@ -123,7 +110,7 @@ export const getAllRegionalVenues = async (req: AuthRequest, res: Response): Pro
     return res.json({
       success: true,
       data: venues.map(v => {
-        const venueName = v.name || (v as any).AccountName || (v as any).venueName || 'Unnamed Venue';
+        const venueName = v.name || v.AccountName || v.venueName || 'Unnamed Venue';
         
         let addressText = 'No address';
         if (v.address) {
@@ -254,7 +241,7 @@ export const quickAddVenue = async (req: AgentRequest, res: Response): Promise<R
   }
 };
 
-// ===== LINK VENUE TO CRM (WITH AUTO-CREATE) - FIXED =====
+// ===== LINK VENUE TO CRM (WITH AUTO-CREATE) =====
 
 export const linkVenueToCRM = async (req: AgentRequest, res: Response): Promise<Response> => {
   try {
@@ -267,147 +254,82 @@ export const linkVenueToCRM = async (req: AgentRequest, res: Response): Promise<
     const region = (req.region || 'ae') as Region;
 
     console.log(`🔗 Linking temp venue ${tempVenueId} to CRM/Venue`);
-    console.log(`📊 Request data:`, { crmId, venueId, autoCreate, region });
-
-    // ✅ FIX 1: Validate required fields
-    if (!crmId || crmId.trim() === '') {
-      return res.status(400).json({ 
-        success: false,
-        message: 'CRM ID is required' 
-      });
-    }
-
-    // ✅ FIX 2: Validate venueId when not auto-creating
-    if (!autoCreate && (!venueId || venueId.trim() === '')) {
-      return res.status(400).json({ 
-        success: false,
-        message: 'Venue ID is required when not auto-creating' 
-      });
-    }
 
     const tempVenue = await AgentVenueTemp.findOne({ tempVenueId });
     
     if (!tempVenue) {
-      return res.status(404).json({ 
-        success: false,
-        message: 'Temp venue not found' 
-      });
+      return res.status(404).json({ message: 'Temp venue not found' });
     }
 
     let finalVenueId = venueId;
 
-    // ✅ FIX 3: Auto-create venue with proper error handling
     if (autoCreate && !venueId) {
       console.log('🏗️ Auto-creating venue in regional database...');
       
-      try {
-        const regionalConnection = dbManager.getConnection(region);
-        
-        if (!regionalConnection || regionalConnection.readyState !== 1) {
-          console.error(`❌ Regional database connection not ready for region: ${region}`);
-          return res.status(500).json({ 
-            success: false,
-            message: `Database connection error for region ${region}` 
-          });
-        }
-        
-        // ✅ FIX: Use helper function to get model (fixes TypeScript error)
-        const RegionalVenue = getRegionalVenueModel(regionalConnection);
-
-        // ✅ FIX 4: Validate required fields before creating
-        if (!tempVenue.name || tempVenue.name.trim() === '') {
-          return res.status(400).json({ 
-            success: false,
-            message: 'Venue name is required for auto-creation' 
-          });
-        }
-
-        const globalId = tempVenue.googleData?.placeId || `MANUAL-${uuidv4()}`;
-
-        // ✅ FIX 5: Check if venue already exists (with proper type assertion)
-        const existingVenue = await RegionalVenue.findOne({ globalId }).exec();
-        if (existingVenue) {
-          console.log(`⚠️ Venue already exists with globalId: ${globalId}`);
-          finalVenueId = existingVenue._id.toString();
-          console.log(`✅ Using existing venue ID: ${finalVenueId}`);
-        } else {
-          const newVenue = new RegionalVenue({
-            globalId,
-            name: tempVenue.name,
-            address: tempVenue.address,
-            category: tempVenue.category || [],
-            phone: tempVenue.phone,
-            socials: tempVenue.socials,
-            hours: tempVenue.hours,
-            isActive: true,
-            status: 'active',
-            region: region,
-            createdBy: req.user.userId,
-            googleData: tempVenue.googleData,
-          });
-
-          const savedVenue = await newVenue.save();
-          finalVenueId = savedVenue._id.toString();
-          
-          console.log(`✅ Venue created in regional DB: ${finalVenueId}`);
-        }
-      } catch (dbError: any) {
-        console.error('❌ Database error during auto-create:', dbError);
-        return res.status(500).json({ 
-          success: false,
-          message: 'Failed to create venue in regional database',
-          error: dbError.message,
-          details: process.env.NODE_ENV === 'development' ? dbError.stack : undefined
-        });
-      }
-    }
-
-    // ✅ FIX 6: Validate existing venue if not auto-creating
-    if (!autoCreate && venueId) {
-      console.log(`🔍 Validating existing venue ID: ${venueId}`);
+      const regionalConnection = dbManager.getConnection(region);
       
+      let RegionalVenue;
       try {
-        const regionalConnection = dbManager.getConnection(region);
+        // ✅ FIX: Check if model exists first
+        RegionalVenue = regionalConnection.models.Venue || regionalConnection.model('Venue');
+      } catch (error) {
+        const venueSchema = new Schema({
+          globalId: String,
+          name: String,
+          address: Schema.Types.Mixed,
+          category: [String],
+          phone: String,
+          socials: Schema.Types.Mixed,
+          hours: String,
+          isActive: Boolean,
+          status: String,
+          region: String,
+          createdBy: String,
+          googleData: Schema.Types.Mixed,
+        }, { strict: false, timestamps: true });
         
-        if (!regionalConnection || regionalConnection.readyState !== 1) {
-          return res.status(500).json({ 
-            success: false,
-            message: `Database connection error for region ${region}` 
-          });
-        }
-        
-        // ✅ FIX: Use helper function (fixes TypeScript error)
-        const RegionalVenue = getRegionalVenueModel(regionalConnection);
-        
-        // ✅ FIX 7: Validate MongoDB ObjectId format
-        if (!mongoose.Types.ObjectId.isValid(venueId)) {
-          return res.status(400).json({ 
-            success: false,
-            message: 'Invalid venue ID format' 
-          });
-        }
-        
-        const venue = await RegionalVenue.findById(venueId).exec();
-        if (!venue) {
-          return res.status(404).json({ 
-            success: false,
-            message: 'Venue not found in regional database' 
-          });
-        }
-        
-        console.log(`✅ Venue validated: ${venue.name || 'Unnamed'}`);
-      } catch (venueError: any) {
-        console.error('❌ Error validating venue:', venueError);
-        return res.status(500).json({ 
-          success: false,
-          message: 'Error validating venue',
-          error: venueError.message
-        });
+        RegionalVenue = regionalConnection.model('Venue', venueSchema);
+      }
+
+      const newVenue = new RegionalVenue({
+        globalId: tempVenue.googleData?.placeId || `MANUAL-${uuidv4()}`,
+        name: tempVenue.name,
+        address: tempVenue.address,
+        category: tempVenue.category,
+        phone: tempVenue.phone,
+        socials: tempVenue.socials,
+        hours: tempVenue.hours,
+        isActive: true,
+        status: 'active',
+        region: region,
+        createdBy: req.user.userId,
+        googleData: tempVenue.googleData,
+      });
+
+      const savedVenue = await newVenue.save();
+      finalVenueId = savedVenue._id.toString();
+      
+      console.log(`✅ Venue created in regional DB: ${finalVenueId}`);
+    }
+
+    if (!autoCreate && venueId) {
+      const regionalConnection = dbManager.getConnection(region);
+      
+      let RegionalVenue;
+      try {
+        // ✅ FIX: Check if model exists first
+        RegionalVenue = regionalConnection.models.Venue || regionalConnection.model('Venue');
+      } catch (error) {
+        return res.status(500).json({ message: 'Venue model not found in regional database' });
+      }
+      
+      const venue = await RegionalVenue.findById(venueId);
+      if (!venue) {
+        return res.status(404).json({ message: 'Venue not found in regional database' });
       }
     }
 
-    // ✅ FIX 8: Update temp venue with validated data
-    tempVenue.crmId = crmId.trim();
+    tempVenue.crmId = crmId;
     tempVenue.venueId = finalVenueId;
     tempVenue.status = 'linked';
     tempVenue.onboardingStatus = VenueOnboardingStatus.SOFT_ONBOARDED;
@@ -423,30 +345,21 @@ export const linkVenueToCRM = async (req: AgentRequest, res: Response): Promise<
       req
     );
 
-    console.log(`✅ Venue linked to CRM: ${tempVenueId} -> ${finalVenueId}`);
+    console.log(`✅ Venue linked to CRM: ${tempVenueId}`);
 
     return res.json({
       success: true,
-      data: {
-        tempVenueId: tempVenue.tempVenueId,
-        crmId: tempVenue.crmId,
-        venueId: tempVenue.venueId,
-        status: tempVenue.status,
-        onboardingStatus: tempVenue.onboardingStatus
-      },
+      data: tempVenue,
       message: 'Venue linked to CRM successfully',
       autoCreated: autoCreate && !venueId
     });
 
   } catch (error: any) {
     console.error('❌ Error linking venue to CRM:', error);
-    console.error('❌ Error stack:', error.stack);
-    
     return res.status(500).json({
       success: false,
-      message: 'Error linking venue to CRM',
-      error: error.message,
-      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      message: 'Error linking venue',
+      error: error.message
     });
   }
 };
@@ -539,7 +452,7 @@ export const attachMainQR = async (req: AgentRequest, res: Response): Promise<Re
   }
 };
 
-// ✅ NEW: GET MAIN QR
+// ✅ GET MAIN QR
 
 export const getMainQR = async (req: AgentRequest, res: Response): Promise<Response> => {
   try {
@@ -668,7 +581,7 @@ export const createZone = async (req: AgentRequest, res: Response): Promise<Resp
   }
 };
 
-// ✅ NEW: GET VENUE ZONES
+// ✅ GET VENUE ZONES
 
 export const getVenueZones = async (req: AgentRequest, res: Response): Promise<Response> => {
   try {
@@ -703,7 +616,7 @@ export const getVenueZones = async (req: AgentRequest, res: Response): Promise<R
   }
 };
 
-// ✅ NEW: DELETE ZONE
+// ✅ DELETE ZONE
 
 export const deleteZone = async (req: AgentRequest, res: Response): Promise<Response> => {
   try {
@@ -823,7 +736,7 @@ export const linkTableQR = async (req: AgentRequest, res: Response): Promise<Res
   }
 };
 
-// ✅ NEW: GET TABLE QRS
+// ✅ GET TABLE QRS
 
 export const getTableQRs = async (req: AgentRequest, res: Response): Promise<Response> => {
   try {
@@ -857,7 +770,7 @@ export const getTableQRs = async (req: AgentRequest, res: Response): Promise<Res
   }
 };
 
-// ✅ NEW: DELETE TABLE QR
+// ✅ DELETE TABLE QR
 
 export const deleteTableQR = async (req: AgentRequest, res: Response): Promise<Response> => {
   try {
@@ -973,7 +886,7 @@ export const uploadVenuePhotos = async (req: AgentRequest, res: Response): Promi
   }
 };
 
-// ✅ NEW: GET VENUE PHOTOS
+// ✅ GET VENUE PHOTOS
 
 export const getVenuePhotos = async (req: AgentRequest, res: Response): Promise<Response> => {
   try {
@@ -1009,7 +922,7 @@ export const getVenuePhotos = async (req: AgentRequest, res: Response): Promise<
   }
 };
 
-// ✅ NEW: DELETE PHOTO
+// ✅ DELETE PHOTO
 
 export const deleteVenuePhoto = async (req: AgentRequest, res: Response): Promise<Response> => {
   try {
@@ -1256,7 +1169,7 @@ export const runWiFiTest = async (req: AgentRequest, res: Response): Promise<Res
   }
 };
 
-// ✅ NEW: GET WIFI TESTS
+// ✅ GET WIFI TESTS
 
 export const getWiFiTests = async (req: AgentRequest, res: Response): Promise<Response> => {
   try {
