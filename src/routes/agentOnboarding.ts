@@ -45,7 +45,6 @@ router.post('/venues/:venueId/qr/main', (req: Request, res: Response, next: Next
   agentController.attachMainQR(req as any, res).catch(next);
 });
 
-// ✅ NEW: Get main QR
 router.get('/venues/:venueId/qr/main', (req: Request, res: Response, next: NextFunction) => {
   agentController.getMainQR(req as any, res).catch(next);
 });
@@ -54,12 +53,10 @@ router.post('/venues/:venueId/qr/table', (req: Request, res: Response, next: Nex
   agentController.linkTableQR(req as any, res).catch(next);
 });
 
-// ✅ NEW: Get table QRs
 router.get('/venues/:venueId/qr/table', (req: Request, res: Response, next: NextFunction) => {
   agentController.getTableQRs(req as any, res).catch(next);
 });
 
-// ✅ NEW: Delete table QR
 router.delete('/venues/:venueId/qr/table/:bindingId', (req: Request, res: Response, next: NextFunction) => {
   agentController.deleteTableQR(req as any, res).catch(next);
 });
@@ -73,12 +70,10 @@ router.post('/venues/:venueId/zones', (req: Request, res: Response, next: NextFu
   agentController.createZone(req as any, res).catch(next);
 });
 
-// ✅ NEW: Get zones
 router.get('/venues/:venueId/zones', (req: Request, res: Response, next: NextFunction) => {
   agentController.getVenueZones(req as any, res).catch(next);
 });
 
-// ✅ NEW: Delete zone
 router.delete('/venues/:venueId/zones/:zoneId', (req: Request, res: Response, next: NextFunction) => {
   agentController.deleteZone(req as any, res).catch(next);
 });
@@ -92,12 +87,10 @@ router.post(
   }
 );
 
-// ✅ NEW: Get photos
 router.get('/venues/:venueId/photos', (req: Request, res: Response, next: NextFunction) => {
   agentController.getVenuePhotos(req as any, res).catch(next);
 });
 
-// ✅ NEW: Delete photo
 router.delete('/venues/:venueId/photos/:assetId', (req: Request, res: Response, next: NextFunction) => {
   agentController.deleteVenuePhoto(req as any, res).catch(next);
 });
@@ -107,7 +100,6 @@ router.post('/venues/:venueId/wifi-test', (req: Request, res: Response, next: Ne
   agentController.runWiFiTest(req as any, res).catch(next);
 });
 
-// ✅ NEW: Get WiFi tests
 router.get('/venues/:venueId/wifi-tests', (req: Request, res: Response, next: NextFunction) => {
   agentController.getWiFiTests(req as any, res).catch(next);
 });
