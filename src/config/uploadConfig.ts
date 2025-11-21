@@ -15,6 +15,7 @@ const s3 = new S3Client({
 });
 
 // ===== IMPROVED VENUE MEDIA FILE FILTER (Mobile-Friendly) =====
+// config/uploadConfig.ts - IMPROVED FILE FILTER
 const venueMediaFileFilter = (req: any, file: any, cb: any) => {
   console.log('📸 Venue Media Upload Attempt:', {
     name: file.originalname,
@@ -23,54 +24,31 @@ const venueMediaFileFilter = (req: any, file: any, cb: any) => {
     encoding: file.encoding
   });
 
-  // Allowed file extensions (CRITICAL for mobile - CHECK THIS FIRST)
+  // ✅ CRITICAL: Check file extension FIRST (most reliable for mobile)
   const allowedExtensions = /\.(jpg|jpeg|png|gif|webp|heic|heif|bmp|tiff|mp4|mov|avi|webm|mkv|3gp|3gpp|insp)$/i;
 
-  // Allowed MIME types (including mobile variants)
-  const allowedMimeTypes = [
-    // Images
-    'image/jpeg',
-    'image/jpg',
-    'image/png',
-    'image/gif',
-    'image/webp',
-    'image/heic',
-    'image/heif',
-    'image/bmp',
-    'image/tiff',
-    // Videos
-    'video/mp4',
-    'video/mpeg',
-    'video/quicktime', // .mov
-    'video/x-msvideo', // .avi
-    'video/webm',
-    'video/x-matroska', // .mkv
-    'video/3gpp', // Mobile video
-    'video/3gpp2', // Mobile video
-    // Mobile fallbacks
-    'application/octet-stream', // Mobile browsers often use this
-    '' // Some mobile browsers send empty MIME type
-  ];
-
-  // ✅ STRATEGY 1: Check file extension FIRST (MOST RELIABLE for mobile)
+  // Check extension first
   if (file.originalname && allowedExtensions.test(file.originalname.toLowerCase())) {
     console.log('✅ File accepted by extension:', path.extname(file.originalname));
     cb(null, true);
     return;
   }
 
-  // ✅ STRATEGY 2: Check MIME type if extension check failed (fallback)
+  // Allowed MIME types (secondary check)
+  const allowedMimeTypes = [
+    // Images
+    'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp',
+    'image/heic', 'image/heif', 'image/bmp', 'image/tiff',
+    // Videos
+    'video/mp4', 'video/mpeg', 'video/quicktime', 'video/x-msvideo',
+    'video/webm', 'video/x-matroska', 'video/3gpp', 'video/3gpp2',
+    // Mobile fallbacks
+    'application/octet-stream', ''
+  ];
+
+  // Check MIME type as fallback
   if (file.mimetype && allowedMimeTypes.includes(file.mimetype.toLowerCase())) {
     console.log('✅ File accepted by MIME type:', file.mimetype);
-    cb(null, true);
-    return;
-  }
-
-  // ✅ STRATEGY 3: If MIME type is generic but has valid extension, allow it
-  if ((file.mimetype === 'application/octet-stream' || !file.mimetype) && 
-      file.originalname && 
-      allowedExtensions.test(file.originalname.toLowerCase())) {
-    console.log('✅ File accepted by extension fallback:', file.originalname);
     cb(null, true);
     return;
   }
@@ -82,11 +60,9 @@ const venueMediaFileFilter = (req: any, file: any, cb: any) => {
     reason: 'Invalid file type or extension'
   });
   
-  // Set error for better error handling
-  req.fileValidationError = 'Only image and video files are allowed!';
   const error: any = new Error('Only image and video files are allowed!');
   error.code = 'FILE_TYPE_NOT_ALLOWED';
-  return cb(error, false);
+  cb(error, false);
 };
 
 // ===== VENUE MEDIA UPLOAD TO S3 (Mobile-Optimized) =====
@@ -140,48 +116,49 @@ export const uploadVenueMedia = multer({
       console.log(`✅ S3 Upload Key: ${fileName}`);
       cb(null, fileName);
     },
-    contentType: function (req, file, cb) {
-      const ext = path.extname(file.originalname).toLowerCase();
-      
-      // Comprehensive content type mapping
-      const contentTypeMap: { [key: string]: string } = {
-        // Images
-        '.jpg': 'image/jpeg',
-        '.jpeg': 'image/jpeg',
-        '.png': 'image/png',
-        '.gif': 'image/gif',
-        '.webp': 'image/webp',
-        '.heic': 'image/jpeg',
-        '.heif': 'image/jpeg',
-        '.bmp': 'image/bmp',
-        '.tiff': 'image/tiff',
-        // Videos
-        '.mp4': 'video/mp4',
-        '.mov': 'video/quicktime',
-        '.avi': 'video/x-msvideo',
-        '.webm': 'video/webm',
-        '.mkv': 'video/x-matroska',
-        '.3gp': 'video/3gpp',
-        '.3gpp': 'video/3gpp',
-        // 360°
-        '.insp': 'application/octet-stream'
-      };
-      
-      let contentType = file.mimetype;
-      
-      // Override if we have a better mapping
-      if (contentTypeMap[ext]) {
-        contentType = contentTypeMap[ext];
-      }
-      
-      // Handle empty or generic MIME types
-      if (!contentType || contentType === 'application/octet-stream') {
-        contentType = contentTypeMap[ext] || 'image/jpeg';
-      }
-      
-      console.log(`📦 Content-Type set to: ${contentType} for ${file.originalname}`);
-      cb(null, contentType);
-    }
+contentType: function (req, file, cb) {
+  const ext = path.extname(file.originalname).toLowerCase();
+  
+  // Comprehensive content type mapping
+  const contentTypeMap: { [key: string]: string } = {
+    // Images
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.png': 'image/png',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+    '.heic': 'image/jpeg',
+    '.heif': 'image/jpeg',
+    '.bmp': 'image/bmp',
+    '.tiff': 'image/tiff',
+    // Videos
+    '.mp4': 'video/mp4',
+    '.mov': 'video/quicktime',
+    '.avi': 'video/x-msvideo',
+    '.webm': 'video/webm',
+    '.mkv': 'video/x-matroska',
+    '.3gp': 'video/3gpp',
+    '.3gpp': 'video/3gpp',
+  };
+  
+  // ✅ Prioritize extension-based mapping
+  let contentType = contentTypeMap[ext];
+  
+  // Fallback to original MIME type if we trust it
+  if (!contentType && file.mimetype && 
+      file.mimetype !== 'application/octet-stream' && 
+      file.mimetype !== '') {
+    contentType = file.mimetype;
+  }
+  
+  // Final fallback
+  if (!contentType) {
+    contentType = 'image/jpeg';
+  }
+  
+  console.log(`📦 Content-Type set to: ${contentType} for ${file.originalname}`);
+  cb(null, contentType);
+}
   }),
   fileFilter: venueMediaFileFilter,
   limits: {

@@ -122,22 +122,41 @@ router.post(
         if (err.code === 'LIMIT_FILE_SIZE') {
           return res.status(400).json({
             success: false,
-            message: 'File too large. Max 50MB allowed'
+            message: 'File too large. Max 500MB allowed'
           });
         }
         
         if (err.code === 'FILE_TYPE_NOT_ALLOWED') {
           return res.status(400).json({
             success: false,
-            message: 'Invalid file type. Only images/videos allowed'
+            message: 'Invalid file type. Please upload an image or video file.',
+            details: 'Accepted formats: JPG, PNG, GIF, WEBP, HEIC, MP4, MOV, AVI, WEBM'
           });
         }
         
         return res.status(400).json({
           success: false,
-          message: err.message || 'Upload failed'
+          message: err.message || 'Upload failed',
+          error: err.code || 'UPLOAD_ERROR'
         });
       }
+      
+      // ✅ Check for file validation errors
+      if ((req as any).fileValidationError) {
+        return res.status(400).json({
+          success: false,
+          message: (req as any).fileValidationError
+        });
+      }
+      
+      // ✅ Check if file was received
+      if (!req.file) {
+        return res.status(400).json({
+          success: false,
+          message: 'No file uploaded. Please select a valid image or video file.'
+        });
+      }
+      
       next();
     });
   },
