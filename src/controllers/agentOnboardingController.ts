@@ -1,9 +1,8 @@
-// src/controllers/agentOnboardingController.ts
 import { Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import crypto from 'crypto';
 import mongoose, { Schema, Model } from 'mongoose';
-import AgentVenueTemp, { VenueOnboardingStatus } from '../models/AgentVenueTemp';
+import AgentVenueTemp, { VenueOnboardingStatus, VerificationLevel } from '../models/AgentVenueTemp';
 import QRCodeKit, { QRKitType, QRKitStatus } from '../models/QRCodeKit';
 import QRBinding, { QRBindingType, QRBindingState } from '../models/QRBinding';
 import Zone from '../models/Zone';
@@ -11,6 +10,7 @@ import AgentWiFiRun from '../models/AgentWiFiRun';
 import PhotoAsset, { PhotoAssetType } from '../models/PhotoAsset';
 import AuditLog from '../models/AuditLog';
 import Venue from '../models/Venue';
+import { getVenueModel } from '../models/Venue'; 
 import { AuthRequest } from '../middlewares/authMiddleware';
 import { RegionRequest } from '../middlewares/regionMiddleware';
 import { dbManager, Region } from '../config/database';
@@ -193,6 +193,7 @@ export const quickAddVenue = async (req: AgentRequest, res: Response): Promise<R
       status: 'temp',
       onboardingStatus: VenueOnboardingStatus.UNLISTED,
       region,
+      verificationLevel: VerificationLevel.PROSPECT_REMOTE,
       flags: {
         qrCodesLeftBehind: false,
         ownerMet: false,
@@ -284,85 +285,56 @@ export const linkVenueToCRM = async (req: AgentRequest, res: Response): Promise<
     // ✅ AUTO-CREATE VENUE
     if (autoCreate && !venueId) {
       console.log(`🏗️ Auto-creating venue in ${region} regional database...`);
-      
+
       try {
-        const regionalConnection = dbManager.getConnection(region);
-        
-        if (!regionalConnection) {
-          throw new Error(`Failed to connect to regional database: ${region}`);
-        }
+        const RegionalVenue = getVenueModel(region);  // get Venue model for regional connection
 
-        let RegionalVenue;
-        
-        if (regionalConnection.models.Venue) {
-          console.log(`✅ Using existing Venue model for ${region}`);
-          RegionalVenue = regionalConnection.models.Venue;
+        const globalId = tempVenue.googleData?.placeId || `MANUAL-${uuidv4()}`;
+
+        // Check if a venue with the same globalId already exists
+        const existingVenue = await RegionalVenue.findOne({ globalId });
+
+        if (existingVenue) {
+          console.log(`🏗️ Venue already exists with globalId ${globalId}, reusing existing venue`);
+          finalVenueId = existingVenue._id.toString();
         } else {
-          console.log(`🔧 Creating new Venue model for ${region}`);
-          const venueSchema = new Schema({
-            globalId: String,
-            name: String,
-            AccountName: String, // ✅ Added
-            address: Schema.Types.Mixed,
-            geometry: { // ✅ Added required geometry field
-              type: { type: String, default: 'Point' },
-              coordinates: [Number] // [longitude, latitude]
-            },
-            category: [String],
-            phone: String,
-            socials: Schema.Types.Mixed,
-            hours: String,
-            isActive: Boolean,
-            status: String,
-            region: String,
-            createdBy: String,
-            googleData: Schema.Types.Mixed,
-          }, { strict: false, timestamps: true });
-          
-          RegionalVenue = regionalConnection.model('Venue', venueSchema);
-        }
-
-        // ✅ FIX: Prepare venue data with all required fields
-        const venueData: any = {
-          globalId: tempVenue.googleData?.placeId || `MANUAL-${uuidv4()}`,
-          name: tempVenue.name,
-          AccountName: tempVenue.name, // ✅ FIX: Use name as AccountName
-          address: tempVenue.address,
-          category: tempVenue.category,
-          phone: tempVenue.phone,
-          socials: tempVenue.socials || {},
-          hours: tempVenue.hours,
-          isActive: true,
-          status: 'active',
-          region: region,
-          createdBy: req.user.userId,
-          googleData: tempVenue.googleData || {},
-        };
-
-        // ✅ FIX: Add geometry if coordinates exist
-        if (tempVenue.address?.lat && tempVenue.address?.lng) {
-          venueData.geometry = {
-            type: 'Point',
-            coordinates: [
-              tempVenue.address.lng, // longitude first (GeoJSON format)
-              tempVenue.address.lat  // latitude second
-            ]
+          // Prepare venueData with all required fields according to your Venue schema
+          const venueData: any = {
+            globalId,
+            name: tempVenue.name,
+            AccountName: tempVenue.name,
+            address: tempVenue.address,
+            category: tempVenue.category,
+            phone: tempVenue.phone,
+            socials: tempVenue.socials || {},
+            hours: tempVenue.hours,
+            isActive: true,
+            status: 'active',
+            region,
+            createdBy: req.user.userId,
+            googleData: tempVenue.googleData || {},
           };
-        } else {
-          // ✅ FIX: Provide default coordinates if missing
-          console.warn(`⚠️ No coordinates found for ${tempVenue.name}, using default [0, 0]`);
-          venueData.geometry = {
-            type: 'Point',
-            coordinates: [0, 0]
-          };
+
+          if (tempVenue.address?.lat && tempVenue.address?.lng) {
+            venueData.geometry = {
+              type: 'Point',
+              coordinates: [tempVenue.address.lng, tempVenue.address.lat], // GeoJSON longitude-latitude order
+            };
+          } else {
+            console.warn(`⚠️ No coordinates found for ${tempVenue.name}, using default [0, 0]`);
+            venueData.geometry = {
+              type: 'Point',
+              coordinates: [0, 0],
+            };
+          }
+
+          // Create new venue document and save
+          const newVenue = new RegionalVenue(venueData);
+          const savedVenue = await newVenue.save();
+          finalVenueId = savedVenue._id.toString();
+
+          console.log(`✅ Venue created in ${region} regional DB: ${finalVenueId}`);
         }
-
-        const newVenue = new RegionalVenue(venueData);
-
-        const savedVenue = await newVenue.save();
-        finalVenueId = savedVenue._id.toString();
-        
-        console.log(`✅ Venue created in ${region} regional DB: ${finalVenueId}`);
       } catch (createError: any) {
         console.error('❌ Error creating venue in regional database:', createError);
         return res.status(500).json({
@@ -375,9 +347,9 @@ export const linkVenueToCRM = async (req: AgentRequest, res: Response): Promise<
             venueData: {
               name: tempVenue.name,
               hasGoogleData: !!tempVenue.googleData,
-              hasCoordinates: !!(tempVenue.address?.lat && tempVenue.address?.lng)
-            }
-          }
+              hasCoordinates: !!(tempVenue.address?.lat && tempVenue.address?.lng),
+            },
+          },
         });
       }
     }
@@ -1134,6 +1106,7 @@ export const onboardFromGoogle = async (req: AgentRequest, res: Response): Promi
       hours: regularOpeningHours,
       status: 'temp',
       onboardingStatus: VenueOnboardingStatus.UNLISTED,
+      verificationLevel: VerificationLevel.PROSPECT_REMOTE,
       region,
       flags: {
         qrCodesLeftBehind: false,
@@ -1407,55 +1380,656 @@ export const getAgentVenues = async (req: AgentRequest, res: Response): Promise<
   }
 };
 
-// ===== FINALIZE ONBOARDING =====
-
-export const finalizeOnboarding = async (req: AgentRequest, res: Response): Promise<Response> => {
+/**
+ * GET /api/agent/my-assignments
+ * Get venues assigned to current agent
+ */
+export const getMyAssignments = async (req: AuthRequest, res: Response) => {
   try {
-    if (!req.user || !['AGENT', 'ADMIN'].includes(req.user.role)) {
-      return res.status(403).json({ message: 'Insufficient permissions' });
+    if (!req.user || (req.user.role !== 'AGENT' && req.user.role !== 'ADMIN')) {
+      return res.status(403).json({ message: 'Agent or Admin access required' });
     }
 
+    const { date, status, agentId } = req.query;
+
+    // Allow ADMIN to view another agent's assignments, otherwise use own ID
+    const targetAgentId = (req.user.role === 'ADMIN' && typeof agentId === 'string' && agentId)
+      ? agentId
+      : req.user.userId;
+
+    const filter: any = {
+      assignedTo: targetAgentId,
+      status: { $ne: 'finalized' }
+    };
+
+    if (date && typeof date === 'string') {
+      const targetDate = new Date(date);
+      if (!isNaN(targetDate.getTime())) {
+        const nextDay = new Date(targetDate);
+        nextDay.setDate(nextDay.getDate() + 1);
+        filter.expectedVisitDate = { $gte: targetDate, $lt: nextDay };
+      }
+    }
+
+    if (status && typeof status === 'string' && status !== 'all') {
+      filter.visitStatus = status;
+    }
+
+    const venues = await AgentVenueTemp.find(filter)
+      .select('tempVenueId name category address verificationLevel expectedVisitDate visitStatus vitalsCompleted vitalsData flags googleData visitedAt')
+      .sort({ expectedVisitDate: 1 })
+      .lean();
+
+    res.json({
+      success: true,
+      count: venues.length,
+      data: venues
+    });
+  } catch (error: any) {
+    console.error('Error fetching assignments:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch assignments',
+      error: error.message
+    });
+  }
+};
+/**
+ * PUT /api/agent/venues/:tempVenueId/visit
+ * Mark venue as visited
+ */
+export const markVenueVisited = async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user || req.user.role !== 'AGENT') {
+      return res.status(403).json({ message: 'Agent access required' });
+    }
     const { tempVenueId } = req.params;
+    const { latitude, longitude } = req.body;
+    if (!latitude || !longitude) {
+      return res.status(400).json({ message: 'Location coordinates required' });
+    }
+    const venue = await AgentVenueTemp.findOneAndUpdate(
+      {
+        tempVenueId,
+        assignedTo: req.user.userId
+      },
+      {
+        $set: {
+          visitStatus: 'visited',
+          visitedAt: new Date(),
+          verificationLevel: VerificationLevel.VISITED_SIGNIN,
+          'gpsAccuracy.newLocation': {
+            lat: latitude,
+            lng: longitude,
+            timestamp: new Date(),
+            accuracy: 0
+          }
+        }
+      },
+      { new: true }
+    );
+    if (!venue) {
+      return res.status(404).json({ message: 'Venue not found or not assigned to you' });
+    }
+    // Audit log
+    await AuditLog.create({
+      auditId: uuidv4(),
+      actorId: req.user.userId,
+      actorRole: req.user.role,
+      venueId: venue.venueId?.toString(),
+      action: 'VENUE_VISITED',
+      meta: { tempVenueId, venueName: venue.name },
+      geoLocation: { lat: latitude, lng: longitude }
+    });
+    res.json({
+      success: true,
+      message: 'Venue marked as visited',
+      data: venue
+    });
+  } catch (error: any) {
+    console.error('Error marking venue visited:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to mark venue as visited',
+      error: error.message
+    });
+  }
+};
+/**
+ * PUT /api/agent/venues/:tempVenueId/vitals
+ * Update venue vitals
+ */
+export const updateVenueVitals = async (req: AuthRequest, res: Response) => {
+  try {
+    const { tempVenueId } = req.params;
+    const { vitalsData } = req.body;
 
-    console.log(`✅ Finalizing onboarding for ${tempVenueId}`);
-
-    const tempVenue = await AgentVenueTemp.findOne({ tempVenueId });
-    
-    if (!tempVenue) {
-      return res.status(404).json({ message: 'Temp venue not found' });
+    // Type guard: Ensure user is authenticated
+    if (!req.user || req.user.role !== 'AGENT') {
+      return res.status(403).json({ success: false, message: 'Agent access required' });
     }
 
-    if (!tempVenue.venueId) {
-      return res.status(400).json({ message: 'Venue must be linked to CRM first' });
+    if (!vitalsData) {
+      return res.status(400).json({ success: false, message: 'vitalsData is required' });
     }
 
-    tempVenue.status = 'finalized';
-    tempVenue.onboardingStatus = VenueOnboardingStatus.FULLY_VERIFIED;
+    // Check if venue is assigned to this agent
+    const venue = await AgentVenueTemp.findOne({
+      tempVenueId,
+      assignedTo: req.user.userId
+    });
 
-    await tempVenue.save();
+    if (!venue) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Venue not found or not assigned to you' 
+      });
+    }
 
-    await createAuditLog(
-      req.user.userId,
-      req.user.role,
-      'agent.onboarding.completed',
-      { tempVenueId, venueId: tempVenue.venueId },
-      tempVenue.venueId.toString(),
-      req
+    // Check if venue has been visited
+    if (venue.visitStatus !== 'visited') {
+      return res.status(400).json({
+        success: false,
+        message: 'Venue must be marked as visited before adding vitals'
+      });
+    }
+
+    // UPDATE: Complete vitals check with ALL fields
+    const vitalsCompleted =
+      vitalsData.nameConfirmed &&
+      vitalsData.categoryConfirmed &&
+      vitalsData.locationConfirmed &&
+      vitalsData.addressConfirmed &&
+      vitalsData.hoursConfirmed &&
+      vitalsData.accountNameConfirmed &&
+      vitalsData.billingCityConfirmed &&
+      vitalsData.billingDistrictConfirmed &&
+      vitalsData.billingStreetConfirmed &&
+      vitalsData.billingStateConfirmed &&
+      vitalsData.phoneConfirmed &&
+      vitalsData.websiteConfirmed &&
+      vitalsData.parkingOptionsConfirmed &&
+      vitalsData.venueGroupConfirmed &&
+      vitalsData.venueCategoryConfirmed &&
+      vitalsData.venueTypeConfirmed &&
+      vitalsData.openingHoursConfirmed;
+
+    const updateData: any = {
+      vitalsData,
+      vitalsCompleted
+    };
+
+    if (vitalsCompleted) {
+      updateData.vitalsCompletedAt = new Date();
+      updateData.verificationLevel = VerificationLevel.VITALS_DONE;
+    }
+
+    const updatedVenue = await AgentVenueTemp.findOneAndUpdate(
+      { tempVenueId },
+      { $set: updateData },
+      { new: true }
     );
 
-    console.log(`✅ Onboarding finalized: ${tempVenueId}`);
+    // Audit log
+    await AuditLog.create({
+      auditId: uuidv4(),
+      actorId: req.user.userId,
+      actorRole: req.user.role,
+      venueId: venue.venueId?.toString(),
+      action: 'VENUE_VITALS_UPDATED',
+      meta: {
+        tempVenueId,
+        vitalsCompleted,
+        verificationLevel: vitalsCompleted ? VerificationLevel.VITALS_DONE : VerificationLevel.VISITED_SIGNIN
+      }
+    });
 
     return res.json({
       success: true,
-      data: tempVenue,
-      message: 'Onboarding finalized successfully'
+      message: vitalsCompleted ? 'Venue vitals completed' : 'Venue vitals updated',
+      data: updatedVenue
     });
-
   } catch (error: any) {
-    console.error('❌ Error finalizing onboarding:', error);
+    console.error('Error updating venue vitals:', error);
     return res.status(500).json({
       success: false,
-      message: 'Error finalizing onboarding',
+      message: 'Failed to update venue vitals',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * POST /api/agent/venues/:tempVenueId/soft-onboard
+ * Soft onboard venue (vitals + contacts but no QR)
+ */
+export const softOnboardVenue = async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user || req.user.role !== 'AGENT') {
+      return res.status(403).json({ message: 'Agent access required' });
+    }
+    const { tempVenueId } = req.params;
+    const { managerContact, ownerContact, flags } = req.body;
+    const venue = await AgentVenueTemp.findOne({
+      tempVenueId,
+      assignedTo: req.user.userId
+    });
+    if (!venue) {
+      return res.status(404).json({ message: 'Venue not found or not assigned to you' });
+    }
+    if (!venue.vitalsCompleted) {
+      return res.status(400).json({
+        message: 'Vitals must be completed before soft onboarding'
+      });
+    }
+    const updateData: any = {
+      verificationLevel: VerificationLevel.SOFT_ONBOARD
+    };
+    if (managerContact) {
+      updateData.managerContact = managerContact;
+      updateData['flags.managerMet'] = true;
+      updateData['flags.haveManagersContact'] = true;
+    }
+    if (ownerContact) {
+      updateData.ownerContact = ownerContact;
+      updateData['flags.ownerMet'] = true;
+      updateData['flags.haveOwnersContact'] = true;
+    }
+    if (flags) {
+      Object.keys(flags).forEach(key => {
+        updateData[`flags.${key}`] = flags[key];
+      });
+    }
+    const updatedVenue = await AgentVenueTemp.findOneAndUpdate(
+      { tempVenueId },
+      { $set: updateData },
+      { new: true }
+    );
+    // Audit log
+    await AuditLog.create({
+      auditId: uuidv4(),
+      actorId: req.user.userId,
+      actorRole: req.user.role,
+      venueId: venue.venueId?.toString(),
+      action: 'VENUE_SOFT_ONBOARDED',
+      meta: { tempVenueId, venueName: venue.name }
+    });
+    res.json({
+      success: true,
+      message: 'Venue soft onboarded successfully',
+      data: updatedVenue
+    });
+  } catch (error: any) {
+    console.error('Error soft onboarding venue:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to soft onboard venue',
+      error: error.message
+    });
+  }
+};
+/**
+ * POST /api/agent/venues/:tempVenueId/decline
+ * Mark venue as declined/not interested
+ */
+export const declineVenue = async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user || req.user.role !== 'AGENT') {
+      return res.status(403).json({ message: 'Agent access required' });
+    }
+    const { tempVenueId } = req.params;
+    const { reason } = req.body;
+    const venue = await AgentVenueTemp.findOneAndUpdate(
+      { 
+        tempVenueId,
+        assignedTo: req.user.userId
+      },
+      {
+        $set: {
+          verificationLevel: VerificationLevel.VISITED_DECLINED,
+          visitStatus: 'visited',
+          visitedAt: new Date(),
+          declineReason: reason
+        }
+      },
+      { new: true }
+    );
+    if (!venue) {
+      return res.status(404).json({ message: 'Venue not found or not assigned to you' });
+    }
+    // Audit log
+    await AuditLog.create({
+      auditId: uuidv4(),
+      actorId: req.user.userId,
+      actorRole: req.user.role,
+      venueId: venue.venueId?.toString(),
+      action: 'VENUE_DECLINED',
+      meta: { tempVenueId, venueName: venue.name, reason }
+    });
+    res.json({
+      success: true,
+      message: 'Venue marked as declined',
+      data: venue
+    });
+  } catch (error: any) {
+    console.error('Error declining venue:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to decline venue',
+      error: error.message
+    });
+  }
+};
+/**
+ * POST /api/agent/venues/:tempVenueId/capture-lead
+ * Capture lead for interested later
+ */
+export const captureLeadVenue = async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user || req.user.role !== 'AGENT') {
+      return res.status(403).json({ message: 'Agent access required' });
+    }
+    const { tempVenueId } = req.params;
+    const { contactName, contactPhone, contactWhatsapp, contactLine, notes } = req.body;
+    const venue = await AgentVenueTemp.findOneAndUpdate(
+      { 
+        tempVenueId,
+        assignedTo: req.user.userId
+      },
+      {
+        $set: {
+          verificationLevel: VerificationLevel.LEAD_CAPTURED,
+          leadContact: {
+            name: contactName,
+            phone: contactPhone,
+            whatsapp: contactWhatsapp,
+            line: contactLine,
+            notes
+          },
+          leadCapturedAt: new Date(),
+          leadCapturedBy: req.user.userId
+        }
+      },
+      { new: true }
+    );
+    if (!venue) {
+      return res.status(404).json({ message: 'Venue not found or not assigned to you' });
+    }
+    // Audit log
+    await AuditLog.create({
+      auditId: uuidv4(),
+      actorId: req.user.userId,
+      actorRole: req.user.role,
+      venueId: venue.venueId?.toString(),
+      action: 'VENUE_LEAD_CAPTURED',
+      meta: { tempVenueId, venueName: venue.name, contactName }
+    });
+    res.json({
+      success: true,
+      message: 'Lead captured successfully',
+      data: venue
+    });
+  } catch (error: any) {
+    console.error('Error capturing lead:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to capture lead',
+      error: error.message
+    });
+  }
+};
+/**
+ * GET /api/agent/my-stats
+ * Get agent's personal statistics
+ */
+export const getMyStats = async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user || req.user.role !== 'AGENT') {
+      return res.status(403).json({ message: 'Agent access required' });
+    }
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const thisWeek = new Date(today);
+    thisWeek.setDate(thisWeek.getDate() - 7);
+    const thisMonth = new Date(today);
+    thisMonth.setMonth(thisMonth.getMonth() - 1);
+    const [
+      totalAssigned,
+      visited,
+      vitalsComplete,
+      softOnboarded,
+      fullyVerified,
+      visitedToday,
+      visitedThisWeek,
+      visitedThisMonth,
+      pendingToday,
+      pendingTomorrow
+    ] = await Promise.all([
+      AgentVenueTemp.countDocuments({ assignedTo: req.user.userId }),
+      AgentVenueTemp.countDocuments({ assignedTo: req.user.userId, visitStatus: 'visited' }),
+      AgentVenueTemp.countDocuments({ assignedTo: req.user.userId, vitalsCompleted: true }),
+      AgentVenueTemp.countDocuments({
+        assignedTo: req.user.userId,
+        verificationLevel: VerificationLevel.SOFT_ONBOARD
+      }),
+      AgentVenueTemp.countDocuments({
+        assignedTo: req.user.userId,
+        verificationLevel: { $in: [VerificationLevel.VERIFIED_FULL, VerificationLevel.VERIFIED_QR_LIVE] }
+      }),
+      AgentVenueTemp.countDocuments({
+        assignedTo: req.user.userId,
+        visitedAt: { $gte: today }
+      }),
+      AgentVenueTemp.countDocuments({
+        assignedTo: req.user.userId,
+        visitedAt: { $gte: thisWeek }
+      }),
+      AgentVenueTemp.countDocuments({
+        assignedTo: req.user.userId,
+        visitedAt: { $gte: thisMonth }
+      }),
+      AgentVenueTemp.countDocuments({
+        assignedTo: req.user.userId,
+        expectedVisitDate: { $gte: today, $lt: new Date(today.getTime() + 86400000) },
+        visitStatus: 'not_visited'
+      }),
+      AgentVenueTemp.countDocuments({
+        assignedTo: req.user.userId,
+        expectedVisitDate: {
+          $gte: new Date(today.getTime() + 86400000),
+          $lt: new Date(today.getTime() + 172800000)
+        },
+        visitStatus: 'not_visited'
+      })
+    ]);
+    res.json({
+      success: true,
+      data: {
+        totalAssigned,
+        visited,
+        vitalsComplete,
+        softOnboarded,
+        fullyVerified,
+        visitedToday,
+        visitedThisWeek,
+        visitedThisMonth,
+        pendingToday,
+        pendingTomorrow,
+        completionRate: totalAssigned > 0 ? Math.round((vitalsComplete / totalAssigned) * 100) : 0
+      }
+    });
+  } catch (error: any) {
+    console.error('Error fetching agent stats:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch stats',
+      error: error.message
+    });
+  }
+};
+
+// PUT /api/agent/venues/:tempVenueId/gps - Update GPS location data
+export const updateVenueGPS = async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user || req.user.role !== 'AGENT') {
+      return res.status(403).json({ message: 'Agent access required' });
+    }
+
+    const { tempVenueId } = req.params;
+    const {
+      hl_confirmed_lat,
+      hl_confirmed_lng,
+      hl_gps_accuracy_m,
+      hl_gps_distance_m,
+      hl_gps_status,
+      src_lat,
+      src_lng,
+      src_provider,
+    } = req.body;
+
+    // Validate required fields
+    if (!hl_confirmed_lat || !hl_confirmed_lng) {
+      return res.status(400).json({ message: 'Confirmed GPS coordinates required' });
+    }
+
+    // Find venue
+    const venue = await AgentVenueTemp.findOne({
+      tempVenueId,
+      assignedTo: req.user.userId,
+    });
+
+    if (!venue) {
+      return res.status(404).json({ message: 'Venue not found or not assigned to you' });
+    }
+
+    // Prepare GPS history entry
+    const historyEntry = {
+      lat: hl_confirmed_lat,
+      lng: hl_confirmed_lng,
+      source: 'honestlee_agent',
+      taken_at: new Date(),
+      by_agent: req.user.userId,
+      accuracy_m: hl_gps_accuracy_m,
+    };
+
+    // Update venue with GPS data
+    const updateData: any = {
+      'gpsData.hl_confirmed_lat': hl_confirmed_lat,
+      'gpsData.hl_confirmed_lng': hl_confirmed_lng,
+      'gpsData.hl_gps_accuracy_m': hl_gps_accuracy_m,
+      'gpsData.hl_gps_distance_m': hl_gps_distance_m,
+      'gpsData.hl_gps_status': hl_gps_status,
+      'gpsData.hl_gps_updated_at': new Date(),
+      $push: { 'gpsData.hl_gps_history': historyEntry },
+    };
+
+    // If this is first GPS reading for new venue, also set source
+    if (!venue.gpsData?.src_lat && !venue.gpsData?.src_lng) {
+      updateData['gpsData.src_lat'] = hl_confirmed_lat;
+      updateData['gpsData.src_lng'] = hl_confirmed_lng;
+      updateData['gpsData.src_provider'] = 'honestlee_first';
+    } else if (src_lat && src_lng) {
+      // Keep existing source data
+      updateData['gpsData.src_lat'] = src_lat;
+      updateData['gpsData.src_lng'] = src_lng;
+      updateData['gpsData.src_provider'] = src_provider;
+    }
+
+    // Also update main address coordinates
+    updateData['address.lat'] = hl_confirmed_lat;
+    updateData['address.lng'] = hl_confirmed_lng;
+
+    const updatedVenue = await AgentVenueTemp.findOneAndUpdate(
+      { tempVenueId },
+      { $set: updateData },
+      { new: true }
+    );
+
+    // Audit log
+    await AuditLog.create({
+      auditId: uuidv4(),
+      actorId: req.user.userId,
+      actorRole: req.user.role,
+      venueId: venue.venueId?.toString(),
+      action: 'VENUE_GPS_UPDATED',
+      meta: {
+        tempVenueId,
+        hl_gps_status,
+        accuracy_m: hl_gps_accuracy_m,
+        distance_m: hl_gps_distance_m,
+      },
+    });
+
+    res.json({
+      success: true,
+      message: 'GPS location updated successfully',
+      data: updatedVenue,
+    });
+  } catch (error: any) {
+    console.error('Error updating GPS:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update GPS',
+      error: error.message,
+    });
+  }
+};
+/**
+ * POST /api/agent/venues/:tempVenueId/finalize
+ * Finalize venue onboarding
+ */
+export const finalizeOnboarding = async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user || req.user.role !== 'AGENT') {
+      return res.status(403).json({ message: 'Agent access required' });
+    }
+    const { tempVenueId } = req.params;
+    const venue = await AgentVenueTemp.findOne({
+      tempVenueId,
+      assignedTo: req.user.userId
+    });
+    if (!venue) {
+      return res.status(404).json({ message: 'Venue not found or not assigned to you' });
+    }
+    if (!venue.vitalsCompleted) {
+      return res.status(400).json({
+        message: 'Vitals must be completed before finalizing'
+      });
+    }
+    // Check for main QR
+    const hasMainQR = await QRBinding.exists({
+      venueId: venue.venueId,
+      type: QRBindingType.MAIN,
+      state: QRBindingState.ACTIVE
+    });
+    if (!hasMainQR) {
+      return res.status(400).json({
+        message: 'Main QR must be attached before finalizing'
+      });
+    }
+    venue.verificationLevel = VerificationLevel.VERIFIED_QR_LIVE;
+    venue.onboardingStatus = VenueOnboardingStatus.FULLY_VERIFIED;
+    venue.status = 'finalized';
+    await venue.save();
+    // Audit log
+    await AuditLog.create({
+      auditId: uuidv4(),
+      actorId: req.user.userId,
+      actorRole: req.user.role,
+      venueId: venue.venueId?.toString(),
+      action: 'VENUE_FINALIZED',
+      meta: { tempVenueId, venueName: venue.name }
+    });
+    res.json({
+      success: true,
+      message: 'Onboarding finalized successfully',
+      data: venue
+    });
+  } catch (error: any) {
+    console.error('Error finalizing onboarding:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to finalize onboarding',
       error: error.message
     });
   }
