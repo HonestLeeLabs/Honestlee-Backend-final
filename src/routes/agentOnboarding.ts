@@ -1,14 +1,13 @@
-// src/routes/agentOnboarding.ts
+// routes/agentOnboarding.ts
 import { Router, Request, Response, NextFunction } from 'express';
 import { authenticateToken } from '../middlewares/authMiddleware';
 import { detectRegion } from '../middlewares/regionMiddleware';
 import { uploadEventImages, uploadVenueMedia } from '../config/uploadConfig';
 import * as agentController from '../controllers/agentOnboardingController';
-import * as mediaController from '../controllers/mediaController'; // ✅ Added import
+import * as mediaController from '../controllers/mediaController';
 
 const router = Router();
 
-// Apply authentication and region middleware to all routes
 router.use(authenticateToken);
 router.use(detectRegion);
 
@@ -108,35 +107,54 @@ router.get('/my-stats', (req: Request, res: Response, next: NextFunction) => {
   agentController.getMyStats(req as any, res).catch(next);
 });
 
-// ===== GPS UPDATE ROUTE =====
 router.put('/venues/:tempVenueId/gps', (req: Request, res: Response, next: NextFunction) => {
   agentController.updateVenueGPS(req as any, res).catch(next);
 });
 
-// ===== MEDIA UPLOAD ROUTES (S3) =====
+// ===== MEDIA UPLOAD ROUTES (S3) - ✅ WITH ERROR HANDLING =====
 router.post(
   '/venues/:tempVenueId/media',
-  uploadVenueMedia.single('file'), // ✅ S3 upload middleware
+  (req: Request, res: Response, next: NextFunction) => {
+    uploadVenueMedia.single('file')(req, res, (err) => {
+      if (err) {
+        console.error('❌ Multer error:', err);
+        
+        if (err.code === 'LIMIT_FILE_SIZE') {
+          return res.status(400).json({
+            success: false,
+            message: 'File too large. Max 50MB allowed'
+          });
+        }
+        
+        if (err.code === 'FILE_TYPE_NOT_ALLOWED') {
+          return res.status(400).json({
+            success: false,
+            message: 'Invalid file type. Only images/videos allowed'
+          });
+        }
+        
+        return res.status(400).json({
+          success: false,
+          message: err.message || 'Upload failed'
+        });
+      }
+      next();
+    });
+  },
   (req: Request, res: Response, next: NextFunction) =>
     mediaController.uploadVenueMedia(req as any, res).catch(next)
 );
 
-router.get(
-  '/venues/:tempVenueId/media',
-  (req: Request, res: Response, next: NextFunction) =>
-    mediaController.getVenueMedia(req as any, res).catch(next)
+router.get('/venues/:tempVenueId/media', (req: Request, res: Response, next: NextFunction) =>
+  mediaController.getVenueMedia(req as any, res).catch(next)
 );
 
-router.get(
-  '/venues/:tempVenueId/media/stats',
-  (req: Request, res: Response, next: NextFunction) =>
-    mediaController.getMediaStats(req as any, res).catch(next)
+router.get('/venues/:tempVenueId/media/stats', (req: Request, res: Response, next: NextFunction) =>
+  mediaController.getMediaStats(req as any, res).catch(next)
 );
 
-router.delete(
-  '/venues/:tempVenueId/media/:mediaId',
-  (req: Request, res: Response, next: NextFunction) =>
-    mediaController.deleteVenueMedia(req as any, res).catch(next)
+router.delete('/venues/:tempVenueId/media/:mediaId', (req: Request, res: Response, next: NextFunction) =>
+  mediaController.deleteVenueMedia(req as any, res).catch(next)
 );
 
 // ===== PHOTO OPERATIONS (Legacy) =====
