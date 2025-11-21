@@ -1,3 +1,4 @@
+// config/uploadConfig.ts
 import { S3Client, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import multer from 'multer';
 import multerS3 from 'multer-s3';
@@ -21,6 +22,9 @@ const venueMediaFileFilter = (req: any, file: any, cb: any) => {
     size: file.size,
     encoding: file.encoding
   });
+
+  // Allowed file extensions (CRITICAL for mobile - CHECK THIS FIRST)
+  const allowedExtensions = /\.(jpg|jpeg|png|gif|webp|heic|heif|bmp|tiff|mp4|mov|avi|webm|mkv|3gp|3gpp|insp)$/i;
 
   // Allowed MIME types (including mobile variants)
   const allowedMimeTypes = [
@@ -48,24 +52,21 @@ const venueMediaFileFilter = (req: any, file: any, cb: any) => {
     '' // Some mobile browsers send empty MIME type
   ];
 
-  // Allowed file extensions (critical for mobile)
-  const allowedExtensions = /\.(jpg|jpeg|png|gif|webp|heic|heif|bmp|tiff|mp4|mov|avi|webm|mkv|3gp|3gpp|insp)$/i;
-
-  // STRATEGY 1: Check MIME type if provided
-  if (file.mimetype && allowedMimeTypes.includes(file.mimetype.toLowerCase())) {
-    console.log('✅ File accepted by MIME type:', file.mimetype);
-    cb(null, true);
-    return;
-  }
-
-  // STRATEGY 2: Check file extension (CRITICAL for mobile uploads)
+  // ✅ STRATEGY 1: Check file extension FIRST (MOST RELIABLE for mobile)
   if (file.originalname && allowedExtensions.test(file.originalname.toLowerCase())) {
     console.log('✅ File accepted by extension:', path.extname(file.originalname));
     cb(null, true);
     return;
   }
 
-  // STRATEGY 3: If MIME type is generic but has valid extension, allow it
+  // ✅ STRATEGY 2: Check MIME type if extension check failed (fallback)
+  if (file.mimetype && allowedMimeTypes.includes(file.mimetype.toLowerCase())) {
+    console.log('✅ File accepted by MIME type:', file.mimetype);
+    cb(null, true);
+    return;
+  }
+
+  // ✅ STRATEGY 3: If MIME type is generic but has valid extension, allow it
   if ((file.mimetype === 'application/octet-stream' || !file.mimetype) && 
       file.originalname && 
       allowedExtensions.test(file.originalname.toLowerCase())) {
@@ -80,8 +81,12 @@ const venueMediaFileFilter = (req: any, file: any, cb: any) => {
     mime: file.mimetype,
     reason: 'Invalid file type or extension'
   });
+  
+  // Set error for better error handling
   req.fileValidationError = 'Only image and video files are allowed!';
-  return cb(new Error('Only image and video files are allowed!'), false);
+  const error: any = new Error('Only image and video files are allowed!');
+  error.code = 'FILE_TYPE_NOT_ALLOWED';
+  return cb(error, false);
 };
 
 // ===== VENUE MEDIA UPLOAD TO S3 (Mobile-Optimized) =====
@@ -115,7 +120,9 @@ export const uploadVenueMedia = multer({
           'image/heif': '.jpg',
           'video/mp4': '.mp4',
           'video/quicktime': '.mov',
-          'video/webm': '.webm'
+          'video/webm': '.webm',
+          'video/3gpp': '.3gp',
+          'video/3gpp2': '.3gp'
         };
         fileExtension = mimeToExtMap[file.mimetype] || '.jpg';
         console.log(`📝 Extension guessed from MIME: ${fileExtension}`);
@@ -314,7 +321,11 @@ export const uploadEventImages = multer({
 
 // ===== S3 FILE OPERATIONS =====
 
-// Delete file from S3
+/**
+ * Delete file from S3
+ * @param fileKey - S3 object key (e.g., 'venue-media/TV-123/file.jpg')
+ * @returns Promise<boolean> - true if successful, false otherwise
+ */
 export const deleteFileFromS3 = async (fileKey: string): Promise<boolean> => {
   try {
     const command = new DeleteObjectCommand({
@@ -331,11 +342,15 @@ export const deleteFileFromS3 = async (fileKey: string): Promise<boolean> => {
   }
 };
 
-// Extract S3 key from URL
+/**
+ * Extract S3 key from full S3 URL
+ * @param url - Full S3 URL (e.g., 'https://bucket.s3.region.amazonaws.com/path/to/file.jpg')
+ * @returns string | null - S3 key or null if parsing fails
+ */
 export const getS3KeyFromUrl = (url: string): string | null => {
   try {
     const urlObj = new URL(url);
-    return urlObj.pathname.substring(1);
+    return urlObj.pathname.substring(1); // Remove leading slash
   } catch (error) {
     console.error('❌ Error parsing S3 URL:', error);
     return null;
