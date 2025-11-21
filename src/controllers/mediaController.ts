@@ -1,3 +1,4 @@
+// controllers/mediaController.ts
 import { Response } from 'express';
 import { AuthRequest } from '../middlewares/authMiddleware';
 import VenueMedia from '../models/VenueMedia';
@@ -10,6 +11,7 @@ import { deleteFileFromS3, getS3KeyFromUrl } from '../config/uploadConfig';
 // POST /api/agent/venues/:tempVenueId/media - Upload media to S3
 export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
   try {
+    // ✅ Validate user
     if (!req.user || req.user.role !== 'AGENT') {
       return res.status(403).json({ 
         success: false,
@@ -17,12 +19,14 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
       });
     }
 
+    const currentUser = req.user; // Store for TypeScript
     const { tempVenueId } = req.params;
     const { mediaType, captureContext, submittedByRole } = req.body;
-    const file = req.file as any; // multer-s3 file object
+    const file = req.file as any;
 
-    // Check for file validation errors from multer
+    // ✅ Check for file validation errors
     if ((req as any).fileValidationError) {
+      console.error('❌ File validation error:', (req as any).fileValidationError);
       return res.status(400).json({ 
         success: false,
         message: (req as any).fileValidationError 
@@ -30,6 +34,7 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
     }
 
     if (!file) {
+      console.error('❌ No file received in upload');
       return res.status(400).json({ 
         success: false,
         message: 'No file uploaded. Please select a valid image or video file.' 
@@ -45,20 +50,24 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
       metadata: file.metadata
     });
 
-    // Verify venue assignment
+    // ✅ Verify venue assignment
     const venue = await AgentVenueTemp.findOne({
       tempVenueId,
-      assignedTo: req.user.userId,
+      assignedTo: currentUser.userId,
     });
 
     if (!venue) {
+      console.error('❌ Venue not found or not assigned:', {
+        tempVenueId,
+        agentId: currentUser.userId
+      });
       return res.status(404).json({ 
         success: false,
         message: 'Venue not found or not assigned to you' 
       });
     }
 
-    // Determine file properties
+    // ✅ Determine file properties
     const fileExtension = path.extname(file.originalname).toLowerCase();
     const isVideo = file.contentType?.startsWith('video/') || 
                     ['.mp4', '.mov', '.avi', '.webm', '.mkv', '.3gp', '.3gpp'].includes(fileExtension);
@@ -66,9 +75,9 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
                   file.originalname.toLowerCase().includes('insp') ||
                   fileExtension === '.insp';
     
-    const fileFormat = fileExtension.slice(1).toUpperCase() || 'UNKNOWN';
+    const fileFormat = fileExtension.slice(1).toUpperCase() || 'JPG';
 
-    // Map media type to frontend group
+    // ✅ Map media type to frontend group
     const frontendGroupMap: { [key: string]: string } = {
       OUTSIDE_VIEW: 'Vibe',
       MENU_BOARD: 'Menu',
@@ -84,13 +93,13 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
       USER_GENERAL: 'User photos',
     };
 
-    // Determine public visibility
+    // ✅ Determine public visibility
     let publicVisibility = 'Public (frontend)';
     if (mediaType === 'DOC_LICENSE' || mediaType === 'SELFIE_OWNER_AGENT') {
       publicVisibility = 'Internal only';
     }
 
-    // Create media record
+    // ✅ Create media record
     const media = await VenueMedia.create({
       mediaId: `M-${uuidv4().slice(0, 8)}`,
       tempVenueId,
@@ -98,9 +107,9 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
       mediaType,
       captureContext: captureContext || 'Agent onboarding',
       submittedByRole: submittedByRole || 'Agent',
-      submittedBy: req.user.userId,
-      fileUrl: file.location, // S3 URL
-      s3Key: file.key, // S3 key for deletion
+      submittedBy: currentUser.userId,
+      fileUrl: file.location,
+      s3Key: file.key,
       fileFormat,
       fileSize: file.size,
       isVideo,
@@ -110,11 +119,11 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
       capturedAt: new Date(),
     });
 
-    // Audit log
+    // ✅ Audit log
     await AuditLog.create({
       auditId: uuidv4(),
-      actorId: req.user.userId,
-      actorRole: req.user.role,
+      actorId: currentUser.userId,
+      actorRole: currentUser.role,
       venueId: venue.venueId?.toString(),
       action: 'VENUE_MEDIA_UPLOADED',
       meta: {
@@ -159,7 +168,6 @@ export const getVenueMedia = async (req: AuthRequest, res: Response) => {
     const { tempVenueId } = req.params;
     const { mediaType, frontendGroup } = req.query;
 
-    // Build filter
     const filter: any = { tempVenueId };
     if (mediaType) filter.mediaType = mediaType;
     if (frontendGroup) filter.frontendGroup = frontendGroup;
@@ -195,6 +203,7 @@ export const deleteVenueMedia = async (req: AuthRequest, res: Response) => {
       });
     }
 
+    const currentUser = req.user;
     const { tempVenueId, mediaId } = req.params;
 
     const media = await VenueMedia.findOne({ _id: mediaId, tempVenueId });
@@ -223,8 +232,8 @@ export const deleteVenueMedia = async (req: AuthRequest, res: Response) => {
     // Audit log
     await AuditLog.create({
       auditId: uuidv4(),
-      actorId: req.user.userId,
-      actorRole: req.user.role,
+      actorId: currentUser.userId,
+      actorRole: currentUser.role,
       action: 'VENUE_MEDIA_DELETED',
       meta: {
         tempVenueId,
