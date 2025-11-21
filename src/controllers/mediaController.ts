@@ -11,22 +11,38 @@ import { deleteFileFromS3, getS3KeyFromUrl } from '../config/uploadConfig';
 export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
   try {
     if (!req.user || req.user.role !== 'AGENT') {
-      return res.status(403).json({ message: 'Agent access required' });
+      return res.status(403).json({ 
+        success: false,
+        message: 'Agent access required' 
+      });
     }
 
     const { tempVenueId } = req.params;
     const { mediaType, captureContext, submittedByRole } = req.body;
     const file = req.file as any; // multer-s3 file object
 
+    // Check for file validation errors from multer
+    if ((req as any).fileValidationError) {
+      return res.status(400).json({ 
+        success: false,
+        message: (req as any).fileValidationError 
+      });
+    }
+
     if (!file) {
-      return res.status(400).json({ message: 'No file uploaded' });
+      return res.status(400).json({ 
+        success: false,
+        message: 'No file uploaded. Please select a valid image or video file.' 
+      });
     }
 
     console.log('📤 File uploaded to S3:', {
       key: file.key,
       location: file.location,
       size: file.size,
-      contentType: file.contentType
+      contentType: file.contentType,
+      originalName: file.originalname,
+      metadata: file.metadata
     });
 
     // Verify venue assignment
@@ -36,13 +52,16 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
     });
 
     if (!venue) {
-      return res.status(404).json({ message: 'Venue not found or not assigned to you' });
+      return res.status(404).json({ 
+        success: false,
+        message: 'Venue not found or not assigned to you' 
+      });
     }
 
     // Determine file properties
     const fileExtension = path.extname(file.originalname).toLowerCase();
     const isVideo = file.contentType?.startsWith('video/') || 
-                    ['.mp4', '.mov', '.avi', '.webm', '.mkv'].includes(fileExtension);
+                    ['.mp4', '.mov', '.avi', '.webm', '.mkv', '.3gp', '.3gpp'].includes(fileExtension);
     const is360 = file.originalname.toLowerCase().includes('360') || 
                   file.originalname.toLowerCase().includes('insp') ||
                   fileExtension === '.insp';
@@ -105,8 +124,12 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
         fileSize: file.size,
         isVideo,
         is360,
+        originalName: file.originalname,
+        contentType: file.contentType
       },
     });
+
+    console.log('✅ Media record created:', media.mediaId);
 
     res.status(201).json({
       success: true,
@@ -127,7 +150,10 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
 export const getVenueMedia = async (req: AuthRequest, res: Response) => {
   try {
     if (!req.user || req.user.role !== 'AGENT') {
-      return res.status(403).json({ message: 'Agent access required' });
+      return res.status(403).json({ 
+        success: false,
+        message: 'Agent access required' 
+      });
     }
 
     const { tempVenueId } = req.params;
@@ -141,6 +167,8 @@ export const getVenueMedia = async (req: AuthRequest, res: Response) => {
     const media = await VenueMedia.find(filter)
       .populate('submittedBy', 'name email')
       .sort({ createdAt: -1 });
+
+    console.log(`📊 Found ${media.length} media items for venue ${tempVenueId}`);
 
     res.json({
       success: true,
@@ -161,7 +189,10 @@ export const getVenueMedia = async (req: AuthRequest, res: Response) => {
 export const deleteVenueMedia = async (req: AuthRequest, res: Response) => {
   try {
     if (!req.user || req.user.role !== 'AGENT') {
-      return res.status(403).json({ message: 'Agent access required' });
+      return res.status(403).json({ 
+        success: false,
+        message: 'Agent access required' 
+      });
     }
 
     const { tempVenueId, mediaId } = req.params;
@@ -169,7 +200,10 @@ export const deleteVenueMedia = async (req: AuthRequest, res: Response) => {
     const media = await VenueMedia.findOne({ _id: mediaId, tempVenueId });
 
     if (!media) {
-      return res.status(404).json({ message: 'Media not found' });
+      return res.status(404).json({ 
+        success: false,
+        message: 'Media not found' 
+      });
     }
 
     // Delete from S3
@@ -178,6 +212,8 @@ export const deleteVenueMedia = async (req: AuthRequest, res: Response) => {
       const deleted = await deleteFileFromS3(s3Key);
       if (!deleted) {
         console.warn(`⚠️ Failed to delete S3 file: ${s3Key}`);
+      } else {
+        console.log(`✅ S3 file deleted: ${s3Key}`);
       }
     }
 
@@ -197,6 +233,8 @@ export const deleteVenueMedia = async (req: AuthRequest, res: Response) => {
       },
     });
 
+    console.log(`✅ Media deleted: ${media.mediaId}`);
+
     res.json({
       success: true,
       message: 'Media deleted successfully from S3',
@@ -215,7 +253,10 @@ export const deleteVenueMedia = async (req: AuthRequest, res: Response) => {
 export const getMediaStats = async (req: AuthRequest, res: Response) => {
   try {
     if (!req.user || req.user.role !== 'AGENT') {
-      return res.status(403).json({ message: 'Agent access required' });
+      return res.status(403).json({ 
+        success: false,
+        message: 'Agent access required' 
+      });
     }
 
     const { tempVenueId } = req.params;

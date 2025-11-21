@@ -13,8 +13,16 @@ const s3 = new S3Client({
   region: process.env.AWS_REGION || 'ap-south-1'
 });
 
-// ===== VENUE MEDIA FILE FILTER (Images, Videos, 360°) =====
+// ===== IMPROVED VENUE MEDIA FILE FILTER (Mobile-Friendly) =====
 const venueMediaFileFilter = (req: any, file: any, cb: any) => {
+  console.log('📸 Venue Media Upload Attempt:', {
+    name: file.originalname,
+    mimeType: file.mimetype,
+    size: file.size,
+    encoding: file.encoding
+  });
+
+  // Allowed MIME types (including mobile variants)
   const allowedMimeTypes = [
     // Images
     'image/jpeg',
@@ -33,37 +41,50 @@ const venueMediaFileFilter = (req: any, file: any, cb: any) => {
     'video/x-msvideo', // .avi
     'video/webm',
     'video/x-matroska', // .mkv
-    // 360° formats
-    'application/octet-stream', // INSP and mobile uploads
-    ''
+    'video/3gpp', // Mobile video
+    'video/3gpp2', // Mobile video
+    // Mobile fallbacks
+    'application/octet-stream', // Mobile browsers often use this
+    '' // Some mobile browsers send empty MIME type
   ];
 
-  const allowedExtensions = /\.(jpg|jpeg|png|gif|webp|heic|heif|bmp|tiff|mp4|mov|avi|webm|mkv|insp)$/i;
+  // Allowed file extensions (critical for mobile)
+  const allowedExtensions = /\.(jpg|jpeg|png|gif|webp|heic|heif|bmp|tiff|mp4|mov|avi|webm|mkv|3gp|3gpp|insp)$/i;
 
-  console.log('📸 Venue Media Upload:', {
-    name: file.originalname,
-    mimeType: file.mimetype,
-    size: file.size
-  });
-
-  // Check MIME type
+  // STRATEGY 1: Check MIME type if provided
   if (file.mimetype && allowedMimeTypes.includes(file.mimetype.toLowerCase())) {
+    console.log('✅ File accepted by MIME type:', file.mimetype);
     cb(null, true);
     return;
   }
 
-  // Check file extension as fallback
+  // STRATEGY 2: Check file extension (CRITICAL for mobile uploads)
   if (file.originalname && allowedExtensions.test(file.originalname.toLowerCase())) {
+    console.log('✅ File accepted by extension:', path.extname(file.originalname));
     cb(null, true);
     return;
   }
 
-  console.error('❌ File rejected:', file.originalname, file.mimetype);
+  // STRATEGY 3: If MIME type is generic but has valid extension, allow it
+  if ((file.mimetype === 'application/octet-stream' || !file.mimetype) && 
+      file.originalname && 
+      allowedExtensions.test(file.originalname.toLowerCase())) {
+    console.log('✅ File accepted by extension fallback:', file.originalname);
+    cb(null, true);
+    return;
+  }
+
+  // Reject file
+  console.error('❌ File rejected:', {
+    name: file.originalname,
+    mime: file.mimetype,
+    reason: 'Invalid file type or extension'
+  });
   req.fileValidationError = 'Only image and video files are allowed!';
   return cb(new Error('Only image and video files are allowed!'), false);
 };
 
-// ===== VENUE MEDIA UPLOAD TO S3 =====
+// ===== VENUE MEDIA UPLOAD TO S3 (Mobile-Optimized) =====
 export const uploadVenueMedia = multer({
   storage: multerS3({
     s3: s3,
@@ -72,7 +93,8 @@ export const uploadVenueMedia = multer({
       cb(null, { 
         fieldName: file.fieldname,
         originalName: file.originalname,
-        uploadedBy: (req as any).user?.userId || 'agent'
+        uploadedBy: (req as any).user?.userId || 'agent',
+        mimeType: file.mimetype || 'unknown'
       });
     },
     key: function (req: any, file, cb) {
@@ -80,18 +102,27 @@ export const uploadVenueMedia = multer({
       const tempVenueId = req.params?.tempVenueId || 'unknown';
       let fileExtension = path.extname(file.originalname).toLowerCase();
       
+      // Handle missing extensions (mobile uploads sometimes have no extension)
+      if (!fileExtension || fileExtension === '.') {
+        // Guess from MIME type
+        const mimeToExtMap: { [key: string]: string } = {
+          'image/jpeg': '.jpg',
+          'image/jpg': '.jpg',
+          'image/png': '.png',
+          'image/gif': '.gif',
+          'image/webp': '.webp',
+          'image/heic': '.jpg',
+          'image/heif': '.jpg',
+          'video/mp4': '.mp4',
+          'video/quicktime': '.mov',
+          'video/webm': '.webm'
+        };
+        fileExtension = mimeToExtMap[file.mimetype] || '.jpg';
+        console.log(`📝 Extension guessed from MIME: ${fileExtension}`);
+      }
+      
       // Convert HEIC/HEIF to JPG for compatibility
       if (fileExtension === '.heic' || fileExtension === '.heif') {
-        fileExtension = '.jpg';
-      }
-      
-      // Handle INSP (Insta360) files
-      if (fileExtension === '.insp') {
-        fileExtension = '.insp'; // Keep original
-      }
-      
-      // Default extension if missing
-      if (!fileExtension || fileExtension === '.') {
         fileExtension = '.jpg';
       }
       
@@ -103,8 +134,9 @@ export const uploadVenueMedia = multer({
       cb(null, fileName);
     },
     contentType: function (req, file, cb) {
-      // Map file types to proper content types
       const ext = path.extname(file.originalname).toLowerCase();
+      
+      // Comprehensive content type mapping
       const contentTypeMap: { [key: string]: string } = {
         // Images
         '.jpg': 'image/jpeg',
@@ -122,38 +154,55 @@ export const uploadVenueMedia = multer({
         '.avi': 'video/x-msvideo',
         '.webm': 'video/webm',
         '.mkv': 'video/x-matroska',
+        '.3gp': 'video/3gpp',
+        '.3gpp': 'video/3gpp',
         // 360°
         '.insp': 'application/octet-stream'
       };
       
-      const contentType = contentTypeMap[ext] || file.mimetype || 'application/octet-stream';
+      let contentType = file.mimetype;
+      
+      // Override if we have a better mapping
+      if (contentTypeMap[ext]) {
+        contentType = contentTypeMap[ext];
+      }
+      
+      // Handle empty or generic MIME types
+      if (!contentType || contentType === 'application/octet-stream') {
+        contentType = contentTypeMap[ext] || 'image/jpeg';
+      }
+      
+      console.log(`📦 Content-Type set to: ${contentType} for ${file.originalname}`);
       cb(null, contentType);
     }
   }),
   fileFilter: venueMediaFileFilter,
   limits: {
-    fileSize: 500 * 1024 * 1024, // 500MB per file (supports large videos and 360° files)
+    fileSize: 500 * 1024 * 1024, // 500MB per file
     files: 50 // Max 50 files per upload batch
   }
 });
 
-// ===== REVIEW IMAGES UPLOAD =====
+// ===== REVIEW IMAGES UPLOAD (Mobile-Optimized) =====
 export const uploadReviewImages = multer({
   storage: multerS3({
     s3: s3,
     bucket: process.env.S3_BUCKET_NAME || 'honestlee-user-upload',
     metadata: function (req, file, cb) {
-      cb(null, { fieldName: file.fieldname });
+      cb(null, { 
+        fieldName: file.fieldname,
+        originalName: file.originalname
+      });
     },
     key: function (req: any, file, cb) {
       const userId = req.user?.userId || 'anonymous';
       let fileExtension = path.extname(file.originalname).toLowerCase();
       
-      if (fileExtension === '.heic' || fileExtension === '.heif') {
+      if (!fileExtension || fileExtension === '.') {
         fileExtension = '.jpg';
       }
       
-      if (!fileExtension || fileExtension === '.') {
+      if (fileExtension === '.heic' || fileExtension === '.heif') {
         fileExtension = '.jpg';
       }
       
@@ -162,23 +211,23 @@ export const uploadReviewImages = multer({
       cb(null, fileName);
     },
     contentType: function (req, file, cb) {
-      if (file.mimetype === 'image/heic' || file.mimetype === 'image/heif') {
-        cb(null, 'image/jpeg');
-      } else if (!file.mimetype || file.mimetype === 'application/octet-stream') {
-        const ext = path.extname(file.originalname).toLowerCase();
-        const mimeMap: { [key: string]: string } = {
-          '.jpg': 'image/jpeg',
-          '.jpeg': 'image/jpeg',
-          '.png': 'image/png',
-          '.gif': 'image/gif',
-          '.webp': 'image/webp',
-          '.heic': 'image/jpeg',
-          '.heif': 'image/jpeg'
-        };
-        cb(null, mimeMap[ext] || 'image/jpeg');
-      } else {
-        cb(null, file.mimetype);
+      const ext = path.extname(file.originalname).toLowerCase();
+      const mimeMap: { [key: string]: string } = {
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png': 'image/png',
+        '.gif': 'image/gif',
+        '.webp': 'image/webp',
+        '.heic': 'image/jpeg',
+        '.heif': 'image/jpeg'
+      };
+      
+      let contentType = file.mimetype;
+      if (!contentType || contentType === 'application/octet-stream' || contentType === '') {
+        contentType = mimeMap[ext] || 'image/jpeg';
       }
+      
+      cb(null, contentType);
     }
   }),
   fileFilter: venueMediaFileFilter,
@@ -188,7 +237,7 @@ export const uploadReviewImages = multer({
   }
 });
 
-// ===== PROFILE IMAGE UPLOAD =====
+// ===== PROFILE IMAGE UPLOAD (Mobile-Optimized) =====
 export const uploadProfileImage = multer({
   storage: multerS3({
     s3: s3,
@@ -200,6 +249,10 @@ export const uploadProfileImage = multer({
       const userId = req.user?.userId || 'anonymous';
       let fileExtension = path.extname(file.originalname).toLowerCase();
       
+      if (!fileExtension || fileExtension === '.') {
+        fileExtension = '.jpg';
+      }
+      
       if (fileExtension === '.heic' || fileExtension === '.heif') {
         fileExtension = '.jpg';
       }
@@ -210,6 +263,8 @@ export const uploadProfileImage = multer({
     },
     contentType: function (req, file, cb) {
       if (file.mimetype === 'image/heic' || file.mimetype === 'image/heif') {
+        cb(null, 'image/jpeg');
+      } else if (!file.mimetype || file.mimetype === 'application/octet-stream') {
         cb(null, 'image/jpeg');
       } else {
         cb(null, file.mimetype);
@@ -232,12 +287,23 @@ export const uploadEventImages = multer({
     },
     key: function (req: any, file, cb) {
       const userId = req.user?.userId || 'anonymous';
-      const fileExtension = path.extname(file.originalname);
+      let fileExtension = path.extname(file.originalname).toLowerCase();
+      
+      if (!fileExtension || fileExtension === '.') {
+        fileExtension = '.jpg';
+      }
+      
       const uniqueId = uuidv4();
       const fileName = `event-images/${userId}-${uniqueId}${fileExtension}`;
       cb(null, fileName);
     },
-    contentType: multerS3.AUTO_CONTENT_TYPE
+    contentType: function (req, file, cb) {
+      if (!file.mimetype || file.mimetype === 'application/octet-stream') {
+        cb(null, 'image/jpeg');
+      } else {
+        cb(null, file.mimetype);
+      }
+    }
   }),
   fileFilter: venueMediaFileFilter,
   limits: {
