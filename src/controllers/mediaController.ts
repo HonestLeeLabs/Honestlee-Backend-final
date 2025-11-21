@@ -9,6 +9,7 @@ import path from 'path';
 import { deleteFileFromS3, getS3KeyFromUrl } from '../config/uploadConfig';
 
 // POST /api/agent/venues/:tempVenueId/media - Upload media to S3
+// controllers/mediaController.ts
 export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
   try {
     // ✅ Validate user
@@ -19,7 +20,7 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    const currentUser = req.user; // Store for TypeScript
+    const currentUser = req.user;
     const { tempVenueId } = req.params;
     const { mediaType, captureContext, submittedByRole } = req.body;
     const file = req.file as any;
@@ -75,7 +76,8 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
                   file.originalname.toLowerCase().includes('insp') ||
                   fileExtension === '.insp';
     
-    const fileFormat = fileExtension.slice(1).toUpperCase() || 'JPG';
+    // ✅ FIX: Convert to lowercase and remove the dot
+    const fileFormat = fileExtension.slice(1).toLowerCase(); // 'jpg' instead of 'JPG'
 
     // ✅ Map media type to frontend group
     const frontendGroupMap: { [key: string]: string } = {
@@ -99,6 +101,15 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
       publicVisibility = 'Internal only';
     }
 
+    console.log('📝 Creating media record with:', {
+      tempVenueId,
+      mediaType,
+      fileFormat, // Should now be lowercase: 'jpg', 'png', etc.
+      fileSize: file.size,
+      isVideo,
+      is360
+    });
+
     // ✅ Create media record
     const media = await VenueMedia.create({
       mediaId: `M-${uuidv4().slice(0, 8)}`,
@@ -110,7 +121,7 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
       submittedBy: currentUser.userId,
       fileUrl: file.location,
       s3Key: file.key,
-      fileFormat,
+      fileFormat, // Now lowercase
       fileSize: file.size,
       isVideo,
       is360,

@@ -96,10 +96,13 @@ const VenueMediaSchema = new Schema<IVenueMedia>({
     required: true,
     index: true,
   },
-  fileFormat: {
+ fileFormat: {
     type: String,
-    enum: ['JPEG', 'PNG', 'HEIC', 'GIF', 'WEBP', 'MP4', 'MOV', 'AVI', 'WEBM', 'MKV', 'INSP', 'Other'],
-    required: true,
+    enum: [
+      'jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif', 'bmp', 'tiff', // Images - lowercase
+      'mp4', 'mov', 'avi', 'webm', 'mkv', '3gp', '3gpp', 'insp' // Videos - lowercase
+    ],
+    required: true
   },
   fileSize: {
     type: Number,
