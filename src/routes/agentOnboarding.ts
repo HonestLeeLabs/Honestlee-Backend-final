@@ -2,8 +2,9 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { authenticateToken } from '../middlewares/authMiddleware';
 import { detectRegion } from '../middlewares/regionMiddleware';
-import { uploadEventImages } from '../config/uploadConfig';
+import { uploadEventImages, uploadVenueMedia } from '../config/uploadConfig';
 import * as agentController from '../controllers/agentOnboardingController';
+import * as mediaController from '../controllers/mediaController'; // ✅ Added import
 
 const router = Router();
 
@@ -78,7 +79,67 @@ router.delete('/venues/:venueId/zones/:zoneId', (req: Request, res: Response, ne
   agentController.deleteZone(req as any, res).catch(next);
 });
 
-// ===== PHOTO OPERATIONS =====
+// ===== ASSIGNMENT & VISIT ROUTES =====
+router.get('/my-assignments', (req: Request, res: Response, next: NextFunction) => {
+  agentController.getMyAssignments(req as any, res).catch(next);
+});
+
+router.put('/venues/:tempVenueId/visit', (req: Request, res: Response, next: NextFunction) => {
+  agentController.markVenueVisited(req as any, res).catch(next);
+});
+
+router.put('/venues/:tempVenueId/vitals', (req: Request, res: Response, next: NextFunction) => {
+  agentController.updateVenueVitals(req as any, res).catch(next);
+});
+
+router.post('/venues/:tempVenueId/soft-onboard', (req: Request, res: Response, next: NextFunction) => {
+  agentController.softOnboardVenue(req as any, res).catch(next);
+});
+
+router.post('/venues/:tempVenueId/decline', (req: Request, res: Response, next: NextFunction) => {
+  agentController.declineVenue(req as any, res).catch(next);
+});
+
+router.post('/venues/:tempVenueId/capture-lead', (req: Request, res: Response, next: NextFunction) => {
+  agentController.captureLeadVenue(req as any, res).catch(next);
+});
+
+router.get('/my-stats', (req: Request, res: Response, next: NextFunction) => {
+  agentController.getMyStats(req as any, res).catch(next);
+});
+
+// ===== GPS UPDATE ROUTE =====
+router.put('/venues/:tempVenueId/gps', (req: Request, res: Response, next: NextFunction) => {
+  agentController.updateVenueGPS(req as any, res).catch(next);
+});
+
+// ===== MEDIA UPLOAD ROUTES (S3) =====
+router.post(
+  '/venues/:tempVenueId/media',
+  uploadVenueMedia.single('file'), // ✅ S3 upload middleware
+  (req: Request, res: Response, next: NextFunction) =>
+    mediaController.uploadVenueMedia(req as any, res).catch(next)
+);
+
+router.get(
+  '/venues/:tempVenueId/media',
+  (req: Request, res: Response, next: NextFunction) =>
+    mediaController.getVenueMedia(req as any, res).catch(next)
+);
+
+router.get(
+  '/venues/:tempVenueId/media/stats',
+  (req: Request, res: Response, next: NextFunction) =>
+    mediaController.getMediaStats(req as any, res).catch(next)
+);
+
+router.delete(
+  '/venues/:tempVenueId/media/:mediaId',
+  (req: Request, res: Response, next: NextFunction) =>
+    mediaController.deleteVenueMedia(req as any, res).catch(next)
+);
+
+// ===== PHOTO OPERATIONS (Legacy) =====
 router.post(
   '/venues/:venueId/photos',
   uploadEventImages.array('photos', 20),

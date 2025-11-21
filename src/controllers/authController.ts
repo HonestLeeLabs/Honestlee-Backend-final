@@ -1,4 +1,4 @@
-// ===== COMPLETE FIXED FILE: src/controllers/authController.ts =====
+// src/controllers/authController.ts
 import { Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import User, { Role, LoginMethod } from '../models/User';
@@ -49,7 +49,7 @@ const storeQrSource = (user: any, hl_src: any) => {
 export const sendOtp = async (req: Request, res: Response) => {
   try {
     const { phone, region } = req.body;
-    if (!phone) return res.status(400).json({ message: 'Phone number is required' });
+    if (!phone) return res.status(400).json({ success: false, message: 'Phone number is required' });
 
     const otp = generateRandomOtp();
     const otpHash = await generateOtpHash(otp);
@@ -63,13 +63,17 @@ export const sendOtp = async (req: Request, res: Response) => {
         otpCode: otpHash,
         otpExpiresAt: otpExpiry,
         role: Role.CONSUMER,
-        loginMethod: LoginMethod.PHONE
+        loginMethod: LoginMethod.PHONE,
+        region: region || 'th'
       });
     } else {
       user.otpCode = otpHash;
       user.otpExpiresAt = otpExpiry;
       if (!user.loginMethod) {
         user.loginMethod = LoginMethod.PHONE;
+      }
+      if (region && !user.region) {
+        user.region = region;
       }
     }
     await user.save();
@@ -93,11 +97,11 @@ export const sendOtp = async (req: Request, res: Response) => {
 export const sendEmailOtp = async (req: Request, res: Response) => {
   try {
     const { email, region } = req.body;
-    if (!email) return res.status(400).json({ message: 'Email is required' });
+    if (!email) return res.status(400).json({ success: false, message: 'Email is required' });
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
-      return res.status(400).json({ message: 'Invalid email format' });
+      return res.status(400).json({ success: false, message: 'Invalid email format' });
     }
 
     const otp = generateRandomOtp();
@@ -116,7 +120,8 @@ export const sendEmailOtp = async (req: Request, res: Response) => {
         otpCode: otpHash,
         otpExpiresAt: otpExpiry,
         role: Role.CONSUMER,
-        loginMethod: LoginMethod.EMAIL
+        loginMethod: LoginMethod.EMAIL,
+        region: region || 'th'
       });
       console.log(`📝 Creating NEW user with email: ${normalizedEmail}`);
     } else {
@@ -124,6 +129,9 @@ export const sendEmailOtp = async (req: Request, res: Response) => {
       user.otpExpiresAt = otpExpiry;
       if (!user.loginMethod) {
         user.loginMethod = LoginMethod.EMAIL;
+      }
+      if (region && !user.region) {
+        user.region = region;
       }
       console.log(`♻️ EXISTING user found: ${user._id} for email: ${normalizedEmail}`);
     }
@@ -153,21 +161,21 @@ export const verifyOtp = async (req: Request, res: Response) => {
   try {
     const { phone, otp, region, hl_src } = req.body;
     if (!phone || !otp) {
-      return res.status(400).json({ message: 'Phone and OTP are required' });
+      return res.status(400).json({ success: false, message: 'Phone and OTP are required' });
     }
 
     const user = await User.findOne({ phone });
     if (!user || !user.otpCode || !user.otpExpiresAt) {
-      return res.status(400).json({ message: 'OTP not requested' });
+      return res.status(400).json({ success: false, message: 'OTP not requested' });
     }
 
     if (user.otpExpiresAt.getTime() < Date.now()) {
-      return res.status(400).json({ message: 'OTP expired' });
+      return res.status(400).json({ success: false, message: 'OTP expired' });
     }
 
     const isValid = await verifyOtpHash(otp, user.otpCode);
     if (!isValid) {
-      return res.status(400).json({ message: 'Invalid OTP' });
+      return res.status(400).json({ success: false, message: 'Invalid OTP' });
     }
 
     user.otpCode = undefined;
@@ -182,20 +190,22 @@ export const verifyOtp = async (req: Request, res: Response) => {
     const token = signJwt({ 
       userId: user._id.toString(), 
       role: user.role, 
-      region: region || 'ae'
+      region: region || user.region || 'th'
     });
 
-    console.log(`✅ Login successful for phone ${phone}, userId: ${user._id}`);
+    console.log(`✅ Login successful for phone ${phone}, userId: ${user._id}, role: ${user.role}`);
 
+    // ✅ Return complete user data
     res.json({
       success: true,
       token,
       role: user.role,
       phone: user.phone,
-      name: user.name,
-      email: user.email,
+      name: user.name || phone,
+      email: user.email || '',
       loginMethod: user.loginMethod,
       userId: user._id.toString(),
+      region: user.region || region || 'th',
       hl_source_token: user.hl_source_token,
       hl_utm_data: user.hl_utm_data
     });
@@ -213,7 +223,7 @@ export const verifyEmailOtp = async (req: Request, res: Response) => {
   try {
     const { email, otp, region, hl_src } = req.body;
     if (!email || !otp) {
-      return res.status(400).json({ message: 'Email and OTP are required' });
+      return res.status(400).json({ success: false, message: 'Email and OTP are required' });
     }
 
     // ✅ Use case-insensitive email lookup
@@ -224,19 +234,19 @@ export const verifyEmailOtp = async (req: Request, res: Response) => {
     
     if (!user || !user.otpCode || !user.otpExpiresAt) {
       console.error(`❌ OTP verification failed: User not found or OTP not set for ${normalizedEmail}`);
-      return res.status(400).json({ message: 'OTP not requested' });
+      return res.status(400).json({ success: false, message: 'OTP not requested' });
     }
 
-    console.log(`🔍 Verifying OTP for userId: ${user._id}, email: ${user.email}`);
+    console.log(`🔍 Verifying OTP for userId: ${user._id}, email: ${user.email}, role: ${user.role}`);
 
     if (user.otpExpiresAt.getTime() < Date.now()) {
-      return res.status(400).json({ message: 'OTP expired' });
+      return res.status(400).json({ success: false, message: 'OTP expired' });
     }
 
     const isValid = await verifyOtpHash(otp, user.otpCode);
     if (!isValid) {
       console.error(`❌ Invalid OTP for userId: ${user._id}`);
-      return res.status(400).json({ message: 'Invalid OTP' });
+      return res.status(400).json({ success: false, message: 'Invalid OTP' });
     }
 
     user.otpCode = undefined;
@@ -251,21 +261,23 @@ export const verifyEmailOtp = async (req: Request, res: Response) => {
     const token = signJwt({ 
       userId: user._id.toString(), 
       role: user.role, 
-      region: region || 'ae'
+      region: region || user.region || 'th'
     });
 
-    console.log(`✅ Login successful for ${normalizedEmail}, userId: ${user._id}`);
+    console.log(`✅ Login successful for ${normalizedEmail}, userId: ${user._id}, role: ${user.role}`);
     console.log(`✅ Token generated for userId: ${user._id}, role: ${user.role}`);
 
+    // ✅ Return complete user data with all fields
     res.json({
       success: true,
       token,
       role: user.role,
       email: user.email,
-      name: user.name,
-      phone: user.phone,
+      name: user.name || user.email,
+      phone: user.phone || '',
       loginMethod: user.loginMethod,
       userId: user._id.toString(),
+      region: user.region || region || 'th',
       hl_source_token: user.hl_source_token,
       hl_utm_data: user.hl_utm_data
     });
