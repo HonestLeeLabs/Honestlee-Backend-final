@@ -113,6 +113,25 @@ export interface IAgentVenueTemp extends Document {
     };
     offsetDistance?: number;
   };
+  paymentTypes?: {
+    cash?: boolean;
+    creditCard?: boolean;
+    debitCard?: boolean;
+    upi?: boolean;
+    nfc?: boolean;
+    applePay?: boolean;
+    googlePay?: boolean;
+    alipay?: boolean;
+    wechatPay?: boolean;
+    promptpay?: boolean;
+    paynow?: boolean;
+    venmo?: boolean;
+    paypal?: boolean;
+    other?: string[];
+  };
+  
+  paymentTypesConfirmed?: boolean;
+  paymentTypesConfirmedAt?: Date;
 
   // NEW: GPS Data (Enhanced GPS tracking)
   gpsData?: {
@@ -317,6 +336,25 @@ const AgentVenueTempSchema = new Schema<IAgentVenueTemp>({
     },
     offsetDistance: Number
   },
+  paymentTypes: {
+    cash: { type: Boolean, default: false },
+    creditCard: { type: Boolean, default: false },
+    debitCard: { type: Boolean, default: false },
+    upi: { type: Boolean, default: false },
+    nfc: { type: Boolean, default: false },
+    applePay: { type: Boolean, default: false },
+    googlePay: { type: Boolean, default: false },
+    alipay: { type: Boolean, default: false },
+    wechatPay: { type: Boolean, default: false },
+    promptpay: { type: Boolean, default: false },
+    paynow: { type: Boolean, default: false },
+    venmo: { type: Boolean, default: false },
+    paypal: { type: Boolean, default: false },
+    other: [{ type: String }]
+  },
+  
+  paymentTypesConfirmed: { type: Boolean, default: false },
+  paymentTypesConfirmedAt: Date,
   // NEW: Enhanced GPS Data
   gpsData: {
     src_lat: Number,

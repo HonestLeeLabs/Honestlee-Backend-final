@@ -176,6 +176,14 @@ router.delete('/venues/:tempVenueId/media/:mediaId', (req: Request, res: Respons
   mediaController.deleteVenueMedia(req as any, res).catch(next)
 );
 
+router.put('/venues/:tempVenueId/payment-types', (req: Request, res: Response, next: NextFunction) => {
+  agentController.updatePaymentTypes(req as any, res).catch(next);
+});
+
+router.get('/venues/:tempVenueId/payment-types', (req: Request, res: Response, next: NextFunction) => {
+  agentController.getPaymentTypes(req as any, res).catch(next);
+});
+
 // ===== PHOTO OPERATIONS (Legacy) =====
 router.post(
   '/venues/:venueId/photos',
