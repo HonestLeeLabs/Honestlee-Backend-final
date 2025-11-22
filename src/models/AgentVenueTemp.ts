@@ -6,7 +6,6 @@ export enum VenueOnboardingStatus {
   LISTED_UNCLAIMED = 'LISTED_UNCLAIMED',
   SOFT_ONBOARDED = 'SOFT_ONBOARDED',
   FULLY_VERIFIED = 'FULLY_VERIFIED',
-  // Add more statuses if needed
 }
 
 export enum VerificationLevel {
@@ -113,6 +112,8 @@ export interface IAgentVenueTemp extends Document {
     };
     offsetDistance?: number;
   };
+
+  // Payment Types
   paymentTypes?: {
     cash?: boolean;
     creditCard?: boolean;
@@ -137,12 +138,12 @@ export interface IAgentVenueTemp extends Document {
   gpsData?: {
     src_lat?: number;
     src_lng?: number;
-    src_provider?: string; // 'google_places', 'honestlee_manual', 'honestlee_first'
+    src_provider?: string;
     hl_confirmed_lat?: number;
     hl_confirmed_lng?: number;
     hl_gps_accuracy_m?: number;
     hl_gps_distance_m?: number;
-    hl_gps_status?: string; // 'not_checked', 'confirmed', 'kept_original', 'rejected', 'skipped'
+    hl_gps_status?: string;
     hl_gps_updated_at?: Date;
     hl_gps_history?: Array<{
       lat: number;
@@ -151,6 +152,36 @@ export interface IAgentVenueTemp extends Document {
       taken_at: Date;
       by_agent?: mongoose.Types.ObjectId;
       accuracy_m?: number;
+    }>;
+  };
+
+  // NEW: WiFi Speed Test Data
+  wifiData?: {
+    hasSpeedTest?: boolean;
+    latestSpeedTest?: {
+      downloadMbps?: number;
+      uploadMbps?: number;
+      latencyMs?: number;
+      qualityScore?: number;
+      category?: 'excellent' | 'good' | 'fair' | 'poor';
+      testedAt?: Date;
+      testedBy?: mongoose.Types.ObjectId;
+    };
+    averageSpeedTest?: {
+      downloadMbps?: number;
+      uploadMbps?: number;
+      latencyMs?: number;
+      qualityScore?: number;
+      totalTests?: number;
+      lastCalculatedAt?: Date;
+    };
+    // WiFi SSIDs
+    ssids?: Array<{
+      ssid: string;
+      isGuest?: boolean;
+      isPrimary?: boolean;
+      hasPassword?: boolean;
+      notes?: string;
     }>;
   };
 
@@ -199,6 +230,7 @@ export interface IAgentVenueTemp extends Document {
     venueCategoryConfirmed?: boolean;
     venueTypeConfirmed?: boolean;
     openingHoursConfirmed?: boolean;
+    paymentTypesConfirmed?: boolean;
     wifiAvailable?: boolean;
     workFriendly?: boolean;
   };
@@ -336,6 +368,8 @@ const AgentVenueTempSchema = new Schema<IAgentVenueTemp>({
     },
     offsetDistance: Number
   },
+
+  // Payment Types Schema
   paymentTypes: {
     cash: { type: Boolean, default: false },
     creditCard: { type: Boolean, default: false },
@@ -355,7 +389,8 @@ const AgentVenueTempSchema = new Schema<IAgentVenueTemp>({
   
   paymentTypesConfirmed: { type: Boolean, default: false },
   paymentTypesConfirmedAt: Date,
-  // NEW: Enhanced GPS Data
+  
+  // Enhanced GPS Data Schema
   gpsData: {
     src_lat: Number,
     src_lng: Number,
@@ -381,6 +416,41 @@ const AgentVenueTempSchema = new Schema<IAgentVenueTemp>({
       },
     ],
   },
+
+  // NEW: WiFi Data Schema
+  wifiData: {
+    hasSpeedTest: { type: Boolean, default: false },
+    latestSpeedTest: {
+      downloadMbps: Number,
+      uploadMbps: Number,
+      latencyMs: Number,
+      qualityScore: Number,
+      category: {
+        type: String,
+        enum: ['excellent', 'good', 'fair', 'poor']
+      },
+      testedAt: Date,
+      testedBy: { type: Schema.Types.ObjectId, ref: 'User' }
+    },
+    averageSpeedTest: {
+      downloadMbps: Number,
+      uploadMbps: Number,
+      latencyMs: Number,
+      qualityScore: Number,
+      totalTests: Number,
+      lastCalculatedAt: Date
+    },
+    ssids: [
+      {
+        ssid: String,
+        isGuest: { type: Boolean, default: false },
+        isPrimary: { type: Boolean, default: false },
+        hasPassword: { type: Boolean, default: true },
+        notes: String
+      }
+    ]
+  },
+
   googleData: {
     placeId: { type: String, index: true },
     primaryType: String,
@@ -448,14 +518,17 @@ const AgentVenueTempSchema = new Schema<IAgentVenueTemp>({
     venueCategoryConfirmed: { type: Boolean, default: false },
     venueTypeConfirmed: { type: Boolean, default: false },
     openingHoursConfirmed: { type: Boolean, default: false },
+    paymentTypesConfirmed: { type: Boolean, default: false },
     wifiAvailable: Boolean,
     workFriendly: Boolean
   },
+  
   // Task completion flags
   gpsVerified: { type: Boolean, default: false },
   photosUploaded: { type: Boolean, default: false },
   zonesCreated: { type: Boolean, default: false },
   atmosphereSet: { type: Boolean, default: false },
+  
   declineReason: String,
   leadCapturedAt: Date,
   leadCapturedBy: {
@@ -478,5 +551,7 @@ AgentVenueTempSchema.index({ verificationLevel: 1, status: 1 });
 AgentVenueTempSchema.index({ assignedTo: 1, vitalsCompleted: 1 });
 AgentVenueTempSchema.index({ 'gpsData.hl_gps_status': 1 });
 AgentVenueTempSchema.index({ 'gpsData.hl_confirmed_lat': 1, 'gpsData.hl_confirmed_lng': 1 });
+AgentVenueTempSchema.index({ 'wifiData.hasSpeedTest': 1 });
+AgentVenueTempSchema.index({ 'wifiData.latestSpeedTest.qualityScore': 1 });
 
 export default mongoose.model<IAgentVenueTemp>('AgentVenueTemp', AgentVenueTempSchema);

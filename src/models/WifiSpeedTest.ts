@@ -1,0 +1,163 @@
+import mongoose, { Schema, Document } from 'mongoose';
+
+export interface IWifiSpeedTest extends Document {
+  testId: string;
+  venueId: mongoose.Types.ObjectId;
+  tempVenueId?: string;
+  userId: mongoose.Types.ObjectId;
+  userRole: 'USER' | 'AGENT' | 'ADMIN' | 'STAFF';
+  
+  // Speed Metrics
+  downloadMbps: number;
+  uploadMbps: number;
+  latencyMs: number;
+  jitterMs?: number;
+  packetLoss?: number;
+  
+  // Connection Info
+  connectionType?: 'wifi' | '4g' | '5g' | 'ethernet' | 'unknown';
+  ssid?: string;
+  bssid?: string;
+  signalStrength?: number; // dBm
+  frequency?: string; // '2.4GHz' | '5GHz'
+  
+  // Device Info
+  deviceInfo: {
+    model: string;
+    os: string;
+    browser: string;
+    userAgent?: string;
+  };
+  
+  // Test Method
+  testMethod: 'ookla' | 'fast.com' | 'manual' | 'speedtest-net' | 'cloudflare';
+  testServer?: string;
+  
+  // Location & Time
+  location?: {
+    lat: number;
+    lng: number;
+    accuracy?: number;
+  };
+  zoneId?: string;
+  zoneName?: string;
+  timestamp: Date;
+  
+  // Quality Metrics
+  qualityScore?: number; // 0-100
+  category?: 'excellent' | 'good' | 'fair' | 'poor';
+  isReliable: boolean;
+  
+  // Additional
+  notes?: string;
+  region: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+const WifiSpeedTestSchema = new Schema<IWifiSpeedTest>({
+  testId: { type: String, required: true, unique: true, index: true },
+  venueId: { type: Schema.Types.ObjectId, required: true, index: true },
+  tempVenueId: { type: String, index: true },
+  userId: { type: Schema.Types.ObjectId, required: true, ref: 'User' },
+  userRole: { type: String, enum: ['USER', 'AGENT', 'ADMIN', 'STAFF'], required: true },
+  
+  downloadMbps: { type: Number, required: true, min: 0 },
+  uploadMbps: { type: Number, required: true, min: 0 },
+  latencyMs: { type: Number, required: true, min: 0 },
+  jitterMs: { type: Number, min: 0 },
+  packetLoss: { type: Number, min: 0, max: 100 },
+  
+  connectionType: { 
+    type: String, 
+    enum: ['wifi', '4g', '5g', 'ethernet', 'unknown'],
+    default: 'unknown'
+  },
+  ssid: String,
+  bssid: String,
+  signalStrength: Number,
+  frequency: String,
+  
+  deviceInfo: {
+    model: { type: String, required: true },
+    os: { type: String, required: true },
+    browser: { type: String, required: true },
+    userAgent: String
+  },
+  
+  testMethod: {
+    type: String,
+    enum: ['ookla', 'fast.com', 'manual', 'speedtest-net', 'cloudflare'],
+    required: true
+  },
+  testServer: String,
+  
+  location: {
+    lat: Number,
+    lng: Number,
+    accuracy: Number
+  },
+  zoneId: String,
+  zoneName: String,
+  timestamp: { type: Date, default: Date.now },
+  
+  qualityScore: { type: Number, min: 0, max: 100 },
+  category: { 
+    type: String, 
+    enum: ['excellent', 'good', 'fair', 'poor']
+  },
+  isReliable: { type: Boolean, default: true },
+  
+  notes: String,
+  region: { type: String, required: true, index: true },
+}, {
+  timestamps: true,
+  collection: 'wifi_speed_tests'
+});
+
+// Indexes
+WifiSpeedTestSchema.index({ venueId: 1, timestamp: -1 });
+WifiSpeedTestSchema.index({ userId: 1, timestamp: -1 });
+WifiSpeedTestSchema.index({ region: 1, timestamp: -1 });
+WifiSpeedTestSchema.index({ testId: 1 });
+
+// Calculate quality score before saving
+WifiSpeedTestSchema.pre('save', function(next) {
+  const test = this;
+  
+  // Calculate quality score based on download speed and latency
+  let score = 0;
+  
+  // Download speed scoring (0-60 points)
+  if (test.downloadMbps >= 100) score += 60;
+  else if (test.downloadMbps >= 50) score += 50;
+  else if (test.downloadMbps >= 25) score += 40;
+  else if (test.downloadMbps >= 10) score += 30;
+  else if (test.downloadMbps >= 5) score += 20;
+  else score += 10;
+  
+  // Latency scoring (0-25 points)
+  if (test.latencyMs <= 20) score += 25;
+  else if (test.latencyMs <= 50) score += 20;
+  else if (test.latencyMs <= 100) score += 15;
+  else if (test.latencyMs <= 200) score += 10;
+  else score += 5;
+  
+  // Upload speed scoring (0-15 points)
+  if (test.uploadMbps >= 20) score += 15;
+  else if (test.uploadMbps >= 10) score += 12;
+  else if (test.uploadMbps >= 5) score += 8;
+  else score += 4;
+  
+  test.qualityScore = score;
+  
+  // Categorize
+  if (score >= 85) test.category = 'excellent';
+  else if (score >= 70) test.category = 'good';
+  else if (score >= 50) test.category = 'fair';
+  else test.category = 'poor';
+  
+  next();
+});
+
+export default mongoose.model<IWifiSpeedTest>('WifiSpeedTest', WifiSpeedTestSchema);

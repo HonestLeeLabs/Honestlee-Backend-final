@@ -36,6 +36,7 @@ import eventRoutes from './routes/eventRoutes';
 import paymentRoutes from './routes/paymentRoutes';
 import streetVendorRoutes from './routes/streetVendorRoutes';
 import agentOnboardingRoutes from './routes/agentOnboarding';
+import wifiSpeedTestRoutes from './routes/wifiSpeedTest';
 
 // Load environment variables
 dotenv.config();
@@ -246,6 +247,7 @@ app.use('/api/events', eventRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/street-vendors', detectRegion, streetVendorRoutes);
 app.use('/api/agent', agentOnboardingRoutes);
+app.use('/api/wifi-speed', wifiSpeedTestRoutes);
 
 
 // ===== HEALTH CHECK ENDPOINT =====
