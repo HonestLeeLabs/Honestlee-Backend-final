@@ -168,7 +168,8 @@ export const quickAddVenue = async (req: AgentRequest, res: Response): Promise<R
       openingHours,
       ownerName,
       managerName,
-      gpsLocation
+      gpsLocation,
+      paymentTypes  // NEW: Accept payment types
     } = req.body;
 
     console.log(`➕ Agent ${req.user.userId} quick adding venue: ${name} in region ${region}`);
@@ -203,6 +204,7 @@ export const quickAddVenue = async (req: AgentRequest, res: Response): Promise<R
       },
       ownerContact: ownerName ? { name: ownerName } : undefined,
       managerContact: managerName ? { name: managerName } : undefined,
+      paymentTypes: paymentTypes || {},  // NEW: Set payment types
       gpsAccuracy: gpsLocation ? {
         newLocation: {
           lat: gpsLocation.lat,
@@ -219,7 +221,7 @@ export const quickAddVenue = async (req: AgentRequest, res: Response): Promise<R
       req.user.userId,
       req.user.role,
       'agent.venue_added',
-      { tempVenueId, name, region },
+      { tempVenueId, name, region, hasPaymentTypes: !!paymentTypes },
       undefined,
       req
     );
@@ -237,6 +239,149 @@ export const quickAddVenue = async (req: AgentRequest, res: Response): Promise<R
     return res.status(500).json({
       success: false,
       message: 'Error adding venue',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * PUT /api/agent/venues/:tempVenueId/payment-types
+ * Update payment types accepted by venue
+ */
+export const updatePaymentTypes = async (req: AuthRequest, res: Response): Promise<Response> => {
+  try {
+    if (!req.user || !['AGENT', 'ADMIN'].includes(req.user.role)) {
+      return res.status(403).json({ message: 'Agent or Admin access required' });
+    }
+
+    const { tempVenueId } = req.params;
+    const { paymentTypes } = req.body;
+
+    if (!paymentTypes || typeof paymentTypes !== 'object') {
+      return res.status(400).json({
+        success: false,
+        message: 'paymentTypes object is required'
+      });
+    }
+
+    console.log(`💳 Updating payment types for venue ${tempVenueId}`);
+
+    // Find venue
+    const venue = await AgentVenueTemp.findOne({ tempVenueId });
+
+    if (!venue) {
+      return res.status(404).json({
+        success: false,
+        message: 'Venue not found'
+      });
+    }
+
+    // Check if agent has permission (only assigned agent or admin)
+    if (req.user.role === 'AGENT' && venue.assignedTo?.toString() !== req.user.userId) {
+      return res.status(403).json({
+        success: false,
+        message: 'You can only update venues assigned to you'
+      });
+    }
+
+    // Update payment types
+    const updateData: any = {
+      paymentTypes: {
+        cash: paymentTypes.cash || false,
+        creditCard: paymentTypes.creditCard || false,
+        debitCard: paymentTypes.debitCard || false,
+        upi: paymentTypes.upi || false,
+        nfc: paymentTypes.nfc || false,
+        applePay: paymentTypes.applePay || false,
+        googlePay: paymentTypes.googlePay || false,
+        alipay: paymentTypes.alipay || false,
+        wechatPay: paymentTypes.wechatPay || false,
+        promptpay: paymentTypes.promptpay || false,
+        paynow: paymentTypes.paynow || false,
+        venmo: paymentTypes.venmo || false,
+        paypal: paymentTypes.paypal || false,
+        other: paymentTypes.other || []
+      },
+      paymentTypesConfirmed: true,
+      paymentTypesConfirmedAt: new Date()
+    };
+
+    const updatedVenue = await AgentVenueTemp.findOneAndUpdate(
+      { tempVenueId },
+      { $set: updateData },
+      { new: true }
+    );
+
+    // Audit log
+    await AuditLog.create({
+      auditId: uuidv4(),
+      actorId: req.user.userId,
+      actorRole: req.user.role,
+      venueId: venue.venueId?.toString(),
+      action: 'PAYMENT_TYPES_UPDATED',
+      meta: {
+        tempVenueId,
+        venueName: venue.name,
+        paymentTypes: updateData.paymentTypes
+      }
+    });
+
+    console.log(`✅ Payment types updated for venue ${tempVenueId}`);
+
+    return res.json({
+      success: true,
+      message: 'Payment types updated successfully',
+      data: updatedVenue
+    });
+
+  } catch (error: any) {
+    console.error('❌ Error updating payment types:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to update payment types',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * GET /api/agent/venues/:tempVenueId/payment-types
+ * Get payment types for a venue
+ */
+export const getPaymentTypes = async (req: AuthRequest, res: Response): Promise<Response> => {
+  try {
+    if (!req.user || !['AGENT', 'ADMIN'].includes(req.user.role)) {
+      return res.status(403).json({ message: 'Agent or Admin access required' });
+    }
+
+    const { tempVenueId } = req.params;
+
+    const venue = await AgentVenueTemp.findOne({ tempVenueId })
+      .select('tempVenueId name paymentTypes paymentTypesConfirmed paymentTypesConfirmedAt');
+
+    if (!venue) {
+      return res.status(404).json({
+        success: false,
+        message: 'Venue not found'
+      });
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        tempVenueId: venue.tempVenueId,
+        name: venue.name,
+        paymentTypes: venue.paymentTypes || {},
+        confirmed: venue.paymentTypesConfirmed || false,
+        confirmedAt: venue.paymentTypesConfirmedAt
+      }
+    });
+
+  } catch (error: any) {
+    console.error('❌ Error fetching payment types:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to fetch payment types',
       error: error.message
     });
   }
@@ -1504,7 +1649,6 @@ export const updateVenueVitals = async (req: AuthRequest, res: Response) => {
     const { tempVenueId } = req.params;
     const { vitalsData } = req.body;
 
-    // Type guard: Ensure user is authenticated
     if (!req.user || req.user.role !== 'AGENT') {
       return res.status(403).json({ success: false, message: 'Agent access required' });
     }
@@ -1513,7 +1657,6 @@ export const updateVenueVitals = async (req: AuthRequest, res: Response) => {
       return res.status(400).json({ success: false, message: 'vitalsData is required' });
     }
 
-    // Check if venue is assigned to this agent
     const venue = await AgentVenueTemp.findOne({
       tempVenueId,
       assignedTo: req.user.userId
@@ -1526,7 +1669,6 @@ export const updateVenueVitals = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    // Check if venue has been visited
     if (venue.visitStatus !== 'visited') {
       return res.status(400).json({
         success: false,
@@ -1534,7 +1676,7 @@ export const updateVenueVitals = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    // UPDATE: Complete vitals check with ALL fields
+    // UPDATE: Complete vitals check with ALL fields INCLUDING payment types
     const vitalsCompleted =
       vitalsData.nameConfirmed &&
       vitalsData.categoryConfirmed &&
@@ -1552,7 +1694,8 @@ export const updateVenueVitals = async (req: AuthRequest, res: Response) => {
       vitalsData.venueGroupConfirmed &&
       vitalsData.venueCategoryConfirmed &&
       vitalsData.venueTypeConfirmed &&
-      vitalsData.openingHoursConfirmed;
+      vitalsData.openingHoursConfirmed &&
+      vitalsData.paymentTypesConfirmed;  // NEW: Include payment types in completion check
 
     const updateData: any = {
       vitalsData,
@@ -1570,7 +1713,6 @@ export const updateVenueVitals = async (req: AuthRequest, res: Response) => {
       { new: true }
     );
 
-    // Audit log
     await AuditLog.create({
       auditId: uuidv4(),
       actorId: req.user.userId,
