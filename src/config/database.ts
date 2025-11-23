@@ -33,9 +33,15 @@ class DatabaseManager {
       return this.connections.shared;
     }
 
+    // ⭐ UPDATED: Increased timeouts for long-running operations
     await mongoose.connect(sharedURI, {
-      serverSelectionTimeoutMS: 10000,
-      socketTimeoutMS: 45000,
+      serverSelectionTimeoutMS: 15000,
+      socketTimeoutMS: 180000,        // ⭐ Changed from 45000 to 180000 (3 minutes)
+      connectTimeoutMS: 30000,
+      maxPoolSize: 50,                // ⭐ Added
+      minPoolSize: 10,                // ⭐ Added
+      maxIdleTimeMS: 60000,           // ⭐ Added
+      heartbeatFrequencyMS: 10000,    // ⭐ Added
     });
 
     console.log('✅ Shared database connected:', mongoose.connection.name);
@@ -80,9 +86,15 @@ class DatabaseManager {
       throw new Error(`${uriKey} is not defined in environment variables`);
     }
 
+    // ⭐ UPDATED: Increased timeouts for long-running operations
     const connection = mongoose.createConnection(uri, {
-      serverSelectionTimeoutMS: 10000,
-      socketTimeoutMS: 45000,
+      serverSelectionTimeoutMS: 15000,
+      socketTimeoutMS: 180000,        // ⭐ Changed from 45000 to 180000 (3 minutes)
+      connectTimeoutMS: 30000,
+      maxPoolSize: 50,                // ⭐ Added
+      minPoolSize: 10,                // ⭐ Added
+      maxIdleTimeMS: 60000,           // ⭐ Added
+      heartbeatFrequencyMS: 10000,    // ⭐ Added
     });
 
     await connection.asPromise();

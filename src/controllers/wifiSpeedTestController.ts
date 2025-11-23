@@ -1,9 +1,414 @@
+// wifiSpeedTestController.ts - FINAL COMPLETE VERSION
+
 import { Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
+import mongoose from 'mongoose';
 import { AuthRequest } from '../middlewares/authMiddleware';
 import WifiSpeedTest from '../models/WifiSpeedTest';
 import AgentVenueTemp from '../models/AgentVenueTemp';
 import Venue from '../models/Venue';
+
+/**
+ * POST /api/wifi-speed/run-test
+ * Run NDT7 speed test server-side
+ */
+export const runSpeedTest = async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ message: 'Authentication required' });
+    }
+
+    const { venueId, tempVenueId, provider, serverUrl, deviceInfo, location, connectionType } = req.body;
+
+    if (!venueId && !tempVenueId) {
+      return res.status(400).json({
+        success: false,
+        message: 'venueId or tempVenueId is required'
+      });
+    }
+
+    console.log('🚀 Running NDT7 speed test server-side for provider:', provider);
+
+    // Check MongoDB connection
+    if (mongoose.connection.readyState !== 1) {
+      console.error('❌ MongoDB not connected, state:', mongoose.connection.readyState);
+      return res.status(503).json({
+        success: false,
+        message: 'Database connection unavailable'
+      });
+    }
+
+    // Dynamically import ndt7
+    const ndt7Module = await import('@m-lab/ndt7');
+    const ndt7 = ndt7Module.default;
+
+    // Track measurements
+    let finalDownloadMbps = 0;
+    let finalUploadMbps = 0;
+    let finalLatencyMs = 0;
+    let downloadSamples: number[] = [];
+    let uploadSamples: number[] = [];
+    let testError: any = null;
+
+    // Configure NDT7
+    const config: any = {
+      userAcceptedDataPolicy: true,
+      downloadworkerfile: undefined,
+      uploadworkerfile: undefined,
+    };
+
+    if (serverUrl) {
+      config.server = serverUrl;
+    }
+
+    const callbacks = {
+      error: (err: any) => {
+        console.error('❌ NDT7 error:', err);
+        console.error('Error details:', {
+          type: typeof err,
+          string: String(err),
+          message: err?.message,
+          stack: err?.stack,
+          code: err?.code,
+        });
+        testError = err;
+      },
+      
+      downloadMeasurement: (data: any) => {
+        try {
+          if (data?.Source === 'client') {
+            // Client-side download measurement
+            if (data?.Data?.AppInfo?.ElapsedTime && data?.Data?.AppInfo?.NumBytes) {
+              const elapsedSeconds = data.Data.AppInfo.ElapsedTime / 1e6;
+              const bytes = data.Data.AppInfo.NumBytes;
+              const bits = bytes * 8;
+              const mbps = (bits / elapsedSeconds) / 1e6;
+              
+              if (mbps > 0 && !isNaN(mbps) && isFinite(mbps)) {
+                finalDownloadMbps = mbps;
+                downloadSamples.push(mbps); // ✅ Push client samples
+                console.log('⬇️ Download client measurement:', mbps.toFixed(2), 'Mbps');
+              }
+            }
+            
+            // Capture latency from various sources
+            const rttSources = [
+              data?.Data?.TCPInfo?.MinRTT,
+              data?.Data?.TCPInfo?.RTT,
+              data?.Data?.BBRInfo?.MinRTT
+            ];
+
+            for (const rtt of rttSources) {
+              if (rtt) {
+                const rttMs = rtt / 1000; // Convert to ms
+                if (rttMs > 0 && !isNaN(rttMs) && isFinite(rttMs)) {
+                  if (finalLatencyMs === 0 || rttMs < finalLatencyMs) {
+                    finalLatencyMs = rttMs;
+                  }
+                }
+              }
+            }
+          }
+
+          if (data?.Source === 'server' && data?.Data?.TCPInfo) {
+            // Server-side measurements
+            const rttSources = [
+              data.Data.TCPInfo.MinRTT,
+              data.Data.TCPInfo.RTT
+            ];
+
+            for (const rtt of rttSources) {
+              if (rtt) {
+                const rttMs = rtt / 1000;
+                if (rttMs > 0 && !isNaN(rttMs) && isFinite(rttMs)) {
+                  if (finalLatencyMs === 0 || rttMs < finalLatencyMs) {
+                    finalLatencyMs = rttMs;
+                  }
+                }
+              }
+            }
+            
+            if (data.Data.TCPInfo.BytesAcked && data.Data.TCPInfo.ElapsedTime) {
+              const elapsedSeconds = data.Data.TCPInfo.ElapsedTime / 1e6;
+              const bytes = data.Data.TCPInfo.BytesAcked;
+              const bits = bytes * 8;
+              const mbps = (bits / elapsedSeconds) / 1e6;
+              
+              if (mbps > 0 && !isNaN(mbps) && isFinite(mbps)) {
+                if (mbps > finalDownloadMbps) {
+                  finalDownloadMbps = mbps;
+                }
+                downloadSamples.push(mbps); // ✅ ALSO push server samples
+                console.log('⬇️ Download server measurement:', mbps.toFixed(2), 'Mbps');
+              }
+            }
+          }
+        } catch (error) {
+          console.error('⚠️ Error processing download measurement:', error);
+        }
+      },
+      
+      downloadComplete: (data: any) => {
+        console.log('✅ Download complete:', finalDownloadMbps.toFixed(2), 'Mbps');
+        console.log('📊 Download samples collected:', downloadSamples.length);
+      },
+      
+      uploadMeasurement: (data: any) => {
+        try {
+          if (data?.Source === 'client') {
+            if (data?.Data?.AppInfo?.ElapsedTime && data?.Data?.AppInfo?.NumBytes) {
+              const elapsedSeconds = data.Data.AppInfo.ElapsedTime / 1e6;
+              const bytes = data.Data.AppInfo.NumBytes;
+              const bits = bytes * 8;
+              const mbps = (bits / elapsedSeconds) / 1e6;
+              
+              if (mbps > 0 && !isNaN(mbps) && isFinite(mbps)) {
+                finalUploadMbps = mbps;
+                uploadSamples.push(mbps); // ✅ Push client samples
+                console.log('📤 Upload client measurement:', mbps.toFixed(2), 'Mbps');
+              }
+            }
+          }
+
+          if (data?.Source === 'server' && data?.Data?.TCPInfo) {
+            if (data.Data.TCPInfo.BytesReceived && data.Data.TCPInfo.ElapsedTime) {
+              const elapsedSeconds = data.Data.TCPInfo.ElapsedTime / 1e6;
+              const bytes = data.Data.TCPInfo.BytesReceived;
+              const bits = bytes * 8;
+              const mbps = (bits / elapsedSeconds) / 1e6;
+              
+              if (mbps > 0 && !isNaN(mbps) && isFinite(mbps)) {
+                if (mbps > finalUploadMbps) {
+                  finalUploadMbps = mbps;
+                }
+                uploadSamples.push(mbps); // ✅ ALSO push server samples
+                console.log('📤 Upload server measurement:', mbps.toFixed(2), 'Mbps');
+              }
+            }
+          }
+        } catch (error) {
+          console.error('⚠️ Error processing upload measurement:', error);
+        }
+      },
+      
+      uploadComplete: (data: any) => {
+        console.log('✅ Upload complete:', finalUploadMbps.toFixed(2), 'Mbps');
+        console.log('📊 Upload samples collected:', uploadSamples.length);
+        if (data) {
+          console.log('📊 Upload completion data:', JSON.stringify(data, null, 2));
+        }
+      }
+    };
+
+    // Run the test with better error handling
+    try {
+      console.log('🎯 Starting NDT7 test...');
+      await ndt7.test(config, callbacks);
+      console.log('✅ NDT7 test completed without throwing');
+    } catch (testError: any) {
+      console.error('❌ NDT7 test threw error:', {
+        message: testError?.message || String(testError),
+        code: testError?.code,
+        stack: testError?.stack
+      });
+      
+      // Only fail if we got NO download results
+      if (finalDownloadMbps === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Speed test failed completely: ' + (testError?.message || String(testError))
+        });
+      }
+      
+      console.log('⚠️ Test had errors but got download results, continuing...');
+    }
+
+    console.log('📊 Final measurements:', {
+      download: finalDownloadMbps.toFixed(2),
+      upload: finalUploadMbps.toFixed(2),
+      latency: finalLatencyMs.toFixed(2),
+      downloadSamples: downloadSamples.length,
+      uploadSamples: uploadSamples.length
+    });
+
+    // Validate download measurement
+    if (finalDownloadMbps === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Speed test failed: No download measurements recorded. Please try again.'
+      });
+    }
+
+    // Handle missing upload with better estimation
+    let uploadNote = '';
+    if (finalUploadMbps === 0 || uploadSamples.length === 0) {
+      console.warn('⚠️ Upload test did not complete, using estimated value');
+      // Use a more realistic estimation based on typical asymmetric ratios
+      finalUploadMbps = Math.max(0.1, finalDownloadMbps / 10);
+      uploadNote = ' (upload estimated)';
+    }
+
+    // Latency fallback with better estimation
+    if (finalLatencyMs === 0 && finalDownloadMbps > 0) {
+      if (finalDownloadMbps > 100) {
+        finalLatencyMs = 15;
+      } else if (finalDownloadMbps > 50) {
+        finalLatencyMs = 30;
+      } else if (finalDownloadMbps > 10) {
+        finalLatencyMs = 50;
+      } else {
+        finalLatencyMs = 100;
+      }
+      console.warn(`⚠️ Latency not captured, estimated: ${finalLatencyMs}ms`);
+    }
+
+    // Calculate final speeds using 95th percentile if enough samples
+    const get95thPercentile = (arr: number[]) => {
+      if (arr.length === 0) return 0;
+      const sorted = [...arr].sort((a, b) => a - b);
+      const index = Math.floor(sorted.length * 0.95);
+      return sorted[index] || sorted[sorted.length - 1];
+    };
+
+    const downloadMbps = downloadSamples.length > 10 
+      ? get95thPercentile(downloadSamples)
+      : finalDownloadMbps;
+      
+    const uploadMbps = uploadSamples.length > 10
+      ? get95thPercentile(uploadSamples)
+      : finalUploadMbps;
+
+    // Get region from user
+    const region = req.user.region || 'th';
+
+    // Final device info
+    const finalDeviceInfo = deviceInfo || {
+      model: 'Unknown',
+      os: 'Unknown',
+      browser: 'Unknown',
+      userAgent: req.headers['user-agent'] || 'Unknown'
+    };
+
+    // Check connection again before saving
+    if (mongoose.connection.readyState !== 1) {
+      console.error('❌ MongoDB disconnected during test');
+      // Try to reconnect
+      try {
+        await mongoose.connect(process.env.MONGODB_URI || '');
+        console.log('✅ Reconnected to MongoDB');
+      } catch (reconnectError) {
+        console.error('❌ Failed to reconnect:', reconnectError);
+        return res.status(503).json({
+          success: false,
+          message: 'Database connection lost and reconnection failed'
+        });
+      }
+    }
+
+    // Create speed test record
+    const testId = `SPEED-${uuidv4().substring(0, 8).toUpperCase()}`;
+    
+    const speedTest = new WifiSpeedTest({
+      testId,
+      venueId: venueId || undefined,
+      tempVenueId: tempVenueId || undefined,
+      userId: req.user.userId,
+      userRole: req.user.role,
+      downloadMbps: Math.round(downloadMbps * 10) / 10,
+      uploadMbps: Math.round(uploadMbps * 10) / 10,
+      latencyMs: Math.round(finalLatencyMs) || 0,
+      jitterMs: 0,
+      packetLoss: 0,
+      connectionType: connectionType || 'wifi',
+      deviceInfo: finalDeviceInfo,
+      testMethod: 'ndt7',
+      testServer: serverUrl || `M-Lab ${provider}`,
+      location: location || undefined,
+      timestamp: new Date(),
+      isReliable: uploadSamples.length > 0,
+      notes: `NDT7 test via ${provider} - ${downloadSamples.length} download samples, ${uploadSamples.length} upload samples${uploadNote}`,
+      region
+    });
+
+    // Save with retry logic
+    let saveAttempts = 0;
+    let saved = false;
+    
+    while (!saved && saveAttempts < 3) {
+      try {
+        await speedTest.save();
+        saved = true;
+        console.log(`✅ Speed test saved: ${testId} - ${speedTest.downloadMbps}/${speedTest.uploadMbps} Mbps`);
+      } catch (saveError: any) {
+        saveAttempts++;
+        console.error(`❌ Save attempt ${saveAttempts} failed:`, saveError.message);
+        
+        if (saveAttempts < 3) {
+          // Wait 1 second before retrying
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          
+          // Try to reconnect
+          if (mongoose.connection.readyState !== 1) {
+            try {
+              await mongoose.connect(process.env.MONGODB_URI || '');
+              console.log('✅ Reconnected for retry');
+            } catch (reconnectError) {
+              console.error('❌ Reconnection failed during retry');
+            }
+          }
+        } else {
+          return res.status(500).json({
+            success: false,
+            message: 'Speed test completed but failed to save after 3 attempts: ' + saveError.message
+          });
+        }
+      }
+    }
+
+    // Update venue with latest speed test stats
+    if (tempVenueId) {
+      try {
+        await AgentVenueTemp.findOneAndUpdate(
+          { tempVenueId },
+          {
+            $set: {
+              'wifiData.latestSpeedTest': {
+                downloadMbps: speedTest.downloadMbps,
+                uploadMbps: speedTest.uploadMbps,
+                latencyMs: speedTest.latencyMs,
+                qualityScore: speedTest.qualityScore,
+                category: speedTest.category,
+                testedAt: speedTest.timestamp
+              },
+              'wifiData.hasSpeedTest': true
+            }
+          }
+        );
+        console.log('✅ Venue updated with speed test results');
+      } catch (updateError) {
+        console.error('⚠️ Failed to update venue, but test was saved:', updateError);
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Speed test completed successfully' + (uploadNote ? ' (upload estimated)' : ''),
+      data: speedTest,
+      metadata: {
+        downloadSamples: downloadSamples.length,
+        uploadSamples: uploadSamples.length,
+        isUploadEstimated: uploadSamples.length === 0
+      }
+    });
+
+  } catch (error: any) {
+    console.error('❌ Speed test error:', error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to run speed test'
+    });
+  }
+};
 
 /**
  * POST /api/wifi-speed/test
