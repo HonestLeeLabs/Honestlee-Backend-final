@@ -144,11 +144,15 @@ WifiSpeedTestSchema.pre('save', function(next) {
   else score += 5;
   
   // Upload speed scoring (0-15 points)
+if (test.uploadMbps && test.uploadMbps > 0) {
   if (test.uploadMbps >= 20) score += 15;
   else if (test.uploadMbps >= 10) score += 12;
   else if (test.uploadMbps >= 5) score += 8;
   else score += 4;
-  
+} else {
+  // Give minimum points if upload wasn't measured
+  score += 8; // neutral score
+}
   test.qualityScore = score;
   
   // Categorize

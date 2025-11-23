@@ -4,10 +4,14 @@ import {
   submitSpeedTest,
   getVenueSpeedTests,
   getMySpeedTests,
-  deleteSpeedTest
+  deleteSpeedTest,
+  runSpeedTest  // ✅ Add this import
 } from '../controllers/wifiSpeedTestController';
 
 const router = express.Router();
+
+// ✅ NEW: Run speed test server-side
+router.post('/run-test', authenticate, runSpeedTest);
 
 // Submit speed test (requires authentication)
 router.post('/test', authenticate, submitSpeedTest);

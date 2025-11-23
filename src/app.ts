@@ -185,12 +185,20 @@ const connectDatabases = async () => {
     ]);
     console.log('✅ All databases connected successfully');
 
-    const mongoURI = process.env.MONGODB_URI;
-    if (mongoURI) {
-      await mongoose.connect(mongoURI, {
-        serverSelectionTimeoutMS: 10000,
-        socketTimeoutMS: 45000,
-      });
+const mongoURI = process.env.MONGODB_URI;
+if (mongoURI) {
+  // ⭐ UPDATED: Increased timeouts for long-running operations like speed tests
+  await mongoose.connect(mongoURI, {
+    serverSelectionTimeoutMS: 15000,
+    socketTimeoutMS: 180000,        // ⭐ Changed from 45000 to 180000 (3 minutes)
+    connectTimeoutMS: 30000,
+    maxPoolSize: 50,                // ⭐ Added
+    minPoolSize: 10,                // ⭐ Added
+    maxIdleTimeMS: 60000,           // ⭐ Added
+    heartbeatFrequencyMS: 10000,    // ⭐ Added
+    retryWrites: true,
+    retryReads: true,
+  });
       console.log('✅ Global MongoDB connected:', mongoose.connection.name);
 
       try {
