@@ -87,7 +87,7 @@ const WifiSpeedTestSchema = new Schema<IWifiSpeedTest>({
   
   testMethod: {
     type: String,
-    enum: ['ookla', 'fast.com', 'manual', 'speedtest-net', 'cloudflare'],
+    enum: ['ookla', 'fast.com', 'manual', 'speedtest-net', 'cloudflare', 'ndt7'],
     required: true
   },
   testServer: String,
