@@ -197,7 +197,10 @@ export interface IAgentVenueTemp extends Document {
     rating?: number;
     userRatingsCount?: number;
     businessStatus?: string;
-    priceLevel?: number;
+    priceLevel?: number;    
+    priceLevelDisplay?: string; 
+    priceRange?: string; 
+    displayPrice?: string;
     photoReference?: string;
     importedAt?: Date;
     importedBy?: string;
@@ -462,10 +465,21 @@ const AgentVenueTempSchema = new Schema<IAgentVenueTemp>({
     rating: Number,
     userRatingsCount: Number,
     businessStatus: String,
-    priceLevel: Number,
+    priceLevel: { 
+      type: Number, 
+      min: 0, 
+      max: 4,
+      index: true 
+    },
+    priceLevelDisplay: { 
+      type: String,
+      enum: ['', '$', '$$', '$$$', '$$$$']
+    },
+    priceRange: String,
+    displayPrice: String,     
     photoReference: String,
     importedAt: Date,
-    importedBy: String
+    importedBy: String,
   },
   assignedTo: {
     type: Schema.Types.ObjectId,

@@ -1315,6 +1315,10 @@ export const deleteVenuePhoto = async (req: AgentRequest, res: Response): Promis
 
 // ===== ONBOARD FROM GOOGLE PLACES =====
 
+/**
+ * POST /api/agent/venues/onboard-from-google
+ * Onboard venue from Google Places API data
+ */
 export const onboardFromGoogle = async (req: AgentRequest, res: Response): Promise<Response> => {
   try {
     if (!req.user || !['AGENT', 'ADMIN'].includes(req.user.role)) {
@@ -1349,7 +1353,9 @@ export const onboardFromGoogle = async (req: AgentRequest, res: Response): Promi
       businessStatus,
       regularOpeningHours,
       editorialSummary,
-      priceLevel,
+      priceLevel, // NEW: Price level (0-4 scale)
+      priceRange, // NEW: Price range text (e.g., "100 - 200 Baht")
+      displayPrice, // NEW: Display price object from Google
       paymentOptions,
       accessibilityOptions,
       parkingOptions,
@@ -1358,10 +1364,20 @@ export const onboardFromGoogle = async (req: AgentRequest, res: Response): Promi
       allPhotos
     } = req.body;
 
-    console.log(`🗺️ Agent ${req.user.userId} onboarding venue from Google: ${name}`);
+    console.log(`🏪 Agent ${req.user.userId} onboarding venue from Google: ${name}`);
+    console.log(`💰 Price data received - Level: ${priceLevel}, Range: ${priceRange}`);
 
     const tempVenueId = `TEMP-${uuidv4().substring(0, 8).toUpperCase()}`;
-    
+
+    // Convert price level to dollar signs display
+    const getPriceLevelDisplay = (level: number | undefined): string => {
+      if (level === undefined || level === null) return '';
+      const symbols = ['', '$', '$$', '$$$', '$$$$'];
+      return symbols[level] || '';
+    };
+
+    const priceLevelDisplay = getPriceLevelDisplay(priceLevel);
+
     const tempVenue = new AgentVenueTemp({
       tempVenueId,
       createdBy: req.user.userId,
@@ -1377,12 +1393,10 @@ export const onboardFromGoogle = async (req: AgentRequest, res: Response): Promi
         postalCode,
         state,
         country,
-        countryCode
+        countryCode,
       },
       phone: phoneInternational,
-      socials: {
-        website: website
-      },
+      socials: { website: website },
       hours: regularOpeningHours,
       status: 'temp',
       onboardingStatus: VenueOnboardingStatus.UNLISTED,
@@ -1393,7 +1407,7 @@ export const onboardFromGoogle = async (req: AgentRequest, res: Response): Promi
         ownerMet: false,
         haveOwnersContact: false,
         managerMet: false,
-        haveManagersContact: false
+        haveManagersContact: false,
       },
       googleData: {
         placeId: googlePlaceId,
@@ -1407,7 +1421,13 @@ export const onboardFromGoogle = async (req: AgentRequest, res: Response): Promi
         reviews: JSON.stringify(reviews),
         businessStatus,
         editorialSummary,
-        priceLevel,
+        
+        // NEW: Enhanced price data
+        priceLevel: priceLevel, // 0-4 numeric scale
+        priceLevelDisplay: priceLevelDisplay, // $, $$, $$$, $$$$
+        priceRange: priceRange, // "100 - 200 Baht"
+        displayPrice: displayPrice ? JSON.stringify(displayPrice) : undefined, // Full price object
+        
         paymentOptions: JSON.stringify(paymentOptions),
         accessibilityOptions: JSON.stringify(accessibilityOptions),
         parkingOptions: JSON.stringify(parkingOptions),
@@ -1415,8 +1435,8 @@ export const onboardFromGoogle = async (req: AgentRequest, res: Response): Promi
         photoReference,
         allPhotos: JSON.stringify(allPhotos),
         importedAt: new Date(),
-        importedBy: req.user.userId
-      }
+        importedBy: req.user.userId,
+      },
     });
 
     await tempVenue.save();
@@ -1424,8 +1444,15 @@ export const onboardFromGoogle = async (req: AgentRequest, res: Response): Promi
     await createAuditLog(
       req.user.userId,
       req.user.role,
-      'agent.venue_added_from_google',
-      { tempVenueId, name, googlePlaceId, region },
+      'agent.venue.added.from.google',
+      {
+        tempVenueId,
+        name,
+        googlePlaceId,
+        region,
+        priceLevel,
+        priceRange,
+      },
       undefined,
       req
     );
@@ -1435,15 +1462,14 @@ export const onboardFromGoogle = async (req: AgentRequest, res: Response): Promi
     return res.status(201).json({
       success: true,
       data: tempVenue,
-      message: 'Venue onboarded from Google successfully'
+      message: 'Venue onboarded from Google successfully',
     });
-
   } catch (error: any) {
-    console.error('❌ Error onboarding from Google:', error);
+    console.error('Error onboarding from Google:', error);
     return res.status(500).json({
       success: false,
       message: 'Error onboarding venue',
-      error: error.message
+      error: error.message,
     });
   }
 };
