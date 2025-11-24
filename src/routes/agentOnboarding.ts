@@ -184,6 +184,12 @@ router.get('/venues/:tempVenueId/payment-types', (req: Request, res: Response, n
   agentController.getPaymentTypes(req as any, res).catch(next);
 });
 
+router.put(
+  '/venues/:tempVenueId/info',
+  (req: Request, res: Response, next: NextFunction) =>
+    agentController.updateVenueInfo(req as any, res).catch(next)
+);
+
 // ===== PHOTO OPERATIONS (Legacy) =====
 router.post(
   '/venues/:venueId/photos',

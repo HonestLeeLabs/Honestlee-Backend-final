@@ -96,6 +96,8 @@ export interface IAgentVenueTemp extends Document {
     line?: string;
     notes?: string;
   };
+  parkingOptions: String,
+  venueGroup: String,
 
   // GPS Accuracy (Legacy - keeping for backward compatibility)
   gpsAccuracy?: {
