@@ -669,6 +669,141 @@ export const attachMainQR = async (req: AgentRequest, res: Response): Promise<Re
   }
 };
 
+/**
+ * PUT /api/agent/venues/:tempVenueId/info - Update venue information
+ */
+export const updateVenueInfo = async (req: AuthRequest, res: Response): Promise<Response> => {
+  try {
+    if (!req.user || !['AGENT', 'ADMIN'].includes(req.user.role)) {
+      return res.status(403).json({ message: 'Agent or Admin access required' });
+    }
+
+    const { tempVenueId } = req.params;
+    const {
+      name,
+      phone,
+      website,
+      parkingoptions,
+      venuegroup,
+      category,
+      type,
+      hours,
+      openinghours,
+      address
+    } = req.body;
+
+    console.log(`🔄 Updating venue info for ${tempVenueId}`);
+
+    // Find venue
+    const venue = await AgentVenueTemp.findOne({ tempVenueId });
+    if (!venue) {
+      return res.status(404).json({ success: false, message: 'Venue not found' });
+    }
+
+    // Check if agent has permission (only assigned agent or admin)
+    if (req.user.role === 'AGENT' && venue.assignedTo?.toString() !== req.user.userId) {
+      return res.status(403).json({
+        success: false,
+        message: 'You can only update venues assigned to you'
+      });
+    }
+
+    // Prepare update data
+    const updateData: any = {};
+
+    // Basic info
+    if (name !== undefined) updateData.name = name.trim();
+    if (phone !== undefined) updateData.phone = phone.trim();
+    if (website !== undefined) updateData.socials = { 
+      ...venue.socials, 
+      website: website.trim() 
+    };
+
+    // Category and Type - handle both string and array formats
+    if (category !== undefined) {
+      updateData.category = typeof category === 'string' 
+        ? category.split(',').map((c: string) => c.trim()).filter(Boolean)
+        : category;
+    }
+
+    if (type !== undefined) {
+      // Store type as string in the document
+      updateData.type = typeof type === 'string'
+        ? type.trim()
+        : Array.isArray(type) ? type.join(', ') : type;
+    }
+
+    // Hours - support both 'hours' and 'openinghours'
+    const finalHours = hours || openinghours;
+    if (finalHours !== undefined) {
+      updateData.hours = finalHours.trim();
+    }
+
+    // Parking options (stored as custom field)
+    if (parkingoptions !== undefined) {
+      updateData.parkingOptions = parkingoptions.trim();
+    }
+
+    // Venue group (stored as custom field)
+    if (venuegroup !== undefined) {
+      updateData.venueGroup = venuegroup.trim();
+    }
+
+    // Address update
+    if (address) {
+      updateData.address = {
+        lat: address.lat !== undefined ? address.lat : venue.address.lat,
+        lng: address.lng !== undefined ? address.lng : venue.address.lng,
+        raw: address.raw?.trim() || venue.address.raw,
+        street: address.street?.trim() || venue.address.street,
+        city: address.city?.trim() || venue.address.city,
+        district: address.district?.trim() || venue.address.district,
+        postalCode: address.postalCode?.trim() || venue.address.postalCode,
+        state: address.state?.trim() || venue.address.state,
+        country: address.country?.trim() || venue.address.country,
+        countryCode: address.countryCode || venue.address.countryCode
+      };
+    }
+
+    // Update venue
+    const updatedVenue = await AgentVenueTemp.findOneAndUpdate(
+      { tempVenueId },
+      { $set: updateData },
+      { new: true }
+    );
+
+    // Audit log
+    await AuditLog.create({
+      auditId: uuidv4(),
+      actorId: req.user.userId,
+      actorRole: req.user.role,
+      venueId: venue.venueId?.toString(),
+      action: 'VENUE_INFO_UPDATED',
+      meta: {
+        tempVenueId,
+        venueName: updateData.name || venue.name,
+        updatedFields: Object.keys(updateData)
+      }
+    });
+
+    console.log(`✅ Venue info updated: ${tempVenueId}`);
+
+    return res.json({
+      success: true,
+      message: 'Venue information updated successfully',
+      data: updatedVenue
+    });
+
+  } catch (error: any) {
+    console.error('Error updating venue info:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to update venue information',
+      error: error.message
+    });
+  }
+};
+
 // ✅ GET MAIN QR
 
 export const getMainQR = async (req: AgentRequest, res: Response): Promise<Response> => {

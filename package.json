@@ -36,7 +36,8 @@
     "passport-google-oauth20": "^2.0.0",
     "socket.io": "^4.8.1",
     "speed-test": "^3.0.0",
-    "uuid": "^13.0.0"
+    "uuid": "^13.0.0",
+    "ws": "^8.18.3"
   },
   "devDependencies": {
     "@types/bcrypt": "^5.0.0",
