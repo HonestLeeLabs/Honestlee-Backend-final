@@ -96,8 +96,8 @@ export interface IAgentVenueTemp extends Document {
     line?: string;
     notes?: string;
   };
-  parkingOptions: String,
-  venueGroup: String,
+  parkingOptions: String;
+  venueGroup: String;
 
   // GPS Accuracy (Legacy - keeping for backward compatibility)
   gpsAccuracy?: {
@@ -250,6 +250,9 @@ export interface IAgentVenueTemp extends Document {
   declineReason?: string;
   leadCapturedAt?: Date;
   leadCapturedBy?: mongoose.Types.ObjectId;
+
+  // NEW: Agent Notes Field
+  agentNotes?: string;
 
   // Timestamps
   createdAt: Date;
@@ -550,6 +553,12 @@ const AgentVenueTempSchema = new Schema<IAgentVenueTemp>({
   leadCapturedBy: {
     type: Schema.Types.ObjectId,
     ref: 'User'
+  },
+
+  // NEW: Agent Notes Field (no character limit)
+  agentNotes: {
+    type: String,
+    default: ''
   }
 }, {
   timestamps: true,

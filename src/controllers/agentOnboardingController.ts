@@ -689,7 +689,8 @@ export const updateVenueInfo = async (req: AuthRequest, res: Response): Promise<
       type,
       hours,
       openinghours,
-      address
+      address,
+      agentNotes  // NEW: Accept agent notes
     } = req.body;
 
     console.log(`🔄 Updating venue info for ${tempVenueId}`);
@@ -749,6 +750,11 @@ export const updateVenueInfo = async (req: AuthRequest, res: Response): Promise<
       updateData.venueGroup = venuegroup.trim();
     }
 
+    // NEW: Agent Notes (unlimited text)
+    if (agentNotes !== undefined) {
+      updateData.agentNotes = agentNotes.trim();
+    }
+
     // Address update
     if (address) {
       updateData.address = {
@@ -782,7 +788,8 @@ export const updateVenueInfo = async (req: AuthRequest, res: Response): Promise<
       meta: {
         tempVenueId,
         venueName: updateData.name || venue.name,
-        updatedFields: Object.keys(updateData)
+        updatedFields: Object.keys(updateData),
+        hasAgentNotes: !!agentNotes
       }
     });
 
