@@ -442,6 +442,17 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
       notes
     } = req.body;
 
+    // ✅ ADD: Log incoming data for debugging
+    console.log('📥 Received speed test submission:', {
+      venueId,
+      tempVenueId,
+      downloadMbps,
+      uploadMbps,
+      latencyMs,
+      userId: req.user.userId,
+      userRole: req.user.role
+    });
+
     // Validation
     if (!venueId && !tempVenueId) {
       return res.status(400).json({
@@ -450,7 +461,7 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    if (!downloadMbps || !uploadMbps || !latencyMs) {
+    if (!downloadMbps || !uploadMbps || latencyMs === undefined) {
       return res.status(400).json({
         success: false,
         message: 'Download speed, upload speed, and latency are required'
@@ -471,11 +482,16 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
     // Create speed test
     const testId = `SPEED-${uuidv4().substring(0, 8).toUpperCase()}`;
 
+    // ✅ FIX: Ensure userId is converted to ObjectId if it's a string
+    const userIdValue = typeof req.user.userId === 'string' 
+      ? new mongoose.Types.ObjectId(req.user.userId)
+      : req.user.userId;
+
     const speedTest = new WifiSpeedTest({
       testId,
       venueId,
       tempVenueId,
-      userId: req.user.userId,
+      userId: userIdValue, // ✅ CHANGED: Use converted ObjectId
       userRole: req.user.role,
       downloadMbps: parseFloat(downloadMbps),
       uploadMbps: parseFloat(uploadMbps),
@@ -499,28 +515,51 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
       isReliable: true
     });
 
-    await speedTest.save();
-
-    console.log(`✅ Speed test saved: ${testId} - ${downloadMbps}/${uploadMbps} Mbps`);
+    // ✅ ADD: Better error handling with detailed logging
+    try {
+      await speedTest.save();
+      console.log(`✅ Speed test saved: ${testId} - ${downloadMbps}/${uploadMbps} Mbps`);
+    } catch (saveError: any) {
+      console.error('❌ Error saving speed test:', {
+        message: saveError.message,
+        name: saveError.name,
+        code: saveError.code,
+        errors: saveError.errors,
+        stack: saveError.stack
+      });
+      
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to save speed test',
+        error: saveError.message,
+        details: saveError.errors // Include validation errors
+      });
+    }
 
     // Update venue with latest speed test stats
     if (tempVenueId) {
-      await AgentVenueTemp.findOneAndUpdate(
-        { tempVenueId },
-        {
-          $set: {
-            'wifiData.latestSpeedTest': {
-              downloadMbps: speedTest.downloadMbps,
-              uploadMbps: speedTest.uploadMbps,
-              latencyMs: speedTest.latencyMs,
-              qualityScore: speedTest.qualityScore,
-              category: speedTest.category,
-              testedAt: speedTest.timestamp
-            },
-            'wifiData.hasSpeedTest': true
+      try {
+        await AgentVenueTemp.findOneAndUpdate(
+          { tempVenueId },
+          {
+            $set: {
+              'wifiData.latestSpeedTest': {
+                downloadMbps: speedTest.downloadMbps,
+                uploadMbps: speedTest.uploadMbps,
+                latencyMs: speedTest.latencyMs,
+                qualityScore: speedTest.qualityScore,
+                category: speedTest.category,
+                testedAt: speedTest.timestamp
+              },
+              'wifiData.hasSpeedTest': true
+            }
           }
-        }
-      );
+        );
+        console.log('✅ Venue updated with speed test results');
+      } catch (updateError: any) {
+        console.error('⚠️ Failed to update venue:', updateError.message);
+        // Don't fail the request if venue update fails
+      }
     }
 
     return res.status(201).json({
@@ -530,7 +569,12 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
     });
 
   } catch (error: any) {
-    console.error('❌ Error submitting speed test:', error);
+    console.error('❌ Error submitting speed test:', {
+      message: error.message,
+      stack: error.stack,
+      name: error.name
+    });
+    
     return res.status(500).json({
       success: false,
       message: 'Failed to submit speed test',
