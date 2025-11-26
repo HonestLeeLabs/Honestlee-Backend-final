@@ -118,14 +118,12 @@ router.post(
     uploadVenueMedia.single('file')(req, res, (err) => {
       if (err) {
         console.error('❌ Multer error:', err);
-        
         if (err.code === 'LIMIT_FILE_SIZE') {
           return res.status(400).json({
             success: false,
             message: 'File too large. Max 500MB allowed'
           });
         }
-        
         if (err.code === 'FILE_TYPE_NOT_ALLOWED') {
           return res.status(400).json({
             success: false,
@@ -133,30 +131,24 @@ router.post(
             details: 'Accepted formats: JPG, PNG, GIF, WEBP, HEIC, MP4, MOV, AVI, WEBM'
           });
         }
-        
         return res.status(400).json({
           success: false,
           message: err.message || 'Upload failed',
           error: err.code || 'UPLOAD_ERROR'
         });
       }
-      
-      // ✅ Check for file validation errors
       if ((req as any).fileValidationError) {
         return res.status(400).json({
           success: false,
           message: (req as any).fileValidationError
         });
       }
-      
-      // ✅ Check if file was received
       if (!req.file) {
         return res.status(400).json({
           success: false,
           message: 'No file uploaded. Please select a valid image or video file.'
         });
       }
-      
       next();
     });
   },
