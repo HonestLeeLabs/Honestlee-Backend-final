@@ -1,3 +1,5 @@
+// models/VenueMedia.ts
+
 import mongoose, { Schema, Document } from 'mongoose';
 
 export interface IVenueMedia extends Document {
@@ -8,10 +10,11 @@ export interface IVenueMedia extends Document {
   captureContext: string;
   submittedByRole: string;
   submittedBy: mongoose.Types.ObjectId;
-  fileUrl: string; // S3 URL
-  s3Key: string; // S3 key for deletion
+  fileUrl: string;
+  s3Key: string;
   fileFormat: string;
   fileSize: number;
+  fileHash?: string; // ✅ NEW: SHA-256 hash for duplicate detection
   isVideo: boolean;
   is360: boolean;
   publicVisibility: string;
@@ -34,55 +37,21 @@ const VenueMediaSchema = new Schema<IVenueMedia>(
     tempVenueId: { type: String, required: true, index: true },
     venueId: { type: Schema.Types.ObjectId, ref: 'Venue', sparse: true, index: true },
 
-    // COMPLETE MEDIA TYPE ENUM WITH ALL HLMT_* TYPES
     mediaType: {
       type: String,
       required: true,
       enum: [
-        // Original types
-        'OUTSIDE_VIEW',
-        'MENU_BOARD',
-        'FOOD_DISH',
-        'CHARGING_PORTS',
-        'SEATING_AREA_WORK',
-        'FAMILY_KIDS_AREA',
-        'KIDS_MENU',
-        'ROOM_HOTEL',
-        'SELFIE_OWNER_AGENT',
-        'DOC_LICENSE',
-        'PANO_360',
-        'USER_GENERAL',
-
-        // New HLMT_* types from your list
-        'DRINKS_BAR',
-        'WORKSTATIONS_LAPTOPS',
-        'BATHROOM_HOTEL',
-        'LOBBY_RECEPTION',
-        'POOL_AREA',
-        'GYM_AREA',
-        'CONFERENCE_ROOM',
-        'SUPERMARKET_AISLE',
-        'PARKING_AREA',
-        'ACCESSIBILITY',
-        'HIGH_CHAIRS',
-        'PET_AREA',
-        'COFFEE_MACHINE',
-        'SCREENSHOT_GPS_CHANGE',
-        'EVENTS_PHOTOS',
-        'VIBE_INTERIOR',
-        'SIGNBOARD',
-        'AMENITIES',
-        'EVENT_POSTER',
-        'VIEW_PANORAMA',
-        'TOILET_FACILITIES',
-        'WIFI_SIGN_EXISTING',
-        'WIFI_BOASTING_SPEED',
-        'LOGO',
-        'QR_INSTALL_SPOT',
-        'VIDEO_SHORT',
-        'COUNTER',
-        'PAYMENT_METHODS',
-        'MENU_PRICES',
+        'OUTSIDE_VIEW', 'MENU_BOARD', 'FOOD_DISH', 'CHARGING_PORTS',
+        'SEATING_AREA_WORK', 'FAMILY_KIDS_AREA', 'KIDS_MENU', 'ROOM_HOTEL',
+        'SELFIE_OWNER_AGENT', 'DOC_LICENSE', 'PANO_360', 'USER_GENERAL',
+        'DRINKS_BAR', 'WORKSTATIONS_LAPTOPS', 'BATHROOM_HOTEL', 'LOBBY_RECEPTION',
+        'POOL_AREA', 'GYM_AREA', 'CONFERENCE_ROOM', 'SUPERMARKET_AISLE',
+        'PARKING_AREA', 'ACCESSIBILITY', 'HIGH_CHAIRS', 'PET_AREA',
+        'COFFEE_MACHINE', 'SCREENSHOT_GPS_CHANGE', 'EVENTS_PHOTOS', 'VIBE_INTERIOR',
+        'SIGNBOARD', 'AMENITIES', 'EVENT_POSTER', 'VIEW_PANORAMA',
+        'TOILET_FACILITIES', 'WIFI_SIGN_EXISTING', 'WIFI_BOASTING_SPEED',
+        'LOGO', 'QR_INSTALL_SPOT', 'VIDEO_SHORT', 'COUNTER',
+        'PAYMENT_METHODS', 'MENU_PRICES',
       ],
       index: true,
     },
@@ -113,15 +82,17 @@ const VenueMediaSchema = new Schema<IVenueMedia>(
     fileFormat: {
       type: String,
       enum: [
-        // Images - lowercase
         'jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif', 'bmp', 'tiff',
-        // Videos - lowercase
         'mp4', 'mov', 'avi', 'webm', 'mkv', '3gp', '3gpp', 'insp',
       ],
       required: true,
     },
 
     fileSize: { type: Number, required: true },
+    
+    // ✅ NEW: File hash for global duplicate detection
+    fileHash: { type: String, index: true, sparse: true },
+    
     isVideo: { type: Boolean, default: false, index: true },
     is360: { type: Boolean, default: false, index: true },
 
@@ -135,21 +106,9 @@ const VenueMediaSchema = new Schema<IVenueMedia>(
     frontendGroup: {
       type: String,
       enum: [
-        'Latest',
-        'Videos',
-        'Menu',
-        'Food & Drink',
-        'Vibe',
-        'Amenities',
-        'Charging & Power',
-        'Family-friendly',
-        '360 view',
-        'Owner photos',
-        'User photos',
-        'Hotel Features',
-        'Accessibility',
-        'Events',
-        'Operational',
+        'Latest', 'Videos', 'Menu', 'Food & Drink', 'Vibe', 'Amenities',
+        'Charging & Power', 'Family-friendly', '360 view', 'Owner photos',
+        'User photos', 'Hotel Features', 'Accessibility', 'Events', 'Operational',
       ],
       default: 'Latest',
       index: true,
@@ -174,10 +133,11 @@ const VenueMediaSchema = new Schema<IVenueMedia>(
   { timestamps: true, collection: 'venuemedia' }
 );
 
-// Indexes
+// ✅ Compound index for duplicate detection
+VenueMediaSchema.index({ tempVenueId: 1, fileHash: 1 });
+VenueMediaSchema.index({ tempVenueId: 1, fileSize: 1, s3Key: 1 });
 VenueMediaSchema.index({ tempVenueId: 1, mediaType: 1 });
 VenueMediaSchema.index({ venueId: 1, publicVisibility: 1 });
 VenueMediaSchema.index({ submittedBy: 1, createdAt: -1 });
-VenueMediaSchema.index({ s3Key: 1 });
 
 export default mongoose.model<IVenueMedia>('VenueMedia', VenueMediaSchema);
