@@ -1,3 +1,5 @@
+// controllers/mediaController.ts
+
 import { Response } from 'express';
 import { AuthRequest } from '../middlewares/authMiddleware';
 import VenueMedia from '../models/VenueMedia';
@@ -6,13 +8,12 @@ import AuditLog from '../models/AuditLog';
 import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
 import { deleteFileFromS3, getS3KeyFromUrl } from '../config/uploadConfig';
+import crypto from 'crypto';
 
 /**
  * COMPLETE FRONTEND GROUP MAPPING
- * Maps each media type to its appropriate frontend display group
  */
 const frontendGroupMap: { [key: string]: string } = {
-  // Original mappings
   'OUTSIDE_VIEW': 'Vibe',
   'MENU_BOARD': 'Menu',
   'FOOD_DISH': 'Food & Drink',
@@ -25,8 +26,6 @@ const frontendGroupMap: { [key: string]: string } = {
   'DOC_LICENSE': 'Operational',
   'PANO_360': '360 view',
   'USER_GENERAL': 'User photos',
-
-  // New HLMT_* mappings
   'DRINKS_BAR': 'Food & Drink',
   'WORKSTATIONS_LAPTOPS': 'Amenities',
   'BATHROOM_HOTEL': 'Hotel Features',
@@ -59,11 +58,49 @@ const frontendGroupMap: { [key: string]: string } = {
 };
 
 /**
- * POST /api/agent/venues/:tempVenueId/media - Upload media to S3
+ * ✅ NEW: Generate SHA-256 hash from file buffer for duplicate detection
+ */
+const generateFileHash = (buffer: Buffer): string => {
+  return crypto.createHash('sha256').update(buffer).digest('hex');
+};
+
+/**
+ * ✅ NEW: Check if file already exists in venue (global duplicate check)
+ */
+const checkGlobalDuplicate = async (
+  tempVenueId: string,
+  fileBuffer: Buffer,
+  fileName: string
+): Promise<{ isDuplicate: boolean; existingMedia?: any }> => {
+  try {
+    const fileHash = generateFileHash(fileBuffer);
+
+    // Check if this exact file hash exists for this venue
+    const existingMedia = await VenueMedia.findOne({
+      tempVenueId,
+      fileHash,
+    }).select('mediaType fileUrl createdAt');
+
+    if (existingMedia) {
+      console.log(`🚫 DUPLICATE DETECTED: ${fileName} matches existing file in ${existingMedia.mediaType}`);
+      return {
+        isDuplicate: true,
+        existingMedia,
+      };
+    }
+
+    return { isDuplicate: false };
+  } catch (error) {
+    console.error('Error checking duplicate:', error);
+    return { isDuplicate: false };
+  }
+};
+
+/**
+ * POST /api/agent/venues/:tempVenueId/media - Upload media with global duplicate detection
  */
 export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
   try {
-    // Validate user
     if (!req.user || req.user.role !== 'AGENT') {
       return res.status(403).json({ success: false, message: 'Agent access required' });
     }
@@ -73,7 +110,6 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
     const { mediaType, captureContext, submittedByRole } = req.body;
     const file = (req as any).file;
 
-    // Check for file validation errors
     if ((req as any).fileValidationError) {
       console.error('File validation error:', (req as any).fileValidationError);
       return res.status(400).json({
@@ -90,15 +126,6 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    console.log('File uploaded to S3:', {
-      key: file.key,
-      location: file.location,
-      size: file.size,
-      contentType: file.contentType,
-      originalName: file.originalname,
-      metadata: file.metadata,
-    });
-
     // Verify venue assignment
     const venue = await AgentVenueTemp.findOne({
       tempVenueId,
@@ -107,11 +134,64 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
 
     if (!venue) {
       console.error('Venue not found or not assigned:', { tempVenueId, agentId: currentUser.userId });
+      
+      // ✅ DELETE uploaded S3 file if venue check fails
+      if (file.key) {
+        await deleteFileFromS3(file.key);
+        console.log(`🗑️ Deleted S3 file due to venue check failure: ${file.key}`);
+      }
+      
       return res.status(404).json({
         success: false,
         message: 'Venue not found or not assigned to you',
       });
     }
+
+    // ✅ GLOBAL DUPLICATE CHECK - Works across ALL media types
+    const fileBuffer = file.buffer || Buffer.from(''); // Multer S3 doesn't provide buffer by default
+    
+    // For S3 uploads, we need to generate hash from the file metadata
+    // Since we can't access the buffer after S3 upload, we use file.size + file.etag
+    const fileIdentifier = `${file.size}_${file.etag || file.key}`;
+    const fileHash = crypto.createHash('sha256').update(fileIdentifier).digest('hex');
+
+    const existingMedia = await VenueMedia.findOne({
+      tempVenueId,
+      $or: [
+        { fileHash },
+        { fileSize: file.size, s3Key: file.key }
+      ]
+    }).select('mediaType fileUrl createdAt');
+
+    if (existingMedia) {
+      console.log(`🚫 DUPLICATE DETECTED: ${file.originalname} already exists in ${existingMedia.mediaType}`);
+      
+      // ✅ DELETE the duplicate S3 file immediately
+      if (file.key) {
+        await deleteFileFromS3(file.key);
+        console.log(`🗑️ Deleted duplicate S3 file: ${file.key}`);
+      }
+      
+      return res.status(409).json({
+        success: false,
+        message: 'Duplicate file detected',
+        duplicate: {
+          fileName: file.originalname,
+          existingCategory: existingMedia.mediaType,
+          existingUrl: existingMedia.fileUrl,
+          uploadedAt: existingMedia.createdAt,
+        },
+      });
+    }
+
+    console.log('File uploaded to S3:', {
+      key: file.key,
+      location: file.location,
+      size: file.size,
+      contentType: file.contentType,
+      originalName: file.originalname,
+      hash: fileHash,
+    });
 
     // Determine file properties
     const fileExtension = path.extname(file.originalname).toLowerCase();
@@ -124,13 +204,9 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
       file.originalname.toLowerCase().includes('insp') ||
       fileExtension === '.insp';
 
-    // Convert to lowercase and remove the dot
-    const fileFormat = fileExtension.slice(1).toLowerCase(); // 'jpg' instead of '.JPG'
-
-    // Map media type to frontend group using the complete mapping
+    const fileFormat = fileExtension.slice(1).toLowerCase();
     const frontendGroup = frontendGroupMap[mediaType] || 'Latest';
 
-    // Determine public visibility
     let publicVisibility = 'Public (frontend)';
     if (['DOC_LICENSE', 'SELFIE_OWNER_AGENT', 'SCREENSHOT_GPS_CHANGE', 'QR_INSTALL_SPOT'].includes(mediaType)) {
       publicVisibility = 'Internal only';
@@ -139,14 +215,15 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
     console.log('Creating media record with:', {
       tempVenueId,
       mediaType,
-      fileFormat, // Should now be lowercase: 'jpg', 'png', etc.
+      fileFormat,
       fileSize: file.size,
+      fileHash,
       isVideo,
       is360,
       frontendGroup,
     });
 
-    // Create media record
+    // Create media record with file hash for future duplicate detection
     const media = await VenueMedia.create({
       mediaId: `M-${uuidv4().slice(0, 8)}`,
       tempVenueId,
@@ -157,8 +234,9 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
       submittedBy: currentUser.userId,
       fileUrl: file.location,
       s3Key: file.key,
-      fileFormat, // Now lowercase
+      fileFormat,
       fileSize: file.size,
+      fileHash, // ✅ Store hash for duplicate detection
       isVideo,
       is360,
       publicVisibility,
@@ -178,6 +256,7 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
         mediaId: media.mediaId,
         mediaType,
         fileSize: file.size,
+        fileHash,
         isVideo,
         is360,
         originalName: file.originalname,
@@ -189,11 +268,19 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
 
     res.status(201).json({
       success: true,
-      message: 'Media uploaded successfully to S3',
+      message: 'Media uploaded successfully',
       data: media,
     });
   } catch (error: any) {
     console.error('Error uploading media:', error);
+    
+    // ✅ Clean up S3 file on error
+    const file = (req as any).file;
+    if (file?.key) {
+      await deleteFileFromS3(file.key);
+      console.log(`🗑️ Deleted S3 file due to error: ${file.key}`);
+    }
+    
     res.status(500).json({
       success: false,
       message: 'Failed to upload media',
@@ -240,7 +327,7 @@ export const getVenueMedia = async (req: AuthRequest, res: Response) => {
 };
 
 /**
- * DELETE /api/agent/venues/:tempVenueId/media/:mediaId - Delete media from S3
+ * DELETE /api/agent/venues/:tempVenueId/media/:mediaId - Delete media
  */
 export const deleteVenueMedia = async (req: AuthRequest, res: Response) => {
   try {
@@ -281,6 +368,7 @@ export const deleteVenueMedia = async (req: AuthRequest, res: Response) => {
         tempVenueId,
         mediaId: media.mediaId,
         s3Key,
+        fileHash: media.fileHash,
       },
     });
 
@@ -288,7 +376,7 @@ export const deleteVenueMedia = async (req: AuthRequest, res: Response) => {
 
     res.json({
       success: true,
-      message: 'Media deleted successfully from S3',
+      message: 'Media deleted successfully',
     });
   } catch (error: any) {
     console.error('Error deleting media:', error);
@@ -301,7 +389,7 @@ export const deleteVenueMedia = async (req: AuthRequest, res: Response) => {
 };
 
 /**
- * GET /api/agent/venues/:tempVenueId/media/stats - Get upload progress stats
+ * GET /api/agent/venues/:tempVenueId/media/stats - Get upload stats
  */
 export const getMediaStats = async (req: AuthRequest, res: Response) => {
   try {
