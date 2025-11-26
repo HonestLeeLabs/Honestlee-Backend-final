@@ -28,7 +28,7 @@ export enum VerificationLevel {
   LEAD_CAPTURED = 'LEAD_CAPTURED',
   VERIFIED_QR_LIVE = 'VERIFIED_QR_LIVE',
   SUSPENDED = 'SUSPENDED',
-  CLOSED_PERM = 'CLOSED_PERM'
+  CLOSED_PERM = 'CLOSED_PERM',
 }
 
 export interface IAgentNote {
@@ -39,6 +39,7 @@ export interface IAgentNote {
   createdAt: Date;
   updatedAt?: Date;
 }
+
 export interface IAgentVenueTemp extends Document {
   tempVenueId: string;
   createdBy: mongoose.Types.ObjectId;
@@ -71,7 +72,6 @@ export interface IAgentVenueTemp extends Document {
   venueId?: mongoose.Types.ObjectId;
   region: string;
 
-  // Flags
   flags: {
     qrCodesLeftBehind: boolean;
     ownerMet: boolean;
@@ -80,7 +80,6 @@ export interface IAgentVenueTemp extends Document {
     haveManagersContact: boolean;
   };
 
-  // Contacts
   ownerContact?: {
     name?: string;
     phone?: string;
@@ -104,10 +103,10 @@ export interface IAgentVenueTemp extends Document {
     line?: string;
     notes?: string;
   };
-  parkingOptions: String;
-  venueGroup: String;
+  
+  parkingOptions: string;
+  venueGroup: string;
 
-  // GPS Accuracy (Legacy - keeping for backward compatibility)
   gpsAccuracy?: {
     oldLocation?: {
       lat: number;
@@ -123,7 +122,6 @@ export interface IAgentVenueTemp extends Document {
     offsetDistance?: number;
   };
 
-  // Payment Types
   paymentTypes?: {
     cash?: boolean;
     creditCard?: boolean;
@@ -140,11 +138,10 @@ export interface IAgentVenueTemp extends Document {
     paypal?: boolean;
     other?: string[];
   };
-  
+
   paymentTypesConfirmed?: boolean;
   paymentTypesConfirmedAt?: Date;
 
-  // NEW: GPS Data (Enhanced GPS tracking)
   gpsData?: {
     src_lat?: number;
     src_lng?: number;
@@ -165,7 +162,6 @@ export interface IAgentVenueTemp extends Document {
     }>;
   };
 
-  // NEW: WiFi Speed Test Data
   wifiData?: {
     hasSpeedTest?: boolean;
     latestSpeedTest?: {
@@ -185,7 +181,6 @@ export interface IAgentVenueTemp extends Document {
       totalTests?: number;
       lastCalculatedAt?: Date;
     };
-    // WiFi SSIDs
     ssids?: Array<{
       ssid: string;
       isGuest?: boolean;
@@ -195,7 +190,6 @@ export interface IAgentVenueTemp extends Document {
     }>;
   };
 
-  // Google Data
   googleData?: {
     placeId: string;
     primaryType?: string;
@@ -214,15 +208,13 @@ export interface IAgentVenueTemp extends Document {
     importedBy?: string;
   };
 
-  // Assignment Fields
   assignedTo?: mongoose.Types.ObjectId;
   assignedBy?: mongoose.Types.ObjectId;
   assignmentDate?: Date;
   expectedVisitDate?: Date;
   visitedAt?: Date;
   visitStatus: 'not_visited' | 'visited' | 'in_progress';
-  
-  // Vitals Fields
+
   vitalsCompleted: boolean;
   vitalsCompletedAt?: Date;
   vitalsData?: {
@@ -248,19 +240,18 @@ export interface IAgentVenueTemp extends Document {
     workFriendly?: boolean;
   };
 
-  // Task completion flags
   gpsVerified?: boolean;
   photosUploaded?: boolean;
   zonesCreated?: boolean;
   atmosphereSet?: boolean;
 
-  // Decline/Lead Capture
   declineReason?: string;
   leadCapturedAt?: Date;
   leadCapturedBy?: mongoose.Types.ObjectId;
+  
+  // NEW: Notes Array
   notes?: IAgentNote[];
 
-  // Timestamps
   createdAt: Date;
   updatedAt: Date;
 }
@@ -382,8 +373,6 @@ const AgentVenueTempSchema = new Schema<IAgentVenueTemp>({
     },
     offsetDistance: Number
   },
-
-  // Payment Types Schema
   paymentTypes: {
     cash: { type: Boolean, default: false },
     creditCard: { type: Boolean, default: false },
@@ -400,11 +389,8 @@ const AgentVenueTempSchema = new Schema<IAgentVenueTemp>({
     paypal: { type: Boolean, default: false },
     other: [{ type: String }]
   },
-  
   paymentTypesConfirmed: { type: Boolean, default: false },
   paymentTypesConfirmedAt: Date,
-  
-  // Enhanced GPS Data Schema
   gpsData: {
     src_lat: Number,
     src_lng: Number,
@@ -430,8 +416,6 @@ const AgentVenueTempSchema = new Schema<IAgentVenueTemp>({
       },
     ],
   },
-
-  // NEW: WiFi Data Schema
   wifiData: {
     hasSpeedTest: { type: Boolean, default: false },
     latestSpeedTest: {
@@ -464,7 +448,6 @@ const AgentVenueTempSchema = new Schema<IAgentVenueTemp>({
       }
     ]
   },
-
   googleData: {
     placeId: { type: String, index: true },
     primaryType: String,
@@ -474,18 +457,18 @@ const AgentVenueTempSchema = new Schema<IAgentVenueTemp>({
     rating: Number,
     userRatingsCount: Number,
     businessStatus: String,
-    priceLevel: { 
-      type: Number, 
-      min: 0, 
+    priceLevel: {
+      type: Number,
+      min: 0,
       max: 4,
-      index: true 
+      index: true
     },
-    priceLevelDisplay: { 
+    priceLevelDisplay: {
       type: String,
       enum: ['', '$', '$$', '$$$', '$$$$']
     },
     priceRange: String,
-    displayPrice: String,     
+    displayPrice: String,
     photoReference: String,
     importedAt: Date,
     importedBy: String,
@@ -547,13 +530,10 @@ const AgentVenueTempSchema = new Schema<IAgentVenueTemp>({
     wifiAvailable: Boolean,
     workFriendly: Boolean
   },
-  
-  // Task completion flags
   gpsVerified: { type: Boolean, default: false },
   photosUploaded: { type: Boolean, default: false },
   zonesCreated: { type: Boolean, default: false },
   atmosphereSet: { type: Boolean, default: false },
-  
   declineReason: String,
   leadCapturedAt: Date,
   leadCapturedBy: {
@@ -561,35 +541,23 @@ const AgentVenueTempSchema = new Schema<IAgentVenueTemp>({
     ref: 'User'
   },
 
- // NEW: Notes Array
+  // NEW: Notes Array
   notes: [
     {
-      noteId: {
-        type: String,
-        required: true
-      },
+      noteId: { type: String, required: true },
       noteType: {
         type: String,
         enum: ['vitals', 'gps', 'zones', 'photos', 'wifi', 'atmosphere', 'general'],
         required: true,
         index: true
       },
-      content: {
-        type: String,
-        required: true
-      },
-      createdBy: {
-        type: Schema.Types.ObjectId,
-        ref: 'User',
-        required: true
-      },
-      createdAt: {
-        type: Date,
-        default: Date.now
-      },
+      content: { type: String, required: true },
+      createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+      createdAt: { type: Date, default: Date.now },
       updatedAt: Date
     }
-  ]
+  ],
+
 }, {
   timestamps: true,
   collection: 'agent_venue_temps'
