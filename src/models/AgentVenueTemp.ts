@@ -31,6 +31,14 @@ export enum VerificationLevel {
   CLOSED_PERM = 'CLOSED_PERM'
 }
 
+export interface IAgentNote {
+  noteId: string;
+  noteType: 'vitals' | 'gps' | 'zones' | 'photos' | 'wifi' | 'atmosphere' | 'general';
+  content: string;
+  createdBy: mongoose.Types.ObjectId;
+  createdAt: Date;
+  updatedAt?: Date;
+}
 export interface IAgentVenueTemp extends Document {
   tempVenueId: string;
   createdBy: mongoose.Types.ObjectId;
@@ -250,9 +258,7 @@ export interface IAgentVenueTemp extends Document {
   declineReason?: string;
   leadCapturedAt?: Date;
   leadCapturedBy?: mongoose.Types.ObjectId;
-
-  // NEW: Agent Notes Field
-  agentNotes?: string;
+  notes?: IAgentNote[];
 
   // Timestamps
   createdAt: Date;
@@ -555,11 +561,35 @@ const AgentVenueTempSchema = new Schema<IAgentVenueTemp>({
     ref: 'User'
   },
 
-  // NEW: Agent Notes Field (no character limit)
-  agentNotes: {
-    type: String,
-    default: ''
-  }
+ // NEW: Notes Array
+  notes: [
+    {
+      noteId: {
+        type: String,
+        required: true
+      },
+      noteType: {
+        type: String,
+        enum: ['vitals', 'gps', 'zones', 'photos', 'wifi', 'atmosphere', 'general'],
+        required: true,
+        index: true
+      },
+      content: {
+        type: String,
+        required: true
+      },
+      createdBy: {
+        type: Schema.Types.ObjectId,
+        ref: 'User',
+        required: true
+      },
+      createdAt: {
+        type: Date,
+        default: Date.now
+      },
+      updatedAt: Date
+    }
+  ]
 }, {
   timestamps: true,
   collection: 'agent_venue_temps'

@@ -670,6 +670,307 @@ export const attachMainQR = async (req: AgentRequest, res: Response): Promise<Re
 };
 
 /**
+ * POST /api/agent/venues/:tempVenueId/notes
+ * Add a note to venue
+ */
+export const addVenueNote = async (req: AuthRequest, res: Response): Promise<Response> => {
+  try {
+    if (!req.user || !['AGENT', 'ADMIN'].includes(req.user.role)) {
+      return res.status(403).json({ message: 'Agent or Admin access required' });
+    }
+
+    const { tempVenueId } = req.params;
+    const { noteType, content } = req.body;
+
+    if (!noteType || !content) {
+      return res.status(400).json({
+        success: false,
+        message: 'noteType and content are required'
+      });
+    }
+
+    const validNoteTypes = ['vitals', 'gps', 'zones', 'photos', 'wifi', 'atmosphere', 'general'];
+    if (!validNoteTypes.includes(noteType)) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid noteType. Must be one of: ${validNoteTypes.join(', ')}`
+      });
+    }
+
+    const venue = await AgentVenueTemp.findOne({ tempVenueId });
+
+    if (!venue) {
+      return res.status(404).json({
+        success: false,
+        message: 'Venue not found'
+      });
+    }
+
+    // Check permission
+    if (req.user.role === 'AGENT' && venue.assignedTo?.toString() !== req.user.userId) {
+      return res.status(403).json({
+        success: false,
+        message: 'You can only add notes to venues assigned to you'
+      });
+    }
+
+    // ✅ FIX: Convert string to ObjectId
+    const newNote = {
+      noteId: uuidv4(),
+      noteType,
+      content: content.trim(),
+      createdBy: new mongoose.Types.ObjectId(req.user.userId), // ← Changed this line
+      createdAt: new Date()
+    };
+
+    venue.notes = venue.notes || [];
+    venue.notes.push(newNote);
+
+    await venue.save();
+
+    await AuditLog.create({
+      auditId: uuidv4(),
+      actorId: req.user.userId,
+      actorRole: req.user.role,
+      venueId: venue.venueId?.toString(),
+      action: 'NOTE_ADDED',
+      meta: {
+        tempVenueId,
+        noteType,
+        noteId: newNote.noteId
+      }
+    });
+
+    console.log(`✅ Note added to venue ${tempVenueId}: ${noteType}`);
+
+    return res.status(201).json({
+      success: true,
+      message: 'Note added successfully',
+      data: newNote
+    });
+
+  } catch (error: any) {
+    console.error('❌ Error adding note:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to add note',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * GET /api/agent/venues/:tempVenueId/notes
+ * Get all notes for a venue (optionally filter by type)
+ */
+export const getVenueNotes = async (req: AuthRequest, res: Response): Promise<Response> => {
+  try {
+    if (!req.user || !['AGENT', 'ADMIN'].includes(req.user.role)) {
+      return res.status(403).json({ message: 'Agent or Admin access required' });
+    }
+
+    const { tempVenueId } = req.params;
+    const { noteType } = req.query;
+
+    const venue = await AgentVenueTemp.findOne({ tempVenueId })
+      .select('tempVenueId name notes')
+      .populate('notes.createdBy', 'name email');
+
+    if (!venue) {
+      return res.status(404).json({
+        success: false,
+        message: 'Venue not found'
+      });
+    }
+
+    let notes = venue.notes || [];
+
+    // Filter by noteType if provided
+    if (noteType) {
+      notes = notes.filter(note => note.noteType === noteType);
+    }
+
+    // Sort by createdAt descending (newest first)
+    notes.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    return res.json({
+      success: true,
+      data: {
+        tempVenueId: venue.tempVenueId,
+        venueName: venue.name,
+        notes,
+        count: notes.length
+      }
+    });
+
+  } catch (error: any) {
+    console.error('❌ Error fetching notes:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to fetch notes',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * PUT /api/agent/venues/:tempVenueId/notes/:noteId
+ * Update a note
+ */
+export const updateVenueNote = async (req: AuthRequest, res: Response): Promise<Response> => {
+  try {
+    if (!req.user || !['AGENT', 'ADMIN'].includes(req.user.role)) {
+      return res.status(403).json({ message: 'Agent or Admin access required' });
+    }
+
+    const { tempVenueId, noteId } = req.params;
+    const { content } = req.body;
+
+    if (!content) {
+      return res.status(400).json({
+        success: false,
+        message: 'content is required'
+      });
+    }
+
+    const venue = await AgentVenueTemp.findOne({ tempVenueId });
+
+    if (!venue) {
+      return res.status(404).json({
+        success: false,
+        message: 'Venue not found'
+      });
+    }
+
+    const note = venue.notes?.find(n => n.noteId === noteId);
+
+    if (!note) {
+      return res.status(404).json({
+        success: false,
+        message: 'Note not found'
+      });
+    }
+
+    // Check permission (only creator or admin can edit)
+    if (req.user.role === 'AGENT' && note.createdBy.toString() !== req.user.userId) {
+      return res.status(403).json({
+        success: false,
+        message: 'You can only edit your own notes'
+      });
+    }
+
+    note.content = content.trim();
+    note.updatedAt = new Date();
+
+    await venue.save();
+
+    await AuditLog.create({
+      auditId: uuidv4(),
+      actorId: req.user.userId,
+      actorRole: req.user.role,
+      venueId: venue.venueId?.toString(),
+      action: 'NOTE_UPDATED',
+      meta: {
+        tempVenueId,
+        noteId,
+        noteType: note.noteType
+      }
+    });
+
+    console.log(`✅ Note updated: ${noteId}`);
+
+    return res.json({
+      success: true,
+      message: 'Note updated successfully',
+      data: note
+    });
+
+  } catch (error: any) {
+    console.error('❌ Error updating note:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to update note',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * DELETE /api/agent/venues/:tempVenueId/notes/:noteId
+ * Delete a note
+ */
+export const deleteVenueNote = async (req: AuthRequest, res: Response): Promise<Response> => {
+  try {
+    if (!req.user || !['AGENT', 'ADMIN'].includes(req.user.role)) {
+      return res.status(403).json({ message: 'Agent or Admin access required' });
+    }
+
+    const { tempVenueId, noteId } = req.params;
+
+    const venue = await AgentVenueTemp.findOne({ tempVenueId });
+
+    if (!venue) {
+      return res.status(404).json({
+        success: false,
+        message: 'Venue not found'
+      });
+    }
+
+    const noteIndex = venue.notes?.findIndex(n => n.noteId === noteId);
+
+    if (noteIndex === undefined || noteIndex === -1) {
+      return res.status(404).json({
+        success: false,
+        message: 'Note not found'
+      });
+    }
+
+    const note = venue.notes![noteIndex];
+
+    // Check permission (only creator or admin can delete)
+    if (req.user.role === 'AGENT' && note.createdBy.toString() !== req.user.userId) {
+      return res.status(403).json({
+        success: false,
+        message: 'You can only delete your own notes'
+      });
+    }
+
+    venue.notes!.splice(noteIndex, 1);
+
+    await venue.save();
+
+    await AuditLog.create({
+      auditId: uuidv4(),
+      actorId: req.user.userId,
+      actorRole: req.user.role,
+      venueId: venue.venueId?.toString(),
+      action: 'NOTE_DELETED',
+      meta: {
+        tempVenueId,
+        noteId,
+        noteType: note.noteType
+      }
+    });
+
+    console.log(`✅ Note deleted: ${noteId}`);
+
+    return res.json({
+      success: true,
+      message: 'Note deleted successfully'
+    });
+
+  } catch (error: any) {
+    console.error('❌ Error deleting note:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to delete note',
+      error: error.message
+    });
+  }
+};
+
+
+/**
  * PUT /api/agent/venues/:tempVenueId/info - Update venue information
  */
 export const updateVenueInfo = async (req: AuthRequest, res: Response): Promise<Response> => {
