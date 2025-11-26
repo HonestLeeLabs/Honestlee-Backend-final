@@ -216,4 +216,22 @@ router.get('/venues/:venueId/wifi-tests', (req: Request, res: Response, next: Ne
   agentController.getWiFiTests(req as any, res).catch(next);
 });
 
+
+// ===== NOTES OPERATIONS =====
+router.post('/venues/:tempVenueId/notes', (req: Request, res: Response, next: NextFunction) => {
+  agentController.addVenueNote(req as any, res).catch(next);
+});
+
+router.get('/venues/:tempVenueId/notes', (req: Request, res: Response, next: NextFunction) => {
+  agentController.getVenueNotes(req as any, res).catch(next);
+});
+
+router.put('/venues/:tempVenueId/notes/:noteId', (req: Request, res: Response, next: NextFunction) => {
+  agentController.updateVenueNote(req as any, res).catch(next);
+});
+
+router.delete('/venues/:tempVenueId/notes/:noteId', (req: Request, res: Response, next: NextFunction) => {
+  agentController.deleteVenueNote(req as any, res).catch(next);
+});
+
 export default router;
