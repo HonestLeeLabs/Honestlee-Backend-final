@@ -1661,9 +1661,9 @@ export const onboardFromGoogle = async (req: AgentRequest, res: Response): Promi
       businessStatus,
       regularOpeningHours,
       editorialSummary,
-      priceLevel, // NEW: Price level (0-4 scale)
-      priceRange, // NEW: Price range text (e.g., "100 - 200 Baht")
-      displayPrice, // NEW: Display price object from Google
+      priceLevel,
+      priceRange,
+      displayPrice,
       paymentOptions,
       accessibilityOptions,
       parkingOptions,
@@ -1672,16 +1672,37 @@ export const onboardFromGoogle = async (req: AgentRequest, res: Response): Promi
       allPhotos
     } = req.body;
 
+    // ✅ ADD VALIDATION
+    if (!googlePlaceId || !name) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Missing required fields: googlePlaceId and name are required' 
+      });
+    }
+
     console.log(`🏪 Agent ${req.user.userId} onboarding venue from Google: ${name}`);
+    console.log(`📍 Location: lat=${latitude}, lng=${longitude}`);
     console.log(`💰 Price data received - Level: ${priceLevel}, Range: ${priceRange}`);
 
     const tempVenueId = `TEMP-${uuidv4().substring(0, 8).toUpperCase()}`;
 
-    // Convert price level to dollar signs display
     const getPriceLevelDisplay = (level: number | undefined): string => {
       if (level === undefined || level === null) return '';
       const symbols = ['', '$', '$$', '$$$', '$$$$'];
       return symbols[level] || '';
+    };
+
+    // ✅ SAFE JSON STRINGIFY HELPER
+    const safeStringify = (data: any): string | undefined => {
+      if (!data || (typeof data === 'object' && Object.keys(data).length === 0)) {
+        return undefined;
+      }
+      try {
+        return JSON.stringify(data);
+      } catch (error) {
+        console.error('❌ JSON.stringify error:', error);
+        return undefined;
+      }
     };
 
     const priceLevelDisplay = getPriceLevelDisplay(priceLevel);
@@ -1690,22 +1711,22 @@ export const onboardFromGoogle = async (req: AgentRequest, res: Response): Promi
       tempVenueId,
       createdBy: req.user.userId,
       name,
-      category: allTypes || [primaryType],
+      category: allTypes || (primaryType ? [primaryType] : []), // ✅ Handle empty array
       address: {
-        lat: latitude,
-        lng: longitude,
-        raw: formattedAddress,
-        street,
-        city,
-        district,
-        postalCode,
-        state,
-        country,
-        countryCode,
+        lat: latitude || 0,  // ✅ Default to 0 if missing
+        lng: longitude || 0,
+        raw: formattedAddress || '',
+        street: street || undefined,
+        city: city || undefined,
+        district: district || undefined,
+        postalCode: postalCode || undefined,
+        state: state || undefined,
+        country: country || undefined,
+        countryCode: countryCode || undefined,
       },
-      phone: phoneInternational,
-      socials: { website: website },
-      hours: regularOpeningHours,
+      phone: phoneInternational || undefined,
+      socials: website ? { website } : undefined,
+      hours: regularOpeningHours || undefined,
       status: 'temp',
       onboardingStatus: VenueOnboardingStatus.UNLISTED,
       verificationLevel: VerificationLevel.PROSPECT_REMOTE,
@@ -1719,34 +1740,36 @@ export const onboardFromGoogle = async (req: AgentRequest, res: Response): Promi
       },
       googleData: {
         placeId: googlePlaceId,
-        primaryType,
-        primaryTypeLabel,
-        allTypes,
-        googleMapsUrl,
-        utcOffsetMinutes,
-        rating,
-        userRatingsCount,
-        reviews: JSON.stringify(reviews),
-        businessStatus,
-        editorialSummary,
+        primaryType: primaryType || undefined,
+        primaryTypeLabel: primaryTypeLabel || undefined,
+        allTypes: allTypes || undefined,
+        googleMapsUrl: googleMapsUrl || undefined,
+        utcOffsetMinutes: utcOffsetMinutes || undefined,
+        rating: rating || undefined,
+        userRatingsCount: userRatingsCount || undefined,
+        reviews: safeStringify(reviews),  // ✅ Safe stringify
+        businessStatus: businessStatus || undefined,
+        editorialSummary: editorialSummary || undefined,
         
-        // NEW: Enhanced price data
-        priceLevel: priceLevel, // 0-4 numeric scale
-        priceLevelDisplay: priceLevelDisplay, // $, $$, $$$, $$$$
-        priceRange: priceRange, // "100 - 200 Baht"
-        displayPrice: displayPrice ? JSON.stringify(displayPrice) : undefined, // Full price object
+        // Price data
+        priceLevel: priceLevel !== null && priceLevel !== undefined ? priceLevel : undefined,
+        priceLevelDisplay: priceLevelDisplay || undefined,
+        priceRange: priceRange || undefined,
+        displayPrice: safeStringify(displayPrice),  // ✅ Safe stringify
         
-        paymentOptions: JSON.stringify(paymentOptions),
-        accessibilityOptions: JSON.stringify(accessibilityOptions),
-        parkingOptions: JSON.stringify(parkingOptions),
-        atmosphereFlags: JSON.stringify(atmosphereFlags),
-        photoReference,
-        allPhotos: JSON.stringify(allPhotos),
+        // ✅ SAFE STRINGIFY FOR NESTED OBJECTS
+        paymentOptions: safeStringify(paymentOptions),
+        accessibilityOptions: safeStringify(accessibilityOptions),
+        parkingOptions: safeStringify(parkingOptions),
+        atmosphereFlags: safeStringify(atmosphereFlags),
+        photoReference: photoReference || undefined,
+        allPhotos: safeStringify(allPhotos),
         importedAt: new Date(),
         importedBy: req.user.userId,
       },
     });
 
+    // ✅ ADD BETTER ERROR HANDLING FOR SAVE
     await tempVenue.save();
 
     await createAuditLog(
@@ -1773,11 +1796,27 @@ export const onboardFromGoogle = async (req: AgentRequest, res: Response): Promi
       message: 'Venue onboarded from Google successfully',
     });
   } catch (error: any) {
-    console.error('Error onboarding from Google:', error);
+    // ✅ IMPROVED ERROR LOGGING
+    console.error('❌ Error onboarding from Google:', error);
+    console.error('❌ Error stack:', error.stack);
+    console.error('❌ Error name:', error.name);
+    
+    // Log validation errors specifically
+    if (error.name === 'ValidationError') {
+      console.error('❌ Validation errors:', JSON.stringify(error.errors, null, 2));
+      return res.status(400).json({
+        success: false,
+        message: 'Validation error',
+        error: error.message,
+        details: error.errors,
+      });
+    }
+
     return res.status(500).json({
       success: false,
       message: 'Error onboarding venue',
       error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
     });
   }
 };

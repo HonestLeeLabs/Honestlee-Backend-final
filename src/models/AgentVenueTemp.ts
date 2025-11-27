@@ -448,31 +448,46 @@ const AgentVenueTempSchema = new Schema<IAgentVenueTemp>({
       }
     ]
   },
-  googleData: {
-    placeId: { type: String, index: true },
-    primaryType: String,
-    primaryTypeLabel: String,
-    allTypes: [String],
-    googleMapsUrl: String,
-    rating: Number,
-    userRatingsCount: Number,
-    businessStatus: String,
-    priceLevel: {
-      type: Number,
-      min: 0,
-      max: 4,
-      index: true
-    },
-    priceLevelDisplay: {
-      type: String,
-      enum: ['', '$', '$$', '$$$', '$$$$']
-    },
-    priceRange: String,
-    displayPrice: String,
-    photoReference: String,
-    importedAt: Date,
-    importedBy: String,
+googleData: {
+  placeId: { type: String, index: true },
+  primaryType: String,
+  primaryTypeLabel: String,
+  allTypes: [String],
+  googleMapsUrl: String,
+  
+  // ✅ ADD THESE MISSING FIELDS
+  utcOffsetMinutes: Number,
+  rating: Number,
+  userRatingsCount: Number,
+  reviews: String,  // Stored as JSON string
+  businessStatus: String,
+  editorialSummary: String,
+  
+  // Price data
+  priceLevel: {
+    type: Number,
+    min: 0,
+    max: 4,
+    index: true
   },
+  priceLevelDisplay: {
+    type: String,
+    enum: ['', '$', '$$', '$$$', '$$$$']
+  },
+  priceRange: String,
+  displayPrice: String,
+  
+  // ✅ ADD THESE NEW FIELDS FOR GOOGLE PLACE DETAILS
+  paymentOptions: String,  // JSON stringified
+  accessibilityOptions: String,  // JSON stringified
+  parkingOptions: String,  // JSON stringified
+  atmosphereFlags: String,  // JSON stringified
+  photoReference: String,
+  allPhotos: String,  // JSON stringified array
+  
+  importedAt: Date,
+  importedBy: String,
+},
   assignedTo: {
     type: Schema.Types.ObjectId,
     ref: 'User',
