@@ -111,13 +111,13 @@ router.put('/venues/:tempVenueId/gps', (req: Request, res: Response, next: NextF
   agentController.updateVenueGPS(req as any, res).catch(next);
 });
 
-// ===== MEDIA UPLOAD ROUTES (S3) - ✅ WITH ERROR HANDLING =====
+// ===== MEDIA UPLOAD ROUTES (S3) - WITH ENHANCED ERROR LOGGING =====
 router.post(
   '/venues/:tempVenueId/media',
   (req: Request, res: Response, next: NextFunction) => {
     uploadVenueMedia.single('file')(req, res, (err) => {
       if (err) {
-        console.error('❌ Multer error:', err);
+        console.error('❌ Multer error during media upload:', err);
         if (err.code === 'LIMIT_FILE_SIZE') {
           return res.status(400).json({
             success: false,
@@ -207,7 +207,6 @@ router.post('/venues/:venueId/wifi-test', (req: Request, res: Response, next: Ne
 router.get('/venues/:venueId/wifi-tests', (req: Request, res: Response, next: NextFunction) => {
   agentController.getWiFiTests(req as any, res).catch(next);
 });
-
 
 // ===== NOTES OPERATIONS =====
 router.post('/venues/:tempVenueId/notes', (req: Request, res: Response, next: NextFunction) => {
