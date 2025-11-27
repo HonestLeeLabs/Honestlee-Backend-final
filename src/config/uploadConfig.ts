@@ -12,27 +12,23 @@ const s3 = new S3Client({
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
   },
   region: process.env.AWS_REGION || 'ap-south-1',
-  // ✅ Configure for large file uploads
   requestHandler: {
     connectionTimeout: 900000, // 15 minutes
     socketTimeout: 900000,     // 15 minutes
   } as any,
-  maxAttempts: 3, // Retry failed uploads
+  maxAttempts: 3,
 });
 
-// ===== ENHANCED FILE FILTER (iOS-Optimized) =====
+// ===== ENHANCED FILE FILTER (MOBILE-OPTIMIZED) =====
 const venueMediaFileFilter = (req: any, file: any, cb: any) => {
-  console.log('📸 iOS Upload Attempt:', {
+  console.log('📸 Upload Attempt:', {
     name: file.originalname,
     mimeType: file.mimetype,
-    size: file.size, // May be undefined on iOS - this is NORMAL
+    size: file.size,
     encoding: file.encoding
   });
 
-  // ✅ CRITICAL: Don't validate file.size here - it's often undefined on iOS
-  // Size validation happens AFTER upload via multer's limits (if set)
-
-  // ✅ PRIORITY 1: Check file extension (most reliable for iOS)
+  // ✅ PRIORITY 1: Check file extension (most reliable for mobile)
   const allowedExtensions = /\.(jpg|jpeg|png|gif|webp|heic|heif|bmp|tiff|tif|jpe|jfif|mp4|mov|avi|webm|mkv|3gp|3gpp|m4v|insp)$/i;
 
   if (file.originalname && allowedExtensions.test(file.originalname.toLowerCase())) {
@@ -41,7 +37,7 @@ const venueMediaFileFilter = (req: any, file: any, cb: any) => {
     return;
   }
 
-  // ✅ PRIORITY 2: Expanded MIME types for iOS compatibility
+  // ✅ PRIORITY 2: Expanded MIME types for mobile compatibility
   const allowedMimeTypes = [
     // Standard image formats
     'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp',
@@ -51,11 +47,10 @@ const venueMediaFileFilter = (req: any, file: any, cb: any) => {
     // Standard video formats
     'video/mp4', 'video/mpeg', 'video/quicktime', 'video/x-msvideo',
     'video/webm', 'video/x-matroska', 'video/3gpp', 'video/3gpp2', 'video/x-m4v',
-    // iOS fallbacks (common when iOS doesn't detect MIME properly)
+    // Mobile fallbacks (critical for iOS)
     'application/octet-stream', 'binary/octet-stream', '', null, undefined
   ];
 
-  // Convert to lowercase and check, handling null/undefined
   const fileMimeType = (file.mimetype || '').toLowerCase();
   
   if (allowedMimeTypes.includes(fileMimeType) || !file.mimetype) {
@@ -64,32 +59,32 @@ const venueMediaFileFilter = (req: any, file: any, cb: any) => {
     return;
   }
 
-  // ✅ PRIORITY 3: If we have a valid filename but no recognized MIME, accept it
+  // ✅ PRIORITY 3: Fallback for valid filename patterns
   if (file.originalname) {
     const ext = path.extname(file.originalname).toLowerCase();
     const imageVideoExts = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic', '.heif', 
                             '.bmp', '.tiff', '.mp4', '.mov', '.avi', '.webm', '.3gp'];
     
     if (imageVideoExts.includes(ext)) {
-      console.log('✅ File accepted by filename pattern (iOS fallback):', file.originalname);
+      console.log('✅ File accepted by filename pattern (mobile fallback):', file.originalname);
       cb(null, true);
       return;
     }
   }
 
-  // Reject only if we're absolutely sure it's invalid
+  // Reject only if absolutely sure it's invalid
   console.error('❌ File rejected:', {
     name: file.originalname,
     mime: file.mimetype,
     reason: 'Invalid file type'
   });
-
+  
   const error: any = new Error('Only image and video files are allowed');
   error.code = 'FILE_TYPE_NOT_ALLOWED';
   cb(error, false);
 };
 
-// ===== ENHANCED HELPER FUNCTIONS =====
+// ===== HELPER FUNCTIONS =====
 const getMimeToExtensionMap = (): { [key: string]: string } => ({
   'image/jpeg': '.jpg',
   'image/jpg': '.jpg',
@@ -177,7 +172,7 @@ const getContentType = (file: any, fileExtension: string): string => {
   return contentType;
 };
 
-// ===== VENUE MEDIA UPLOAD TO S3 (iOS-OPTIMIZED + UNLIMITED SIZE) =====
+// ===== VENUE MEDIA UPLOAD TO S3 (MOBILE-OPTIMIZED) =====
 export const uploadVenueMedia = multer({
   storage: multerS3({
     s3: s3,
@@ -186,7 +181,7 @@ export const uploadVenueMedia = multer({
       const userAgent = (req as any).headers?.['user-agent'] || '';
       const deviceType = userAgent.includes('iPhone') || userAgent.includes('iPad') ? 'iOS' : 'other';
       
-      cb(null, {
+      cb(null, { 
         fieldName: file.fieldname,
         originalName: file.originalname,
         uploadedBy: (req as any).user?.userId || 'agent',
@@ -215,19 +210,19 @@ export const uploadVenueMedia = multer({
   }),
   fileFilter: venueMediaFileFilter,
   limits: {
-    fileSize: Infinity,       // ✅ NO LIMIT - Critical for iOS high-res photos
-    files: 100,              // Max 100 files per batch
-    fieldSize: 100 * 1024 * 1024, // 100MB field size
+    fileSize: Infinity,
+    files: 100,
+    fieldSize: 100 * 1024 * 1024,
   }
 });
 
-// ===== REVIEW IMAGES UPLOAD (iOS-OPTIMIZED) =====
+// ===== REVIEW IMAGES UPLOAD =====
 export const uploadReviewImages = multer({
   storage: multerS3({
     s3: s3,
     bucket: process.env.S3_BUCKET_NAME || 'honestlee-user-upload',
     metadata: function (req, file, cb) {
-      cb(null, {
+      cb(null, { 
         fieldName: file.fieldname,
         originalName: file.originalname
       });
@@ -247,12 +242,12 @@ export const uploadReviewImages = multer({
   }),
   fileFilter: venueMediaFileFilter,
   limits: {
-    fileSize: Infinity, // ✅ NO LIMIT for iOS compatibility
+    fileSize: Infinity,
     files: 20
   }
 });
 
-// ===== PROFILE IMAGE UPLOAD (iOS-OPTIMIZED) =====
+// ===== PROFILE IMAGE UPLOAD =====
 export const uploadProfileImage = multer({
   storage: multerS3({
     s3: s3,
@@ -275,11 +270,11 @@ export const uploadProfileImage = multer({
   }),
   fileFilter: venueMediaFileFilter,
   limits: {
-    fileSize: Infinity // ✅ NO LIMIT for iOS compatibility
+    fileSize: Infinity
   }
 });
 
-// ===== EVENT IMAGES UPLOAD (iOS-OPTIMIZED) =====
+// ===== EVENT IMAGES UPLOAD =====
 export const uploadEventImages = multer({
   storage: multerS3({
     s3: s3,
@@ -302,7 +297,7 @@ export const uploadEventImages = multer({
   }),
   fileFilter: venueMediaFileFilter,
   limits: {
-    fileSize: Infinity, // ✅ NO LIMIT for iOS compatibility
+    fileSize: Infinity,
     files: 10
   }
 });
@@ -315,7 +310,7 @@ export const deleteFileFromS3 = async (fileKey: string): Promise<boolean> => {
       Bucket: process.env.S3_BUCKET_NAME || 'honestlee-user-upload',
       Key: fileKey
     });
-
+    
     await s3.send(command);
     console.log(`✅ File deleted from S3: ${fileKey}`);
     return true;
@@ -328,7 +323,7 @@ export const deleteFileFromS3 = async (fileKey: string): Promise<boolean> => {
 export const getS3KeyFromUrl = (url: string): string | null => {
   try {
     const urlObj = new URL(url);
-    return urlObj.pathname.substring(1); // Remove leading slash
+    return urlObj.pathname.substring(1);
   } catch (error) {
     console.error('❌ Error parsing S3 URL:', error);
     return null;
