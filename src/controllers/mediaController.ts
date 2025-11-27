@@ -17,6 +17,7 @@ const frontendGroupMap: { [key: string]: string } = {
   'OUTSIDE_VIEW': 'Vibe',
   'MENU_BOARD': 'Menu',
   'FOOD_DISH': 'Food & Drink',
+  'FOOD_DISPLAY_COUNTER': 'Food & Drink', // ✅ NEW CATEGORY
   'CHARGING_PORTS': 'Charging & Power',
   'SEATING_AREA_WORK': 'Vibe',
   'FAMILY_KIDS_AREA': 'Family-friendly',
@@ -58,35 +59,54 @@ const frontendGroupMap: { [key: string]: string } = {
 };
 
 /**
- * ✅ NEW: Generate SHA-256 hash from file buffer for duplicate detection
+ * ✅ Generate file hash for duplicate detection
+ * Since multer-s3 uploads before we can access buffer, we use metadata
  */
-const generateFileHash = (buffer: Buffer): string => {
-  return crypto.createHash('sha256').update(buffer).digest('hex');
+const generateFileHashFromMetadata = (file: any): string => {
+  const identifier = `${file.originalname}_${file.size}_${file.mimetype}`;
+  return crypto.createHash('sha256').update(identifier).digest('hex');
 };
 
 /**
- * ✅ NEW: Check if file already exists in venue (global duplicate check)
+ * ✅ Check if duplicate file exists in venue
  */
 const checkGlobalDuplicate = async (
   tempVenueId: string,
-  fileBuffer: Buffer,
+  fileHash: string,
+  fileSize: number,
   fileName: string
 ): Promise<{ isDuplicate: boolean; existingMedia?: any }> => {
   try {
-    const fileHash = generateFileHash(fileBuffer);
-
-    // Check if this exact file hash exists for this venue
-    const existingMedia = await VenueMedia.findOne({
+    // Check by hash first (most accurate)
+    let existingMedia = await VenueMedia.findOne({
       tempVenueId,
       fileHash,
     }).select('mediaType fileUrl createdAt');
 
     if (existingMedia) {
-      console.log(`🚫 DUPLICATE DETECTED: ${fileName} matches existing file in ${existingMedia.mediaType}`);
+      console.log(`🚫 DUPLICATE DETECTED (by hash): ${fileName} matches existing file in ${existingMedia.mediaType}`);
       return {
         isDuplicate: true,
         existingMedia,
       };
+    }
+
+    // Fallback: Check by size + similar name (for extra safety)
+    const existingBySize = await VenueMedia.find({
+      tempVenueId,
+      fileSize,
+    }).select('mediaType fileUrl createdAt s3Key');
+
+    for (const media of existingBySize) {
+      // Check if filenames are very similar (same base name)
+      const existingFileName = media.s3Key.split('/').pop() || '';
+      if (existingFileName.includes(fileName.split('.')[0].slice(-10))) {
+        console.log(`🚫 DUPLICATE DETECTED (by size + name): ${fileName} matches ${existingFileName}`);
+        return {
+          isDuplicate: true,
+          existingMedia: media,
+        };
+      }
     }
 
     return { isDuplicate: false };
@@ -97,10 +117,14 @@ const checkGlobalDuplicate = async (
 };
 
 /**
- * POST /api/agent/venues/:tempVenueId/media - Upload media with global duplicate detection
+ * POST /api/agent/venues/:tempVenueId/media - Upload media with duplicate detection
  */
 export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
   try {
+    // ✅ Set extended timeout for large files (10 minutes)
+    req.setTimeout(600000);
+    res.setTimeout(600000);
+
     if (!req.user || req.user.role !== 'AGENT') {
       return res.status(403).json({ success: false, message: 'Agent access required' });
     }
@@ -135,7 +159,6 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
     if (!venue) {
       console.error('Venue not found or not assigned:', { tempVenueId, agentId: currentUser.userId });
       
-      // ✅ DELETE uploaded S3 file if venue check fails
       if (file.key) {
         await deleteFileFromS3(file.key);
         console.log(`🗑️ Deleted S3 file due to venue check failure: ${file.key}`);
@@ -147,26 +170,20 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    // ✅ GLOBAL DUPLICATE CHECK - Works across ALL media types
-    const fileBuffer = file.buffer || Buffer.from(''); // Multer S3 doesn't provide buffer by default
-    
-    // For S3 uploads, we need to generate hash from the file metadata
-    // Since we can't access the buffer after S3 upload, we use file.size + file.etag
-    const fileIdentifier = `${file.size}_${file.etag || file.key}`;
-    const fileHash = crypto.createHash('sha256').update(fileIdentifier).digest('hex');
+    // ✅ GLOBAL DUPLICATE CHECK - Generate hash from file metadata
+    const fileHash = generateFileHashFromMetadata(file);
 
-    const existingMedia = await VenueMedia.findOne({
+    const duplicateCheck = await checkGlobalDuplicate(
       tempVenueId,
-      $or: [
-        { fileHash },
-        { fileSize: file.size, s3Key: file.key }
-      ]
-    }).select('mediaType fileUrl createdAt');
+      fileHash,
+      file.size,
+      file.originalname
+    );
 
-    if (existingMedia) {
-      console.log(`🚫 DUPLICATE DETECTED: ${file.originalname} already exists in ${existingMedia.mediaType}`);
+    if (duplicateCheck.isDuplicate && duplicateCheck.existingMedia) {
+      console.log(`🚫 DUPLICATE DETECTED: ${file.originalname} already exists`);
       
-      // ✅ DELETE the duplicate S3 file immediately
+      // ✅ Delete the newly uploaded S3 file since it's a duplicate
       if (file.key) {
         await deleteFileFromS3(file.key);
         console.log(`🗑️ Deleted duplicate S3 file: ${file.key}`);
@@ -177,9 +194,9 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
         message: 'Duplicate file detected',
         duplicate: {
           fileName: file.originalname,
-          existingCategory: existingMedia.mediaType,
-          existingUrl: existingMedia.fileUrl,
-          uploadedAt: existingMedia.createdAt,
+          existingCategory: duplicateCheck.existingMedia.mediaType,
+          existingUrl: duplicateCheck.existingMedia.fileUrl,
+          uploadedAt: duplicateCheck.existingMedia.createdAt,
         },
       });
     }
@@ -223,7 +240,7 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
       frontendGroup,
     });
 
-    // Create media record with file hash for future duplicate detection
+    // Create media record with file hash
     const media = await VenueMedia.create({
       mediaId: `M-${uuidv4().slice(0, 8)}`,
       tempVenueId,
@@ -236,7 +253,7 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
       s3Key: file.key,
       fileFormat,
       fileSize: file.size,
-      fileHash, // ✅ Store hash for duplicate detection
+      fileHash, // ✅ Store hash for future duplicate checks
       isVideo,
       is360,
       publicVisibility,
@@ -274,7 +291,6 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
   } catch (error: any) {
     console.error('Error uploading media:', error);
     
-    // ✅ Clean up S3 file on error
     const file = (req as any).file;
     if (file?.key) {
       await deleteFileFromS3(file.key);
