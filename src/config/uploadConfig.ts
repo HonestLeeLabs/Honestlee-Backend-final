@@ -1,351 +1,287 @@
-// config/uploadConfig.ts
 import { S3Client, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import multer from 'multer';
 import multerS3 from 'multer-s3';
 import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
 
-// ===== AWS S3 CLIENT CONFIGURATION =====
+// AWS S3 CLIENT CONFIGURATION - 10GB File Support
 const s3 = new S3Client({
   credentials: {
     accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
   },
   region: process.env.AWS_REGION || 'ap-south-1',
+  // Configure for extremely large file uploads
   requestHandler: {
-    connectionTimeout: 900000,
-    socketTimeout: 900000,
+    connectionTimeout: 900000, // 15 minutes
+    socketTimeout: 900000, // 15 minutes
   } as any,
-  maxAttempts: 3,
+  maxAttempts: 3, // Retry failed uploads
 });
 
-console.log('✅ S3 Client initialized:', {
-  region: process.env.AWS_REGION || 'ap-south-1',
-  bucket: process.env.S3_BUCKET_NAME || 'honestlee-user-upload'
-});
-
-// ===== ENHANCED FILE FILTER WITH DETAILED LOGGING =====
-const venueMediaFileFilter = (req: any, file: any, cb: any) => {
-  const logId = `[FILTER-${Date.now()}]`;
-  
-  console.log(`${logId} 📸 File Filter - Upload Attempt:`, {
-    originalname: file.originalname,
-    mimetype: file.mimetype,
+// ✅ MOBILE-FRIENDLY FILE FILTER - No Size Restrictions
+const venueMediaFileFilter = (
+  req: any,
+  file: any,
+  cb: any
+) => {
+  console.log('Venue Media Upload Attempt', {
+    name: file.originalname,
+    mimeType: file.mimetype,
     size: file.size,
     encoding: file.encoding,
-    fieldname: file.fieldname,
-    userAgent: req.headers?.['user-agent']?.substring(0, 100),
-    contentType: req.headers?.['content-type'],
-    origin: req.headers?.['origin'],
   });
 
-  // Check if file object is valid
-  if (!file || !file.originalname) {
-    console.error(`${logId} ❌ REJECTED: Invalid file object`, { file });
-    const error: any = new Error('Invalid file object');
-    error.code = 'INVALID_FILE';
-    cb(error, false);
-    return;
-  }
-
-  // ✅ PRIORITY 1: Check file extension
-  const allowedExtensions = /\.(jpg|jpeg|png|gif|webp|heic|heif|bmp|tiff|tif|jpe|jfif|mp4|mov|avi|webm|mkv|3gp|3gpp|m4v|insp)$/i;
-  
-  if (file.originalname && allowedExtensions.test(file.originalname.toLowerCase())) {
-    const ext = path.extname(file.originalname).toLowerCase();
-    console.log(`${logId} ✅ ACCEPTED by extension: ${ext}`);
+  // ✅ PRIORITY 1: Check file extension first (most reliable for mobile)
+  const allowedExtensions = /\.(jpg|jpeg|png|gif|webp|heic|heif|bmp|tiff|mp4|mov|avi|webm|mkv|3gp|3gpp|ins|p)/i;
+  if (allowedExtensions.test(file.originalname.toLowerCase())) {
+    console.log('✅ File accepted by extension:', path.extname(file.originalname));
     cb(null, true);
     return;
   }
 
-  // ✅ PRIORITY 2: Check MIME type
+  // ✅ PRIORITY 2: Allowed MIME types (secondary check)
   const allowedMimeTypes = [
+    // Images
     'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp',
-    'image/bmp', 'image/tiff', 'image/x-icon',
-    'image/heic', 'image/heif', 'image/heic-sequence', 'image/heif-sequence',
+    'image/heic', 'image/heif', 'image/bmp', 'image/tiff',
+    // Videos
     'video/mp4', 'video/mpeg', 'video/quicktime', 'video/x-msvideo',
-    'video/webm', 'video/x-matroska', 'video/3gpp', 'video/3gpp2', 'video/x-m4v',
-    'application/octet-stream', 'binary/octet-stream', '', null, undefined
+    'video/webm', 'video/x-matroska', 'video/3gpp', 'video/3gpp2',
+    // ✅ MOBILE FALLBACKS - Critical for iOS/Android
+    'application/octet-stream',
   ];
 
-  const fileMimeType = (file.mimetype || '').toLowerCase();
-  
-  if (allowedMimeTypes.includes(fileMimeType) || !file.mimetype) {
-    console.log(`${logId} ✅ ACCEPTED by MIME type: ${file.mimetype || 'unknown'}`);
+  if (allowedMimeTypes.includes(file.mimetype.toLowerCase())) {
+    console.log('✅ File accepted by MIME type:', file.mimetype);
     cb(null, true);
     return;
   }
 
-  // ✅ PRIORITY 3: Fallback for valid filename patterns
-  if (file.originalname) {
-    const ext = path.extname(file.originalname).toLowerCase();
-    const imageVideoExts = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic', '.heif', 
-                            '.bmp', '.tiff', '.mp4', '.mov', '.avi', '.webm', '.3gp'];
-    
-    if (imageVideoExts.includes(ext)) {
-      console.log(`${logId} ✅ ACCEPTED by filename pattern: ${file.originalname}`);
-      cb(null, true);
-      return;
-    }
-  }
-
-  // Final rejection
-  console.error(`${logId} ❌ REJECTED: Invalid file type`, {
+  // Reject file
+  console.error('❌ File rejected', {
     name: file.originalname,
     mime: file.mimetype,
-    hasExtension: !!path.extname(file.originalname),
-    extension: path.extname(file.originalname)
+    reason: 'Invalid file type or extension',
   });
-  
-  const error: any = new Error('Only image and video files are allowed');
+  const error: any = new Error('Only image and video files are allowed!');
   error.code = 'FILE_TYPE_NOT_ALLOWED';
   cb(error, false);
 };
 
-// ===== HELPER FUNCTIONS =====
-const getMimeToExtensionMap = (): { [key: string]: string } => ({
-  'image/jpeg': '.jpg',
-  'image/jpg': '.jpg',
-  'image/png': '.png',
-  'image/gif': '.gif',
-  'image/webp': '.webp',
-  'image/bmp': '.bmp',
-  'image/tiff': '.tiff',
-  'image/tif': '.tiff',
-  'image/heic': '.jpg',
-  'image/heif': '.jpg',
-  'image/heic-sequence': '.jpg',
-  'image/heif-sequence': '.jpg',
-  'video/mp4': '.mp4',
-  'video/quicktime': '.mov',
-  'video/webm': '.webm',
-  'video/3gpp': '.3gp',
-  'video/3gpp2': '.3gp',
-  'video/x-m4v': '.mp4',
-  'application/octet-stream': '.jpg',
-  'binary/octet-stream': '.jpg',
-});
-
-const getContentTypeMap = (): { [key: string]: string } => ({
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.jpe': 'image/jpeg',
-  '.jfif': 'image/jpeg',
-  '.png': 'image/png',
-  '.gif': 'image/gif',
-  '.webp': 'image/webp',
-  '.bmp': 'image/bmp',
-  '.tiff': 'image/tiff',
-  '.tif': 'image/tiff',
-  '.heic': 'image/jpeg',
-  '.heif': 'image/jpeg',
-  '.mp4': 'video/mp4',
-  '.m4v': 'video/mp4',
-  '.mov': 'video/quicktime',
-  '.qt': 'video/quicktime',
-  '.avi': 'video/x-msvideo',
-  '.webm': 'video/webm',
-  '.mkv': 'video/x-matroska',
-  '.3gp': 'video/3gpp',
-  '.3gpp': 'video/3gpp',
-});
-
-const getFileExtension = (file: any): string => {
-  const logId = `[EXT-${Date.now()}]`;
-  let fileExtension = path.extname(file.originalname || '').toLowerCase();
-  
-  console.log(`${logId} Getting extension for: ${file.originalname}`);
-  
-  if (!fileExtension || fileExtension === '.') {
-    const mimeToExtMap = getMimeToExtensionMap();
-    const detectedMime = (file.mimetype || '').toLowerCase();
-    fileExtension = mimeToExtMap[detectedMime] || '.jpg';
-    console.log(`${logId} 📝 Extension guessed from MIME '${detectedMime}': ${fileExtension}`);
-  }
-  
-  if (['.heic', '.heif'].includes(fileExtension)) {
-    console.log(`${logId} 🔄 Converting ${fileExtension} to .jpg`);
-    fileExtension = '.jpg';
-  }
-  
-  console.log(`${logId} ✅ Final extension: ${fileExtension}`);
-  return fileExtension;
-};
-
-const getContentType = (file: any, fileExtension: string): string => {
-  const contentTypeMap = getContentTypeMap();
-  
-  let contentType = contentTypeMap[fileExtension];
-  
-  if (!contentType && file.mimetype && 
-      file.mimetype !== 'application/octet-stream' && 
-      file.mimetype !== 'binary/octet-stream' &&
-      file.mimetype !== '') {
-    contentType = file.mimetype;
-  }
-  
-  if (!contentType) {
-    contentType = fileExtension.match(/\.(mp4|mov|avi|webm|mkv|3gp)$/i) 
-      ? 'video/mp4' 
-      : 'image/jpeg';
-  }
-  
-  console.log(`📦 Content-Type determined: ${contentType} for ${file.originalname}`);
-  return contentType;
-};
-
-// ===== VENUE MEDIA UPLOAD WITH COMPREHENSIVE LOGGING =====
+// VENUE MEDIA UPLOAD TO S3 - 10GB Support
 export const uploadVenueMedia = multer({
   storage: multerS3({
-    s3: s3,
+    s3: s3 as any,
     bucket: process.env.S3_BUCKET_NAME || 'honestlee-user-upload',
     metadata: function (req, file, cb) {
-      const logId = `[META-${Date.now()}]`;
-      const userAgent = (req as any).headers?.['user-agent'] || '';
-      const deviceType = userAgent.includes('iPhone') || userAgent.includes('iPad') ? 'iOS' : 
-                         userAgent.includes('Android') ? 'Android' : 'other';
-      
-      const metadata = { 
+      cb(null, {
         fieldName: file.fieldname,
         originalName: file.originalname,
         uploadedBy: (req as any).user?.userId || 'agent',
         mimeType: file.mimetype || 'unknown',
         uploadTimestamp: new Date().toISOString(),
-        deviceType: deviceType
-      };
-      
-      console.log(`${logId} 📋 Metadata prepared:`, metadata);
-      cb(null, metadata);
+      });
     },
-    key: function (req: any, file, cb) {
-      const logId = `[KEY-${Date.now()}]`;
-      console.log(`${logId} 🔑 Generating S3 key for: ${file.originalname}`);
-      
-      const agentId = req.user?.userId || 'anonymous';
+    key: function (req: any, file: any, cb: any) {
+      const agentId = (req as any).user?.userId || 'anonymous';
       const tempVenueId = req.params?.tempVenueId || 'unknown';
-      
-      const fileExtension = getFileExtension(file);
+
+      let fileExtension = path.extname(file.originalname).toLowerCase();
+
+      // ✅ MOBILE FIX: Handle missing extensions (mobile uploads sometimes have no extension)
+      if (!fileExtension) {
+        fileExtension = '.jpg';
+      }
+
+      // ✅ MIME-to-Extension mapping for mobile files
+      const mimeToExtMap: { [key: string]: string } = {
+        'image/jpeg': '.jpg',
+        'image/jpg': '.jpg',
+        'image/png': '.png',
+        'image/gif': '.gif',
+        'image/webp': '.webp',
+        'image/heic': '.jpg',
+        'image/heif': '.jpg',
+        'video/mp4': '.mp4',
+        'video/quicktime': '.mov',
+        'video/webm': '.webm',
+        'video/3gpp': '.3gp',
+        'video/3gpp2': '.3gp',
+      };
+      if (!fileExtension || fileExtension === '.') {
+        fileExtension = mimeToExtMap[file.mimetype] || '.jpg';
+        console.log('🔍 Extension guessed from MIME:', fileExtension);
+      }
+
+      // ✅ MOBILE FIX: Convert HEIC/HEIF to JPG for compatibility
+      if (fileExtension === '.heic' || fileExtension === '.heif') {
+        fileExtension = '.jpg';
+      }
+
       const uniqueId = uuidv4();
       const timestamp = Date.now();
       const fileName = `venue-media/${tempVenueId}/${agentId}-${timestamp}-${uniqueId}${fileExtension}`;
-      
-      console.log(`${logId} ✅ S3 Key generated: ${fileName}`);
+
+      console.log('📤 S3 Upload Key:', fileName);
       cb(null, fileName);
     },
     contentType: function (req, file, cb) {
-      const logId = `[CTYPE-${Date.now()}]`;
-      console.log(`${logId} 🎭 Determining content type for: ${file.originalname}`);
-      
-      const fileExtension = getFileExtension(file);
-      const contentType = getContentType(file, fileExtension);
-      
-      console.log(`${logId} ✅ Content-Type set: ${contentType}`);
+      const ext = path.extname(file.originalname).toLowerCase();
+      const contentTypeMap: { [key: string]: string } = {
+        // Images
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png': 'image/png',
+        '.gif': 'image/gif',
+        '.webp': 'image/webp',
+        '.heic': 'image/jpeg',
+        '.heif': 'image/jpeg',
+        '.bmp': 'image/bmp',
+        '.tiff': 'image/tiff',
+        // Videos
+        '.mp4': 'video/mp4',
+        '.mov': 'video/quicktime',
+        '.avi': 'video/x-msvideo',
+        '.webm': 'video/webm',
+        '.mkv': 'video/x-matroska',
+        '.3gp': 'video/3gpp',
+        '.3gpp': 'video/3gpp',
+      };
+
+      let contentType = contentTypeMap[ext];
+      if (!contentType) {
+        contentType = file.mimetype;
+      }
+      if (file.mimetype === 'application/octet-stream' && !contentType) {
+        contentType = file.mimetype;
+      }
+      if (!contentType) {
+        contentType = 'image/jpeg';
+      }
+
+      console.log('📋 Content-Type set to:', contentType, 'for', file.originalname);
       cb(null, contentType);
-    }
+    },
   }),
   fileFilter: venueMediaFileFilter,
   limits: {
-    fileSize: Infinity,
-    files: 100,
-    fieldSize: 100 * 1024 * 1024,
-  }
+    fileSize: Infinity, // No size limit (up to 10GB+ files)
+    files: 100, // Max 100 files per batch
+    fieldSize: 100 * 1024 * 1024, // 100MB field size
+  },
 });
 
-// ===== OTHER UPLOAD FUNCTIONS (Review, Profile, Event) =====
+// REVIEW IMAGES UPLOAD - 10GB Support
 export const uploadReviewImages = multer({
   storage: multerS3({
-    s3: s3,
+    s3: s3 as any,
     bucket: process.env.S3_BUCKET_NAME || 'honestlee-user-upload',
     metadata: function (req, file, cb) {
-      cb(null, { 
+      cb(null, {
         fieldName: file.fieldname,
-        originalName: file.originalname
+        originalName: file.originalname,
       });
     },
-    key: function (req: any, file, cb) {
-      const userId = req.user?.userId || 'anonymous';
-      const fileExtension = getFileExtension(file);
+    key: function (req: any, file: any, cb: any) {
+      const userId = (req as any).user?.userId || 'anonymous';
+      let fileExtension = path.extname(file.originalname).toLowerCase();
+      if (!fileExtension) fileExtension = '.jpg';
+      if (fileExtension === '.heic' || fileExtension === '.heif') fileExtension = '.jpg';
       const uniqueId = uuidv4();
       const fileName = `review-images/${userId}-${uniqueId}${fileExtension}`;
       cb(null, fileName);
     },
     contentType: function (req, file, cb) {
-      const fileExtension = getFileExtension(file);
-      const contentType = getContentType(file, fileExtension);
+      const ext = path.extname(file.originalname).toLowerCase();
+      const mimeMap: { [key: string]: string } = {
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png': 'image/png',
+        '.gif': 'image/gif',
+        '.webp': 'image/webp',
+        '.heic': 'image/jpeg',
+        '.heif': 'image/jpeg',
+      };
+      let contentType = file.mimetype;
+      if (!contentType || contentType === 'application/octet-stream') {
+        contentType = mimeMap[ext] || 'image/jpeg';
+      }
       cb(null, contentType);
-    }
+    },
   }),
   fileFilter: venueMediaFileFilter,
-  limits: {
-    fileSize: Infinity,
-    files: 20
-  }
+  limits: { fileSize: Infinity, files: 20 },
 });
 
+// PROFILE IMAGE UPLOAD - 10GB Support
 export const uploadProfileImage = multer({
   storage: multerS3({
-    s3: s3,
+    s3: s3 as any,
     bucket: process.env.S3_BUCKET_NAME || 'honestlee-user-upload',
     metadata: function (req, file, cb) {
       cb(null, { fieldName: file.fieldname });
     },
-    key: function (req: any, file, cb) {
-      const userId = req.user?.userId || 'anonymous';
-      const fileExtension = getFileExtension(file);
+    key: function (req: any, file: any, cb: any) {
+      const userId = (req as any).user?.userId || 'anonymous';
+      let fileExtension = path.extname(file.originalname).toLowerCase();
+      if (!fileExtension) fileExtension = '.jpg';
+      if (fileExtension === '.heic' || fileExtension === '.heif') fileExtension = '.jpg';
       const uniqueId = uuidv4();
       const fileName = `profile-images/${userId}-${uniqueId}${fileExtension}`;
       cb(null, fileName);
     },
     contentType: function (req, file, cb) {
-      const fileExtension = getFileExtension(file);
-      const contentType = getContentType(file, fileExtension);
-      cb(null, contentType);
-    }
+      if (file.mimetype === 'image/heic' || file.mimetype === 'image/heif') {
+        cb(null, 'image/jpeg');
+      } else if (!file.mimetype || file.mimetype === 'application/octet-stream') {
+        cb(null, 'image/jpeg');
+      } else {
+        cb(null, file.mimetype);
+      }
+    },
   }),
   fileFilter: venueMediaFileFilter,
-  limits: {
-    fileSize: Infinity
-  }
+  limits: { fileSize: Infinity },
 });
 
+// EVENT IMAGES UPLOAD - 10GB Support
 export const uploadEventImages = multer({
   storage: multerS3({
-    s3: s3,
+    s3: s3 as any,
     bucket: process.env.S3_BUCKET_NAME || 'honestlee-user-upload',
     metadata: function (req, file, cb) {
       cb(null, { fieldName: file.fieldname });
     },
-    key: function (req: any, file, cb) {
-      const userId = req.user?.userId || 'anonymous';
-      const fileExtension = getFileExtension(file);
+    key: function (req: any, file: any, cb: any) {
+      const userId = (req as any).user?.userId || 'anonymous';
+      let fileExtension = path.extname(file.originalname).toLowerCase();
+      if (!fileExtension) fileExtension = '.jpg';
       const uniqueId = uuidv4();
       const fileName = `event-images/${userId}-${uniqueId}${fileExtension}`;
       cb(null, fileName);
     },
     contentType: function (req, file, cb) {
-      const fileExtension = getFileExtension(file);
-      const contentType = getContentType(file, fileExtension);
-      cb(null, contentType);
-    }
+      if (!file.mimetype || file.mimetype === 'application/octet-stream') {
+        cb(null, 'image/jpeg');
+      } else {
+        cb(null, file.mimetype);
+      }
+    },
   }),
   fileFilter: venueMediaFileFilter,
-  limits: {
-    fileSize: Infinity,
-    files: 10
-  }
+  limits: { fileSize: Infinity, files: 10 },
 });
 
-// ===== S3 FILE OPERATIONS =====
-
+// S3 FILE OPERATIONS
 export const deleteFileFromS3 = async (fileKey: string): Promise<boolean> => {
   try {
     const command = new DeleteObjectCommand({
       Bucket: process.env.S3_BUCKET_NAME || 'honestlee-user-upload',
-      Key: fileKey
+      Key: fileKey,
     });
-    
     await s3.send(command);
-    console.log(`✅ File deleted from S3: ${fileKey}`);
+    console.log('✅ File deleted from S3:', fileKey);
     return true;
   } catch (error) {
     console.error('❌ Error deleting file from S3:', error);
@@ -356,9 +292,9 @@ export const deleteFileFromS3 = async (fileKey: string): Promise<boolean> => {
 export const getS3KeyFromUrl = (url: string): string | null => {
   try {
     const urlObj = new URL(url);
-    return urlObj.pathname.substring(1);
+    return urlObj.pathname.substring(1); // Remove leading slash
   } catch (error) {
-    console.error('❌ Error parsing S3 URL:', error);
+    console.error('Error parsing S3 URL:', error);
     return null;
   }
 };
