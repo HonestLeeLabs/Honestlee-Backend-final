@@ -1672,7 +1672,7 @@ export const onboardFromGoogle = async (req: AgentRequest, res: Response): Promi
       allPhotos
     } = req.body;
 
-    // ✅ ADD VALIDATION
+    // ✅ VALIDATION
     if (!googlePlaceId || !name) {
       return res.status(400).json({ 
         success: false,
@@ -1682,15 +1682,61 @@ export const onboardFromGoogle = async (req: AgentRequest, res: Response): Promi
 
     console.log(`🏪 Agent ${req.user.userId} onboarding venue from Google: ${name}`);
     console.log(`📍 Location: lat=${latitude}, lng=${longitude}`);
-    console.log(`💰 Price data received - Level: ${priceLevel}, Range: ${priceRange}`);
+    console.log(`💰 Price data received - Level: ${priceLevel} (type: ${typeof priceLevel}), Range: ${priceRange}`);
 
     const tempVenueId = `TEMP-${uuidv4().substring(0, 8).toUpperCase()}`;
+
+    // ✅ CONVERT PRICE LEVEL TO NUMBER
+    const convertPriceLevel = (level: any): number | undefined => {
+      if (level === null || level === undefined || level === '') {
+        return undefined;
+      }
+
+      // If already a number, validate it's in range
+      if (typeof level === 'number') {
+        return (level >= 0 && level <= 4) ? level : undefined;
+      }
+
+      // If string, convert to number
+      if (typeof level === 'string') {
+        // Handle string representations of numbers
+        const parsed = parseInt(level, 10);
+        if (!isNaN(parsed) && parsed >= 0 && parsed <= 4) {
+          return parsed;
+        }
+
+        // Handle text values (Google sometimes returns these)
+        const priceMap: { [key: string]: number } = {
+          'FREE': 0,
+          'INEXPENSIVE': 1,
+          'MODERATE': 2,
+          'EXPENSIVE': 3,
+          'VERY_EXPENSIVE': 4,
+          // Additional variations
+          'CHEAP': 1,
+          'MEDIUM': 2,
+          'COSTLY': 3,
+          'LUXURY': 4
+        };
+
+        const upperLevel = level.toUpperCase();
+        return priceMap[upperLevel];
+      }
+
+      return undefined;
+    };
+
+    const normalizedPriceLevel = convertPriceLevel(priceLevel);
 
     const getPriceLevelDisplay = (level: number | undefined): string => {
       if (level === undefined || level === null) return '';
       const symbols = ['', '$', '$$', '$$$', '$$$$'];
       return symbols[level] || '';
     };
+
+    const priceLevelDisplay = getPriceLevelDisplay(normalizedPriceLevel);
+
+    console.log(`💰 Normalized price level: ${normalizedPriceLevel} → Display: ${priceLevelDisplay}`);
 
     // ✅ SAFE JSON STRINGIFY HELPER
     const safeStringify = (data: any): string | undefined => {
@@ -1705,15 +1751,13 @@ export const onboardFromGoogle = async (req: AgentRequest, res: Response): Promi
       }
     };
 
-    const priceLevelDisplay = getPriceLevelDisplay(priceLevel);
-
     const tempVenue = new AgentVenueTemp({
       tempVenueId,
       createdBy: req.user.userId,
       name,
-      category: allTypes || (primaryType ? [primaryType] : []), // ✅ Handle empty array
+      category: allTypes || (primaryType ? [primaryType] : []),
       address: {
-        lat: latitude || 0,  // ✅ Default to 0 if missing
+        lat: latitude || 0,
         lng: longitude || 0,
         raw: formattedAddress || '',
         street: street || undefined,
@@ -1747,17 +1791,16 @@ export const onboardFromGoogle = async (req: AgentRequest, res: Response): Promi
         utcOffsetMinutes: utcOffsetMinutes || undefined,
         rating: rating || undefined,
         userRatingsCount: userRatingsCount || undefined,
-        reviews: safeStringify(reviews),  // ✅ Safe stringify
+        reviews: safeStringify(reviews),
         businessStatus: businessStatus || undefined,
         editorialSummary: editorialSummary || undefined,
         
-        // Price data
-        priceLevel: priceLevel !== null && priceLevel !== undefined ? priceLevel : undefined,
+        // ✅ USE NORMALIZED PRICE LEVEL
+        priceLevel: normalizedPriceLevel,
         priceLevelDisplay: priceLevelDisplay || undefined,
         priceRange: priceRange || undefined,
-        displayPrice: safeStringify(displayPrice),  // ✅ Safe stringify
+        displayPrice: safeStringify(displayPrice),
         
-        // ✅ SAFE STRINGIFY FOR NESTED OBJECTS
         paymentOptions: safeStringify(paymentOptions),
         accessibilityOptions: safeStringify(accessibilityOptions),
         parkingOptions: safeStringify(parkingOptions),
@@ -1769,7 +1812,6 @@ export const onboardFromGoogle = async (req: AgentRequest, res: Response): Promi
       },
     });
 
-    // ✅ ADD BETTER ERROR HANDLING FOR SAVE
     await tempVenue.save();
 
     await createAuditLog(
@@ -1781,7 +1823,7 @@ export const onboardFromGoogle = async (req: AgentRequest, res: Response): Promi
         name,
         googlePlaceId,
         region,
-        priceLevel,
+        priceLevel: normalizedPriceLevel,
         priceRange,
       },
       undefined,
@@ -1796,12 +1838,10 @@ export const onboardFromGoogle = async (req: AgentRequest, res: Response): Promi
       message: 'Venue onboarded from Google successfully',
     });
   } catch (error: any) {
-    // ✅ IMPROVED ERROR LOGGING
     console.error('❌ Error onboarding from Google:', error);
     console.error('❌ Error stack:', error.stack);
     console.error('❌ Error name:', error.name);
     
-    // Log validation errors specifically
     if (error.name === 'ValidationError') {
       console.error('❌ Validation errors:', JSON.stringify(error.errors, null, 2));
       return res.status(400).json({
