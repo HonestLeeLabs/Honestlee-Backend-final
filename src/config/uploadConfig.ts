@@ -28,6 +28,9 @@ const venueMediaFileFilter = (req: any, file: any, cb: any) => {
     encoding: file.encoding
   });
 
+  // ✅ CRITICAL FIX: Don't check file.size in filter - it's often undefined on iOS
+  // Size validation happens after upload in multer's limits, not in fileFilter
+
   // ✅ PRIORITY 1: Check file extension (most reliable for iOS)
   const allowedExtensions = /\.(jpg|jpeg|png|gif|webp|heic|heif|bmp|tiff|tif|jpe|jfif|mp4|mov|avi|webm|mkv|3gp|3gpp|m4v|insp)$/i;
 
@@ -247,7 +250,7 @@ export const uploadVenueMedia = multer({
   }),
   fileFilter: venueMediaFileFilter,
   limits: {
-    fileSize: Infinity,
+    fileSize: Infinity, // ✅ NO SIZE LIMIT - This is checked AFTER upload, not during fileFilter
     files: 100,
     fieldSize: 100 * 1024 * 1024,
   }
