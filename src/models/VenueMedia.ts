@@ -14,7 +14,7 @@ export interface IVenueMedia extends Document {
   s3Key: string;
   fileFormat: string;
   fileSize: number;
-  fileHash?: string; // ✅ NEW: SHA-256 hash for duplicate detection
+  fileHash?: string;
   isVideo: boolean;
   is360: boolean;
   publicVisibility: string;
@@ -51,7 +51,7 @@ const VenueMediaSchema = new Schema<IVenueMedia>(
         'SIGNBOARD', 'AMENITIES', 'EVENT_POSTER', 'VIEW_PANORAMA',
         'TOILET_FACILITIES', 'WIFI_SIGN_EXISTING', 'WIFI_BOASTING_SPEED',
         'LOGO', 'QR_INSTALL_SPOT', 'VIDEO_SHORT', 'COUNTER',
-        'PAYMENT_METHODS', 'MENU_PRICES',
+        'PAYMENT_METHODS', 'MENU_PRICES', 'FOOD_DISPLAY_COUNTER', // ✅ NEW CATEGORY
       ],
       index: true,
     },
@@ -89,10 +89,7 @@ const VenueMediaSchema = new Schema<IVenueMedia>(
     },
 
     fileSize: { type: Number, required: true },
-    
-    // ✅ NEW: File hash for global duplicate detection
     fileHash: { type: String, index: true, sparse: true },
-    
     isVideo: { type: Boolean, default: false, index: true },
     is360: { type: Boolean, default: false, index: true },
 
@@ -133,7 +130,6 @@ const VenueMediaSchema = new Schema<IVenueMedia>(
   { timestamps: true, collection: 'venuemedia' }
 );
 
-// ✅ Compound index for duplicate detection
 VenueMediaSchema.index({ tempVenueId: 1, fileHash: 1 });
 VenueMediaSchema.index({ tempVenueId: 1, fileSize: 1, s3Key: 1 });
 VenueMediaSchema.index({ tempVenueId: 1, mediaType: 1 });

@@ -5,17 +5,22 @@ import multerS3 from 'multer-s3';
 import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
 
-// ===== AWS S3 CLIENT CONFIGURATION =====
+// ===== AWS S3 CLIENT CONFIGURATION (10GB+ File Support) =====
 const s3 = new S3Client({
   credentials: {
     accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
   },
-  region: process.env.AWS_REGION || 'ap-south-1'
+  region: process.env.AWS_REGION || 'ap-south-1',
+  // ✅ Configure for extremely large file uploads (10GB+)
+  requestHandler: {
+    connectionTimeout: 900000, // 15 minutes
+    socketTimeout: 900000, // 15 minutes
+  } as any,
+  maxAttempts: 3, // Retry failed uploads
 });
 
-// ===== IMPROVED VENUE MEDIA FILE FILTER (Mobile-Friendly) =====
-// config/uploadConfig.ts - IMPROVED FILE FILTER
+// ===== FILE FILTER (Mobile-Friendly + No Size Restrictions) =====
 const venueMediaFileFilter = (req: any, file: any, cb: any) => {
   console.log('📸 Venue Media Upload Attempt:', {
     name: file.originalname,
@@ -24,10 +29,9 @@ const venueMediaFileFilter = (req: any, file: any, cb: any) => {
     encoding: file.encoding
   });
 
-  // ✅ CRITICAL: Check file extension FIRST (most reliable for mobile)
+  // ✅ Check file extension FIRST (most reliable for mobile)
   const allowedExtensions = /\.(jpg|jpeg|png|gif|webp|heic|heif|bmp|tiff|mp4|mov|avi|webm|mkv|3gp|3gpp|insp)$/i;
 
-  // Check extension first
   if (file.originalname && allowedExtensions.test(file.originalname.toLowerCase())) {
     console.log('✅ File accepted by extension:', path.extname(file.originalname));
     cb(null, true);
@@ -46,7 +50,6 @@ const venueMediaFileFilter = (req: any, file: any, cb: any) => {
     'application/octet-stream', ''
   ];
 
-  // Check MIME type as fallback
   if (file.mimetype && allowedMimeTypes.includes(file.mimetype.toLowerCase())) {
     console.log('✅ File accepted by MIME type:', file.mimetype);
     cb(null, true);
@@ -65,7 +68,7 @@ const venueMediaFileFilter = (req: any, file: any, cb: any) => {
   cb(error, false);
 };
 
-// ===== VENUE MEDIA UPLOAD TO S3 (Mobile-Optimized) =====
+// ===== VENUE MEDIA UPLOAD TO S3 (10GB+ Support) =====
 export const uploadVenueMedia = multer({
   storage: multerS3({
     s3: s3,
@@ -75,7 +78,8 @@ export const uploadVenueMedia = multer({
         fieldName: file.fieldname,
         originalName: file.originalname,
         uploadedBy: (req as any).user?.userId || 'agent',
-        mimeType: file.mimetype || 'unknown'
+        mimeType: file.mimetype || 'unknown',
+        uploadTimestamp: new Date().toISOString()
       });
     },
     key: function (req: any, file, cb) {
@@ -85,7 +89,6 @@ export const uploadVenueMedia = multer({
       
       // Handle missing extensions (mobile uploads sometimes have no extension)
       if (!fileExtension || fileExtension === '.') {
-        // Guess from MIME type
         const mimeToExtMap: { [key: string]: string } = {
           'image/jpeg': '.jpg',
           'image/jpg': '.jpg',
@@ -116,58 +119,55 @@ export const uploadVenueMedia = multer({
       console.log(`✅ S3 Upload Key: ${fileName}`);
       cb(null, fileName);
     },
-contentType: function (req, file, cb) {
-  const ext = path.extname(file.originalname).toLowerCase();
-  
-  // Comprehensive content type mapping
-  const contentTypeMap: { [key: string]: string } = {
-    // Images
-    '.jpg': 'image/jpeg',
-    '.jpeg': 'image/jpeg',
-    '.png': 'image/png',
-    '.gif': 'image/gif',
-    '.webp': 'image/webp',
-    '.heic': 'image/jpeg',
-    '.heif': 'image/jpeg',
-    '.bmp': 'image/bmp',
-    '.tiff': 'image/tiff',
-    // Videos
-    '.mp4': 'video/mp4',
-    '.mov': 'video/quicktime',
-    '.avi': 'video/x-msvideo',
-    '.webm': 'video/webm',
-    '.mkv': 'video/x-matroska',
-    '.3gp': 'video/3gpp',
-    '.3gpp': 'video/3gpp',
-  };
-  
-  // ✅ Prioritize extension-based mapping
-  let contentType = contentTypeMap[ext];
-  
-  // Fallback to original MIME type if we trust it
-  if (!contentType && file.mimetype && 
-      file.mimetype !== 'application/octet-stream' && 
-      file.mimetype !== '') {
-    contentType = file.mimetype;
-  }
-  
-  // Final fallback
-  if (!contentType) {
-    contentType = 'image/jpeg';
-  }
-  
-  console.log(`📦 Content-Type set to: ${contentType} for ${file.originalname}`);
-  cb(null, contentType);
-}
+    contentType: function (req, file, cb) {
+      const ext = path.extname(file.originalname).toLowerCase();
+      
+      const contentTypeMap: { [key: string]: string } = {
+        // Images
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png': 'image/png',
+        '.gif': 'image/gif',
+        '.webp': 'image/webp',
+        '.heic': 'image/jpeg',
+        '.heif': 'image/jpeg',
+        '.bmp': 'image/bmp',
+        '.tiff': 'image/tiff',
+        // Videos
+        '.mp4': 'video/mp4',
+        '.mov': 'video/quicktime',
+        '.avi': 'video/x-msvideo',
+        '.webm': 'video/webm',
+        '.mkv': 'video/x-matroska',
+        '.3gp': 'video/3gpp',
+        '.3gpp': 'video/3gpp',
+      };
+      
+      let contentType = contentTypeMap[ext];
+      
+      if (!contentType && file.mimetype && 
+          file.mimetype !== 'application/octet-stream' && 
+          file.mimetype !== '') {
+        contentType = file.mimetype;
+      }
+      
+      if (!contentType) {
+        contentType = 'image/jpeg';
+      }
+      
+      console.log(`📦 Content-Type set to: ${contentType} for ${file.originalname}`);
+      cb(null, contentType);
+    }
   }),
   fileFilter: venueMediaFileFilter,
   limits: {
-    fileSize: 500 * 1024 * 1024, // 500MB per file
-    files: 50 // Max 50 files per upload batch
+    fileSize: Infinity, // ✅ NO LIMIT - Accept any file size (10GB+)
+    files: 100, // Max 100 files per upload batch
+    fieldSize: 100 * 1024 * 1024, // 100MB field size
   }
 });
 
-// ===== REVIEW IMAGES UPLOAD (Mobile-Optimized) =====
+// ===== REVIEW IMAGES UPLOAD (10GB Support) =====
 export const uploadReviewImages = multer({
   storage: multerS3({
     s3: s3,
@@ -216,12 +216,12 @@ export const uploadReviewImages = multer({
   }),
   fileFilter: venueMediaFileFilter,
   limits: {
-    fileSize: 50 * 1024 * 1024,
+    fileSize: Infinity, // ✅ NO LIMIT
     files: 20
   }
 });
 
-// ===== PROFILE IMAGE UPLOAD (Mobile-Optimized) =====
+// ===== PROFILE IMAGE UPLOAD (10GB Support) =====
 export const uploadProfileImage = multer({
   storage: multerS3({
     s3: s3,
@@ -257,11 +257,11 @@ export const uploadProfileImage = multer({
   }),
   fileFilter: venueMediaFileFilter,
   limits: {
-    fileSize: 50 * 1024 * 1024
+    fileSize: Infinity // ✅ NO LIMIT
   }
 });
 
-// ===== EVENT IMAGES UPLOAD =====
+// ===== EVENT IMAGES UPLOAD (10GB Support) =====
 export const uploadEventImages = multer({
   storage: multerS3({
     s3: s3,
@@ -291,7 +291,7 @@ export const uploadEventImages = multer({
   }),
   fileFilter: venueMediaFileFilter,
   limits: {
-    fileSize: 50 * 1024 * 1024,
+    fileSize: Infinity, // ✅ NO LIMIT
     files: 10
   }
 });
@@ -300,8 +300,6 @@ export const uploadEventImages = multer({
 
 /**
  * Delete file from S3
- * @param fileKey - S3 object key (e.g., 'venue-media/TV-123/file.jpg')
- * @returns Promise<boolean> - true if successful, false otherwise
  */
 export const deleteFileFromS3 = async (fileKey: string): Promise<boolean> => {
   try {
@@ -321,8 +319,6 @@ export const deleteFileFromS3 = async (fileKey: string): Promise<boolean> => {
 
 /**
  * Extract S3 key from full S3 URL
- * @param url - Full S3 URL (e.g., 'https://bucket.s3.region.amazonaws.com/path/to/file.jpg')
- * @returns string | null - S3 key or null if parsing fails
  */
 export const getS3KeyFromUrl = (url: string): string | null => {
   try {

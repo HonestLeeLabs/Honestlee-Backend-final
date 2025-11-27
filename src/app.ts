@@ -1,4 +1,4 @@
-// ===== FILE: src/app.ts =====
+// src/app.ts
 
 import express from 'express';
 import cors from 'cors';
@@ -67,23 +67,25 @@ export const io = new SocketIOServer(server, {
       'https://www.hlee.app',
       'https://th.honestlee.app',
       'https://admin.honestlee.app',
-      'https://venue-dashboard.honestlee.app'
+      'https://venue-dashboard.honestlee.app',
+      'https://agent.honestlee.app'
     ],
     credentials: true
-  }
+  },
+  maxHttpBufferSize: 100 * 1024 * 1024, // 100MB for socket messages
+  pingTimeout: 120000, // 2 minutes
+  pingInterval: 25000, // 25 seconds
 });
 
 // Socket.IO connection handling
 io.on('connection', (socket) => {
   console.log('👤 Client connected:', socket.id);
 
-  // Join vendor tracking room
   socket.on('track-vendor', (vendorId: string) => {
     console.log(`📍 Client ${socket.id} tracking vendor: ${vendorId}`);
     socket.join(`vendor-${vendorId}`);
   });
 
-  // Stop tracking vendor
   socket.on('untrack-vendor', (vendorId: string) => {
     console.log(`⏹️ Client ${socket.id} stopped tracking vendor: ${vendorId}`);
     socket.leave(`vendor-${vendorId}`);
@@ -94,7 +96,6 @@ io.on('connection', (socket) => {
   });
 });
 
-// Export io for use in controllers
 export { server };
 
 // ===== CORS CONFIGURATION =====
@@ -144,9 +145,19 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-app.use(express.json({ limit: '1gb' }));
-app.use(express.urlencoded({ limit: '1gb', extended: true }));
+
+// ✅ CRITICAL: No limit on request body size (for 10GB+ uploads)
+app.use(express.json({ limit: Infinity }));
+app.use(express.urlencoded({ limit: Infinity, extended: true, parameterLimit: 1000000 }));
+
 app.options('*', cors(corsOptions));
+
+// ✅ CRITICAL: Set extremely long timeout for all requests (15 minutes)
+app.use((req, res, next) => {
+  req.setTimeout(900000); // 15 minutes
+  res.setTimeout(900000); // 15 minutes
+  next();
+});
 
 // ===== SESSION SUPPORT =====
 app.use(session({
@@ -185,20 +196,20 @@ const connectDatabases = async () => {
     ]);
     console.log('✅ All databases connected successfully');
 
-const mongoURI = process.env.MONGODB_URI;
-if (mongoURI) {
-  // ⭐ UPDATED: Increased timeouts for long-running operations like speed tests
-  await mongoose.connect(mongoURI, {
-    serverSelectionTimeoutMS: 15000,
-    socketTimeoutMS: 180000,        // ⭐ Changed from 45000 to 180000 (3 minutes)
-    connectTimeoutMS: 30000,
-    maxPoolSize: 50,                // ⭐ Added
-    minPoolSize: 10,                // ⭐ Added
-    maxIdleTimeMS: 60000,           // ⭐ Added
-    heartbeatFrequencyMS: 10000,    // ⭐ Added
-    retryWrites: true,
-    retryReads: true,
-  });
+    const mongoURI = process.env.MONGODB_URI;
+    if (mongoURI) {
+      // ✅ Increased timeouts for long operations
+      await mongoose.connect(mongoURI, {
+        serverSelectionTimeoutMS: 30000,
+        socketTimeoutMS: 900000, // 15 minutes
+        connectTimeoutMS: 60000,
+        maxPoolSize: 100, // Increased pool
+        minPoolSize: 20,
+        maxIdleTimeMS: 120000,
+        heartbeatFrequencyMS: 10000,
+        retryWrites: true,
+        retryReads: true,
+      });
       console.log('✅ Global MongoDB connected:', mongoose.connection.name);
 
       try {
@@ -235,7 +246,6 @@ if (mongoURI) {
 connectDatabases();
 
 // ===== API ROUTES =====
-// ===== API ROUTES =====
 app.use('/api/auth', authRoutes);
 app.use('/api/auth', googleAuthRoutes);
 app.use('/api/wifi', wifiRoutes);
@@ -244,7 +254,7 @@ app.use('/api/venues', venueRoutes);
 app.use('/api/venues-dubai', venueDubaiRoutes);
 app.use('/api/events-dubai', eventDubaiRoutes);
 app.use('/api/users', userRoutes);
-app.use('/api/admin', adminRoutes);  // ✅ MAKE SURE THIS LINE EXISTS
+app.use('/api/admin', adminRoutes);
 app.use('/api/zoho', zohoRoutes);
 app.use('/webhooks', webhookRoutes);
 app.use('/api/upload', uploadRoutes);
@@ -257,7 +267,6 @@ app.use('/api/street-vendors', detectRegion, streetVendorRoutes);
 app.use('/api/agent', agentOnboardingRoutes);
 app.use('/api/wifi-speed', wifiSpeedTestRoutes);
 
-
 // ===== HEALTH CHECK ENDPOINT =====
 app.get('/health', (req, res) => {
   const dbStatus = mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected';
@@ -269,13 +278,25 @@ app.get('/health', (req, res) => {
       name: mongoose.connection.name || 'Not connected'
     },
     socketio: 'Enabled for real-time updates',
-    cors: 'Enabled for ports 3000, 3001 and production domains',
-    maxBodySize: '1GB',
+    cors: 'Enabled for all production domains',
+    maxBodySize: 'Unlimited (supports 10GB+ files)',
+    timeout: '15 minutes',
     regions: {
       ae: 'Dubai/UAE',
       th: 'Thailand'
     }
   });
+});
+
+// ✅ Handle timeout errors gracefully
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (err.code === 'ETIMEDOUT' || err.message.includes('timeout')) {
+    return res.status(408).json({
+      success: false,
+      message: 'Upload timeout. Your file is very large. Please ensure stable internet connection and try again.',
+    });
+  }
+  next(err);
 });
 
 app.use(errorHandler);
