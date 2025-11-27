@@ -12,11 +12,12 @@ const s3 = new S3Client({
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
   },
   region: process.env.AWS_REGION || 'ap-south-1',
+  // ✅ Configure for large file uploads
   requestHandler: {
     connectionTimeout: 900000, // 15 minutes
-    socketTimeout: 900000, // 15 minutes
+    socketTimeout: 900000,     // 15 minutes
   } as any,
-  maxAttempts: 3,
+  maxAttempts: 3, // Retry failed uploads
 });
 
 // ===== ENHANCED FILE FILTER (iOS-Optimized) =====
@@ -24,12 +25,12 @@ const venueMediaFileFilter = (req: any, file: any, cb: any) => {
   console.log('📸 iOS Upload Attempt:', {
     name: file.originalname,
     mimeType: file.mimetype,
-    size: file.size,
+    size: file.size, // May be undefined on iOS - this is NORMAL
     encoding: file.encoding
   });
 
-  // ✅ CRITICAL FIX: Don't check file.size in filter - it's often undefined on iOS
-  // Size validation happens after upload in multer's limits, not in fileFilter
+  // ✅ CRITICAL: Don't validate file.size here - it's often undefined on iOS
+  // Size validation happens AFTER upload via multer's limits (if set)
 
   // ✅ PRIORITY 1: Check file extension (most reliable for iOS)
   const allowedExtensions = /\.(jpg|jpeg|png|gif|webp|heic|heif|bmp|tiff|tif|jpe|jfif|mp4|mov|avi|webm|mkv|3gp|3gpp|m4v|insp)$/i;
@@ -43,35 +44,15 @@ const venueMediaFileFilter = (req: any, file: any, cb: any) => {
   // ✅ PRIORITY 2: Expanded MIME types for iOS compatibility
   const allowedMimeTypes = [
     // Standard image formats
-    'image/jpeg',
-    'image/jpg',
-    'image/png',
-    'image/gif',
-    'image/webp',
-    'image/bmp',
-    'image/tiff',
-    'image/x-icon',
+    'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp',
+    'image/bmp', 'image/tiff', 'image/x-icon',
     // iOS-specific formats
-    'image/heic',
-    'image/heif',
-    'image/heic-sequence',
-    'image/heif-sequence',
+    'image/heic', 'image/heif', 'image/heic-sequence', 'image/heif-sequence',
     // Standard video formats
-    'video/mp4',
-    'video/mpeg',
-    'video/quicktime',
-    'video/x-msvideo',
-    'video/webm',
-    'video/x-matroska',
-    'video/3gpp',
-    'video/3gpp2',
-    'video/x-m4v',
+    'video/mp4', 'video/mpeg', 'video/quicktime', 'video/x-msvideo',
+    'video/webm', 'video/x-matroska', 'video/3gpp', 'video/3gpp2', 'video/x-m4v',
     // iOS fallbacks (common when iOS doesn't detect MIME properly)
-    'application/octet-stream',
-    'binary/octet-stream',
-    '',
-    null,
-    undefined
+    'application/octet-stream', 'binary/octet-stream', '', null, undefined
   ];
 
   // Convert to lowercase and check, handling null/undefined
@@ -84,11 +65,10 @@ const venueMediaFileFilter = (req: any, file: any, cb: any) => {
   }
 
   // ✅ PRIORITY 3: If we have a valid filename but no recognized MIME, accept it
-  // (iOS often sends valid images with incorrect/missing MIME types)
   if (file.originalname) {
     const ext = path.extname(file.originalname).toLowerCase();
     const imageVideoExts = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic', '.heif', 
-                            '.mp4', '.mov', '.avi', '.webm', '.3gp'];
+                            '.bmp', '.tiff', '.mp4', '.mov', '.avi', '.webm', '.3gp'];
     
     if (imageVideoExts.includes(ext)) {
       console.log('✅ File accepted by filename pattern (iOS fallback):', file.originalname);
@@ -103,15 +83,14 @@ const venueMediaFileFilter = (req: any, file: any, cb: any) => {
     mime: file.mimetype,
     reason: 'Invalid file type'
   });
-  
+
   const error: any = new Error('Only image and video files are allowed');
   error.code = 'FILE_TYPE_NOT_ALLOWED';
   cb(error, false);
 };
 
-// ===== ENHANCED MIME-TO-EXTENSION MAPPING (iOS-Optimized) =====
+// ===== ENHANCED HELPER FUNCTIONS =====
 const getMimeToExtensionMap = (): { [key: string]: string } => ({
-  // Standard images
   'image/jpeg': '.jpg',
   'image/jpg': '.jpg',
   'image/png': '.png',
@@ -120,26 +99,21 @@ const getMimeToExtensionMap = (): { [key: string]: string } => ({
   'image/bmp': '.bmp',
   'image/tiff': '.tiff',
   'image/tif': '.tiff',
-  // iOS formats (convert to JPG for compatibility)
   'image/heic': '.jpg',
   'image/heif': '.jpg',
   'image/heic-sequence': '.jpg',
   'image/heif-sequence': '.jpg',
-  // Videos
   'video/mp4': '.mp4',
   'video/quicktime': '.mov',
   'video/webm': '.webm',
   'video/3gpp': '.3gp',
   'video/3gpp2': '.3gp',
   'video/x-m4v': '.mp4',
-  // Fallback
   'application/octet-stream': '.jpg',
   'binary/octet-stream': '.jpg',
 });
 
-// ===== ENHANCED CONTENT-TYPE MAPPING (iOS-Optimized) =====
 const getContentTypeMap = (): { [key: string]: string } => ({
-  // Images
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
   '.jpe': 'image/jpeg',
@@ -150,10 +124,8 @@ const getContentTypeMap = (): { [key: string]: string } => ({
   '.bmp': 'image/bmp',
   '.tiff': 'image/tiff',
   '.tif': 'image/tiff',
-  // iOS formats (store as JPEG)
   '.heic': 'image/jpeg',
   '.heif': 'image/jpeg',
-  // Videos
   '.mp4': 'video/mp4',
   '.m4v': 'video/mp4',
   '.mov': 'video/quicktime',
@@ -165,11 +137,9 @@ const getContentTypeMap = (): { [key: string]: string } => ({
   '.3gpp': 'video/3gpp',
 });
 
-// ===== HELPER: Smart Extension Detection =====
 const getFileExtension = (file: any): string => {
   let fileExtension = path.extname(file.originalname || '').toLowerCase();
   
-  // If no extension or just a dot, guess from MIME type
   if (!fileExtension || fileExtension === '.') {
     const mimeToExtMap = getMimeToExtensionMap();
     const detectedMime = (file.mimetype || '').toLowerCase();
@@ -177,7 +147,6 @@ const getFileExtension = (file: any): string => {
     console.log(`📝 Extension guessed from MIME '${detectedMime}': ${fileExtension}`);
   }
   
-  // Convert iOS formats to JPG
   if (['.heic', '.heif'].includes(fileExtension)) {
     console.log(`🔄 Converting ${fileExtension} to .jpg for compatibility`);
     fileExtension = '.jpg';
@@ -186,14 +155,11 @@ const getFileExtension = (file: any): string => {
   return fileExtension;
 };
 
-// ===== HELPER: Smart Content-Type Detection =====
 const getContentType = (file: any, fileExtension: string): string => {
   const contentTypeMap = getContentTypeMap();
   
-  // Try to get from extension first
   let contentType = contentTypeMap[fileExtension];
   
-  // If not found, try from MIME (but ignore octet-stream)
   if (!contentType && file.mimetype && 
       file.mimetype !== 'application/octet-stream' && 
       file.mimetype !== 'binary/octet-stream' &&
@@ -201,7 +167,6 @@ const getContentType = (file: any, fileExtension: string): string => {
     contentType = file.mimetype;
   }
   
-  // Final fallback
   if (!contentType) {
     contentType = fileExtension.match(/\.(mp4|mov|avi|webm|mkv|3gp)$/i) 
       ? 'video/mp4' 
@@ -212,7 +177,7 @@ const getContentType = (file: any, fileExtension: string): string => {
   return contentType;
 };
 
-// ===== VENUE MEDIA UPLOAD TO S3 (iOS-OPTIMIZED) =====
+// ===== VENUE MEDIA UPLOAD TO S3 (iOS-OPTIMIZED + UNLIMITED SIZE) =====
 export const uploadVenueMedia = multer({
   storage: multerS3({
     s3: s3,
@@ -221,7 +186,7 @@ export const uploadVenueMedia = multer({
       const userAgent = (req as any).headers?.['user-agent'] || '';
       const deviceType = userAgent.includes('iPhone') || userAgent.includes('iPad') ? 'iOS' : 'other';
       
-      cb(null, { 
+      cb(null, {
         fieldName: file.fieldname,
         originalName: file.originalname,
         uploadedBy: (req as any).user?.userId || 'agent',
@@ -250,9 +215,9 @@ export const uploadVenueMedia = multer({
   }),
   fileFilter: venueMediaFileFilter,
   limits: {
-    fileSize: Infinity, // ✅ NO SIZE LIMIT - This is checked AFTER upload, not during fileFilter
-    files: 100,
-    fieldSize: 100 * 1024 * 1024,
+    fileSize: Infinity,       // ✅ NO LIMIT - Critical for iOS high-res photos
+    files: 100,              // Max 100 files per batch
+    fieldSize: 100 * 1024 * 1024, // 100MB field size
   }
 });
 
@@ -262,7 +227,7 @@ export const uploadReviewImages = multer({
     s3: s3,
     bucket: process.env.S3_BUCKET_NAME || 'honestlee-user-upload',
     metadata: function (req, file, cb) {
-      cb(null, { 
+      cb(null, {
         fieldName: file.fieldname,
         originalName: file.originalname
       });
@@ -282,7 +247,7 @@ export const uploadReviewImages = multer({
   }),
   fileFilter: venueMediaFileFilter,
   limits: {
-    fileSize: Infinity,
+    fileSize: Infinity, // ✅ NO LIMIT for iOS compatibility
     files: 20
   }
 });
@@ -310,7 +275,7 @@ export const uploadProfileImage = multer({
   }),
   fileFilter: venueMediaFileFilter,
   limits: {
-    fileSize: Infinity
+    fileSize: Infinity // ✅ NO LIMIT for iOS compatibility
   }
 });
 
@@ -337,7 +302,7 @@ export const uploadEventImages = multer({
   }),
   fileFilter: venueMediaFileFilter,
   limits: {
-    fileSize: Infinity,
+    fileSize: Infinity, // ✅ NO LIMIT for iOS compatibility
     files: 10
   }
 });
@@ -350,7 +315,7 @@ export const deleteFileFromS3 = async (fileKey: string): Promise<boolean> => {
       Bucket: process.env.S3_BUCKET_NAME || 'honestlee-user-upload',
       Key: fileKey
     });
-    
+
     await s3.send(command);
     console.log(`✅ File deleted from S3: ${fileKey}`);
     return true;
@@ -363,7 +328,7 @@ export const deleteFileFromS3 = async (fileKey: string): Promise<boolean> => {
 export const getS3KeyFromUrl = (url: string): string | null => {
   try {
     const urlObj = new URL(url);
-    return urlObj.pathname.substring(1);
+    return urlObj.pathname.substring(1); // Remove leading slash
   } catch (error) {
     console.error('❌ Error parsing S3 URL:', error);
     return null;
