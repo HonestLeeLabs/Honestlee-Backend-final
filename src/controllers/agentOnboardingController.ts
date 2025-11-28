@@ -2724,3 +2724,138 @@ export const finalizeOnboarding = async (req: AuthRequest, res: Response) => {
     });
   }
 };
+
+/**
+ * PUT /api/agent/venues/:tempVenueId/category-type
+ * Update venue category, group, and type
+ */
+export const updateVenueCategoryType = async (req: AuthRequest, res: Response): Promise<Response> => {
+  try {
+    if (!req.user || !['AGENT', 'ADMIN'].includes(req.user.role)) {
+      return res.status(403).json({ message: 'Agent or Admin access required' });
+    }
+
+    const { tempVenueId } = req.params;
+    const { groupId, categoryId, venueTypes } = req.body;
+
+    if (!groupId || !categoryId || !venueTypes || !Array.isArray(venueTypes)) {
+      return res.status(400).json({
+        success: false,
+        message: 'groupId, categoryId, and venueTypes array are required'
+      });
+    }
+
+    console.log(`🏷️ Updating category/type for venue ${tempVenueId}`);
+
+    // Find venue
+    const venue = await AgentVenueTemp.findOne({ tempVenueId });
+
+    if (!venue) {
+      return res.status(404).json({
+        success: false,
+        message: 'Venue not found'
+      });
+    }
+
+    // Check if agent has permission (only assigned agent or admin)
+    if (req.user.role === 'AGENT' && venue.assignedTo?.toString() !== req.user.userId) {
+      return res.status(403).json({
+        success: false,
+        message: 'You can only update venues assigned to you'
+      });
+    }
+
+    // Update category type information
+    const updateData: any = {
+      'categoryTypeData.groupId': groupId,
+      'categoryTypeData.categoryId': categoryId,
+      'categoryTypeData.venueTypes': venueTypes,
+      categoryTypeConfirmed: true,
+      categoryTypeConfirmedAt: new Date()
+    };
+
+    const updatedVenue = await AgentVenueTemp.findOneAndUpdate(
+      { tempVenueId },
+      { $set: updateData },
+      { new: true }
+    );
+
+    // Audit log
+    await AuditLog.create({
+      auditId: uuidv4(),
+      actorId: req.user.userId,
+      actorRole: req.user.role,
+      venueId: venue.venueId?.toString(),
+      action: 'CATEGORY_TYPE_UPDATED',
+      meta: {
+        tempVenueId,
+        venueName: venue.name,
+        groupId,
+        categoryId,
+        venueTypesCount: venueTypes.length
+      }
+    });
+
+    console.log(`✅ Category/Type updated for venue ${tempVenueId}`);
+
+    return res.json({
+      success: true,
+      message: 'Category and type updated successfully',
+      data: updatedVenue
+    });
+
+  } catch (error: any) {
+    console.error('❌ Error updating category/type:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to update category/type',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * GET /api/agent/venues/:tempVenueId/category-type
+ * Get category/type data for a venue
+ */
+export const getVenueCategoryType = async (req: AuthRequest, res: Response): Promise<Response> => {
+  try {
+    if (!req.user || !['AGENT', 'ADMIN'].includes(req.user.role)) {
+      return res.status(403).json({ message: 'Agent or Admin access required' });
+    }
+
+    const { tempVenueId } = req.params;
+
+    const venue = await AgentVenueTemp.findOne({ tempVenueId })
+      .select('tempVenueId name categoryTypeData categoryTypeConfirmed categoryTypeConfirmedAt');
+
+    if (!venue) {
+      return res.status(404).json({
+        success: false,
+        message: 'Venue not found'
+      });
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        tempVenueId: venue.tempVenueId,
+        name: venue.name,
+        categoryTypeData: venue.categoryTypeData || {},
+        confirmed: venue.categoryTypeConfirmed || false,
+        confirmedAt: venue.categoryTypeConfirmedAt
+      }
+    });
+
+  } catch (error: any) {
+    console.error('❌ Error fetching category/type:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to fetch category/type',
+      error: error.message
+    });
+  }
+};
+
+
+

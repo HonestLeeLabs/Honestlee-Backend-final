@@ -182,6 +182,15 @@ router.put(
     agentController.updateVenueInfo(req as any, res).catch(next)
 );
 
+// ===== CATEGORY & TYPE OPERATIONS ===== ✅ NEW
+router.put('/venues/:tempVenueId/category-type', (req: Request, res: Response, next: NextFunction) => {
+  agentController.updateVenueCategoryType(req as any, res).catch(next);
+});
+
+router.get('/venues/:tempVenueId/category-type', (req: Request, res: Response, next: NextFunction) => {
+  agentController.getVenueCategoryType(req as any, res).catch(next);
+});
+
 // ===== PHOTO OPERATIONS (Legacy) =====
 router.post(
   '/venues/:venueId/photos',

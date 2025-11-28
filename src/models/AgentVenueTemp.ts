@@ -40,6 +40,18 @@ export interface IAgentNote {
   updatedAt?: Date;
 }
 
+// NEW: Category Type Interface
+export interface ICategoryTypeData {
+  groupId?: string;
+  groupIdDisplayName?: string;
+  categoryId?: string;
+  categoryDisplayName?: string;
+  venueTypes?: Array<{
+    venueType: string;
+    venueTypeDisplay: string;
+  }>;
+}
+
 export interface IAgentVenueTemp extends Document {
   tempVenueId: string;
   createdBy: mongoose.Types.ObjectId;
@@ -104,8 +116,8 @@ export interface IAgentVenueTemp extends Document {
     notes?: string;
   };
   
-  parkingOptions: string;
-  venueGroup: string;
+  parkingOptions?: string;
+  venueGroup?: string;
 
   gpsAccuracy?: {
     oldLocation?: {
@@ -196,14 +208,22 @@ export interface IAgentVenueTemp extends Document {
     primaryTypeLabel?: string;
     allTypes?: string[];
     googleMapsUrl?: string;
+    utcOffsetMinutes?: number;
     rating?: number;
     userRatingsCount?: number;
+    reviews?: string;
     businessStatus?: string;
+    editorialSummary?: string;
     priceLevel?: number;    
     priceLevelDisplay?: string; 
     priceRange?: string; 
     displayPrice?: string;
+    paymentOptions?: string;
+    accessibilityOptions?: string;
+    parkingOptions?: string;
+    atmosphereFlags?: string;
     photoReference?: string;
+    allPhotos?: string;
     importedAt?: Date;
     importedBy?: string;
   };
@@ -245,11 +265,15 @@ export interface IAgentVenueTemp extends Document {
   zonesCreated?: boolean;
   atmosphereSet?: boolean;
 
+  // NEW: Category Type Data
+  categoryTypeData?: ICategoryTypeData;
+  categoryTypeConfirmed?: boolean;
+  categoryTypeConfirmedAt?: Date;
+
   declineReason?: string;
   leadCapturedAt?: Date;
   leadCapturedBy?: mongoose.Types.ObjectId;
   
-  // NEW: Notes Array
   notes?: IAgentNote[];
 
   createdAt: Date;
@@ -359,6 +383,8 @@ const AgentVenueTempSchema = new Schema<IAgentVenueTemp>({
     line: String,
     notes: String
   },
+  parkingOptions: String,
+  venueGroup: String,
   gpsAccuracy: {
     oldLocation: {
       lat: Number,
@@ -448,46 +474,55 @@ const AgentVenueTempSchema = new Schema<IAgentVenueTemp>({
       }
     ]
   },
-googleData: {
-  placeId: { type: String, index: true },
-  primaryType: String,
-  primaryTypeLabel: String,
-  allTypes: [String],
-  googleMapsUrl: String,
-  
-  // ✅ ADD THESE MISSING FIELDS
-  utcOffsetMinutes: Number,
-  rating: Number,
-  userRatingsCount: Number,
-  reviews: String,  // Stored as JSON string
-  businessStatus: String,
-  editorialSummary: String,
-  
-  // Price data
-  priceLevel: {
-    type: Number,
-    min: 0,
-    max: 4,
-    index: true
+  // ✅ FIXED: Category Type Data Schema
+  categoryTypeData: {
+    groupId: String,
+    groupIdDisplayName: String,
+    categoryId: String,
+    categoryDisplayName: String,
+    venueTypes: [{
+      venueType: String,
+      venueTypeDisplay: String
+    }]
   },
-  priceLevelDisplay: {
-    type: String,
-    enum: ['', '$', '$$', '$$$', '$$$$']
+  categoryTypeConfirmed: {
+    type: Boolean,
+    default: false
   },
-  priceRange: String,
-  displayPrice: String,
-  
-  // ✅ ADD THESE NEW FIELDS FOR GOOGLE PLACE DETAILS
-  paymentOptions: String,  // JSON stringified
-  accessibilityOptions: String,  // JSON stringified
-  parkingOptions: String,  // JSON stringified
-  atmosphereFlags: String,  // JSON stringified
-  photoReference: String,
-  allPhotos: String,  // JSON stringified array
-  
-  importedAt: Date,
-  importedBy: String,
-},
+  categoryTypeConfirmedAt: Date,
+  googleData: {
+    placeId: { type: String, index: true },
+    primaryType: String,
+    primaryTypeLabel: String,
+    allTypes: [String],
+    googleMapsUrl: String,
+    utcOffsetMinutes: Number,
+    rating: Number,
+    userRatingsCount: Number,
+    reviews: String,
+    businessStatus: String,
+    editorialSummary: String,
+    priceLevel: {
+      type: Number,
+      min: 0,
+      max: 4,
+      index: true
+    },
+    priceLevelDisplay: {
+      type: String,
+      enum: ['', '$', '$$', '$$$', '$$$$']
+    },
+    priceRange: String,
+    displayPrice: String,
+    paymentOptions: String,
+    accessibilityOptions: String,
+    parkingOptions: String,
+    atmosphereFlags: String,
+    photoReference: String,
+    allPhotos: String,
+    importedAt: Date,
+    importedBy: String,
+  },
   assignedTo: {
     type: Schema.Types.ObjectId,
     ref: 'User',
@@ -555,8 +590,6 @@ googleData: {
     type: Schema.Types.ObjectId,
     ref: 'User'
   },
-
-  // NEW: Notes Array
   notes: [
     {
       noteId: { type: String, required: true },
@@ -572,7 +605,6 @@ googleData: {
       updatedAt: Date
     }
   ],
-
 }, {
   timestamps: true,
   collection: 'agent_venue_temps'
@@ -591,5 +623,6 @@ AgentVenueTempSchema.index({ 'gpsData.hl_gps_status': 1 });
 AgentVenueTempSchema.index({ 'gpsData.hl_confirmed_lat': 1, 'gpsData.hl_confirmed_lng': 1 });
 AgentVenueTempSchema.index({ 'wifiData.hasSpeedTest': 1 });
 AgentVenueTempSchema.index({ 'wifiData.latestSpeedTest.qualityScore': 1 });
+AgentVenueTempSchema.index({ categoryTypeConfirmed: 1 });
 
 export default mongoose.model<IAgentVenueTemp>('AgentVenueTemp', AgentVenueTempSchema);
