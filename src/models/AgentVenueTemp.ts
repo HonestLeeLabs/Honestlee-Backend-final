@@ -418,30 +418,30 @@ const AgentVenueTempSchema = new Schema<IAgentVenueTemp>({
   paymentTypesConfirmed: { type: Boolean, default: false },
   paymentTypesConfirmedAt: Date,
   gpsData: {
-    src_lat: Number,
-    src_lng: Number,
-    src_provider: String,
-    hl_confirmed_lat: Number,
-    hl_confirmed_lng: Number,
-    hl_gps_accuracy_m: Number,
-    hl_gps_distance_m: Number,
-    hl_gps_status: {
-      type: String,
-      enum: ['not_checked', 'confirmed', 'kept_original', 'rejected', 'skipped'],
-      default: 'not_checked',
-    },
-    hl_gps_updated_at: Date,
-    hl_gps_history: [
-      {
-        lat: Number,
-        lng: Number,
-        source: String,
-        taken_at: Date,
-        by_agent: { type: Schema.Types.ObjectId, ref: 'User' },
-        accuracy_m: Number,
-      },
-    ],
+  src_lat: Number,
+  src_lng: Number,
+  src_provider: String,
+  hl_confirmed_lat: Number,
+  hl_confirmed_lng: Number,
+  hl_gps_accuracy_m: Number,
+  hl_gps_distance_m: Number,
+  hl_gps_status: {
+    type: String,
+    enum: ['not_checked', 'confirmed', 'kept_original', 'rejected', 'skipped', 'manual_placement'], // ✅ Added
+    default: 'not_checked',
   },
+  hl_gps_updated_at: Date,
+  hl_gps_history: [
+    {
+      lat: Number,
+      lng: Number,
+      source: String,
+      taken_at: Date,
+      by_agent: { type: Schema.Types.ObjectId, ref: 'User' },
+      accuracy_m: Number,
+    },
+  ],
+},
   wifiData: {
     hasSpeedTest: { type: Boolean, default: false },
     latestSpeedTest: {
