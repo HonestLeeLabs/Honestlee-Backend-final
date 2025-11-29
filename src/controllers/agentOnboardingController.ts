@@ -673,10 +673,6 @@ export const attachMainQR = async (req: AgentRequest, res: Response): Promise<Re
  * POST /api/agent/venues/:tempVenueId/notes
  * Add a note to venue
  */
-/**
- * POST /api/agent/venues/:tempVenueId/notes
- * Add a note to venue
- */
 export const addVenueNote = async (req: AuthRequest, res: Response): Promise<Response> => {
   try {
     if (!req.user || !['AGENT', 'ADMIN'].includes(req.user.role)) {
@@ -710,7 +706,9 @@ export const addVenueNote = async (req: AuthRequest, res: Response): Promise<Res
       });
     }
 
-    // Create new note with proper typing
+    // ✅ REMOVED: Permission check - agents can now add notes to ANY venue
+    // No longer checking if venue.assignedTo === req.user.userId
+
     const newNote: any = {
       noteId: uuidv4(),
       noteType,
@@ -719,18 +717,14 @@ export const addVenueNote = async (req: AuthRequest, res: Response): Promise<Res
       createdAt: new Date()
     };
 
-    // Initialize notes array if it doesn't exist
     if (!venue.notes) {
       venue.notes = [];
     }
 
-    // Push the new note
     venue.notes.push(newNote);
 
-    // Save with error handling
     await venue.save();
 
-    // Create audit log
     await AuditLog.create({
       auditId: uuidv4(),
       actorId: req.user.userId,
@@ -754,21 +748,13 @@ export const addVenueNote = async (req: AuthRequest, res: Response): Promise<Res
 
   } catch (error: any) {
     console.error('❌ Error adding note:', error);
-    console.error('Error details:', {
-      message: error.message,
-      name: error.name,
-      stack: error.stack
-    });
-    
     return res.status(500).json({
       success: false,
       message: 'Failed to add note',
-      error: error.message,
-      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      error: error.message
     });
   }
 };
-
 
 /**
  * GET /api/agent/venues/:tempVenueId/notes
