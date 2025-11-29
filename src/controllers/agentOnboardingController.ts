@@ -673,6 +673,10 @@ export const attachMainQR = async (req: AgentRequest, res: Response): Promise<Re
  * POST /api/agent/venues/:tempVenueId/notes
  * Add a note to venue
  */
+/**
+ * POST /api/agent/venues/:tempVenueId/notes
+ * Add a note to venue
+ */
 export const addVenueNote = async (req: AuthRequest, res: Response): Promise<Response> => {
   try {
     if (!req.user || !['AGENT', 'ADMIN'].includes(req.user.role)) {
@@ -706,16 +710,8 @@ export const addVenueNote = async (req: AuthRequest, res: Response): Promise<Res
       });
     }
 
-    // ✅ FIXED: Removed the permission check that was restricting notes to only assigned venues
-    // Agents can now add notes to any venue, regardless of assignment
-    // if (req.user.role === 'AGENT' && venue.assignedTo?.toString() !== req.user.userId) {
-    //   return res.status(403).json({
-    //     success: false,
-    //     message: 'You can only add notes to venues assigned to you'
-    //   });
-    // }
-
-    const newNote = {
+    // Create new note with proper typing
+    const newNote: any = {
       noteId: uuidv4(),
       noteType,
       content: content.trim(),
@@ -723,11 +719,18 @@ export const addVenueNote = async (req: AuthRequest, res: Response): Promise<Res
       createdAt: new Date()
     };
 
-    venue.notes = venue.notes || [];
+    // Initialize notes array if it doesn't exist
+    if (!venue.notes) {
+      venue.notes = [];
+    }
+
+    // Push the new note
     venue.notes.push(newNote);
 
+    // Save with error handling
     await venue.save();
 
+    // Create audit log
     await AuditLog.create({
       auditId: uuidv4(),
       actorId: req.user.userId,
@@ -751,13 +754,21 @@ export const addVenueNote = async (req: AuthRequest, res: Response): Promise<Res
 
   } catch (error: any) {
     console.error('❌ Error adding note:', error);
+    console.error('Error details:', {
+      message: error.message,
+      name: error.name,
+      stack: error.stack
+    });
+    
     return res.status(500).json({
       success: false,
       message: 'Failed to add note',
-      error: error.message
+      error: error.message,
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 };
+
 
 /**
  * GET /api/agent/venues/:tempVenueId/notes
