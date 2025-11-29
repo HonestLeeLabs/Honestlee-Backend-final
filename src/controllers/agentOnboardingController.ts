@@ -706,20 +706,20 @@ export const addVenueNote = async (req: AuthRequest, res: Response): Promise<Res
       });
     }
 
-    // Check permission
-    if (req.user.role === 'AGENT' && venue.assignedTo?.toString() !== req.user.userId) {
-      return res.status(403).json({
-        success: false,
-        message: 'You can only add notes to venues assigned to you'
-      });
-    }
+    // ✅ FIXED: Removed the permission check that was restricting notes to only assigned venues
+    // Agents can now add notes to any venue, regardless of assignment
+    // if (req.user.role === 'AGENT' && venue.assignedTo?.toString() !== req.user.userId) {
+    //   return res.status(403).json({
+    //     success: false,
+    //     message: 'You can only add notes to venues assigned to you'
+    //   });
+    // }
 
-    // ✅ FIX: Convert string to ObjectId
     const newNote = {
       noteId: uuidv4(),
       noteType,
       content: content.trim(),
-      createdBy: new mongoose.Types.ObjectId(req.user.userId), // ← Changed this line
+      createdBy: new mongoose.Types.ObjectId(req.user.userId),
       createdAt: new Date()
     };
 
