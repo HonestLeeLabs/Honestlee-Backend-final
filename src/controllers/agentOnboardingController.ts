@@ -1688,19 +1688,67 @@ export const deleteVenuePhoto = async (req: AgentRequest, res: Response): Promis
  * POST /api/agent/venues/onboard-from-google
  * Onboard venue from Google Places API data
  */
-export const onboardFromGoogle = async (req: AgentRequest, res: Response): Promise<Response> => {
+// ONBOARD VENUE FROM GOOGLE - AUTO-LINK TO CRM
+export const onboardFromGoogle = async (
+  req: AgentRequest,
+  res: Response
+): Promise<Response> => {
   try {
-    if (!req.user || !['AGENT', 'ADMIN'].includes(req.user.role)) {
-      return res.status(403).json({ message: 'Insufficient permissions' });
+    if (!req.user || !["AGENT", "ADMIN"].includes(req.user.role)) {
+      return res.status(403).json({ message: "Insufficient permissions" });
     }
 
-    const region = (req.region || 'th') as Region;
+    const region = (req.region || "ae") as Region;
+    
+    // ✅ FIX: Handle both object and string body
+    let googlePlaceDetails = req.body;
+    
+    console.log('🔍 Backend received body:', {
+      bodyType: typeof req.body,
+      isString: typeof req.body === 'string',
+      hasGooglePlaceDetails: 'googlePlaceDetails' in req.body,
+      bodyKeys: typeof req.body === 'object' ? Object.keys(req.body) : 'N/A'
+    });
+    
+    // ✅ If body is wrapped in { googlePlaceDetails: {...} }, unwrap it
+    if (req.body && typeof req.body === 'object' && 'googlePlaceDetails' in req.body) {
+      googlePlaceDetails = req.body.googlePlaceDetails;
+      console.log('✅ Unwrapped googlePlaceDetails from req.body');
+    }
+    
+    // ✅ If body is a string, parse it
+    if (typeof googlePlaceDetails === 'string') {
+      try {
+        googlePlaceDetails = JSON.parse(googlePlaceDetails);
+        console.log('✅ Parsed string body to object');
+      } catch (parseError) {
+        console.error('❌ Failed to parse body:', parseError);
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Invalid JSON format in request body' 
+        });
+      }
+    }
+
+    // ✅ Validate googlePlaceDetails exists and is an object
+    if (!googlePlaceDetails || typeof googlePlaceDetails !== 'object') {
+      console.error('❌ googlePlaceDetails validation failed:', {
+        exists: !!googlePlaceDetails,
+        type: typeof googlePlaceDetails
+      });
+      return res.status(400).json({
+        success: false,
+        message: "Google Place details are required",
+      });
+    }
+
+    // Extract all necessary fields from Google Place
     const {
       googlePlaceId,
       name,
-      formattedAddress,
       latitude,
       longitude,
+      formattedAddress,
       street,
       city,
       district,
@@ -1730,97 +1778,89 @@ export const onboardFromGoogle = async (req: AgentRequest, res: Response): Promi
       parkingOptions,
       atmosphereFlags,
       photoReference,
-      allPhotos
-    } = req.body;
+      allPhotos,
+    } = googlePlaceDetails;
 
-    // ✅ VALIDATION
+    // ✅ Validate required fields
     if (!googlePlaceId || !name) {
+      console.error('❌ Missing required fields:', { 
+        googlePlaceId, 
+        name,
+        allFieldsReceived: Object.keys(googlePlaceDetails)
+      });
       return res.status(400).json({ 
-        success: false,
+        success: false, 
         message: 'Missing required fields: googlePlaceId and name are required' 
       });
     }
 
-    console.log(`🏪 Agent ${req.user.userId} onboarding venue from Google: ${name}`);
-    console.log(`📍 Location: lat=${latitude}, lng=${longitude}`);
-    console.log(`💰 Price data received - Level: ${priceLevel} (type: ${typeof priceLevel}), Range: ${priceRange}`);
+    console.log('✅ Validation passed:', { 
+      googlePlaceId, 
+      name,
+      latitude,
+      longitude 
+    });
 
+    // Generate temp venue ID
     const tempVenueId = `TEMP-${uuidv4().substring(0, 8).toUpperCase()}`;
 
-    // ✅ CONVERT PRICE LEVEL TO NUMBER
-    const convertPriceLevel = (level: any): number | undefined => {
-      if (level === null || level === undefined || level === '') {
-        return undefined;
+    // Price level normalization
+    const convertPriceLevel = (priceLevel: any): number | undefined => {
+      if (priceLevel === undefined || priceLevel === null) return undefined;
+      if (typeof priceLevel === "number") {
+        return priceLevel >= 0 && priceLevel <= 4 ? priceLevel : undefined;
       }
-
-      // If already a number, validate it's in range
-      if (typeof level === 'number') {
-        return (level >= 0 && level <= 4) ? level : undefined;
-      }
-
-      // If string, convert to number
-      if (typeof level === 'string') {
-        // Handle string representations of numbers
-        const parsed = parseInt(level, 10);
+      if (typeof priceLevel === "string") {
+        const parsed = parseInt(priceLevel, 10);
         if (!isNaN(parsed) && parsed >= 0 && parsed <= 4) {
           return parsed;
         }
-
-        // Handle text values (Google sometimes returns these)
         const priceMap: { [key: string]: number } = {
-          'FREE': 0,
-          'INEXPENSIVE': 1,
-          'MODERATE': 2,
-          'EXPENSIVE': 3,
-          'VERY_EXPENSIVE': 4,
-          // Additional variations
-          'CHEAP': 1,
-          'MEDIUM': 2,
-          'COSTLY': 3,
-          'LUXURY': 4
+          FREE: 0,
+          INEXPENSIVE: 1,
+          MODERATE: 2,
+          EXPENSIVE: 3,
+          VERY_EXPENSIVE: 4,
+          CHEAP: 1,
+          MEDIUM: 2,
+          COSTLY: 3,
+          LUXURY: 4,
         };
-
-        const upperLevel = level.toUpperCase();
+        const upperLevel = priceLevel.toUpperCase();
         return priceMap[upperLevel];
       }
-
       return undefined;
     };
 
     const normalizedPriceLevel = convertPriceLevel(priceLevel);
-
     const getPriceLevelDisplay = (level: number | undefined): string => {
-      if (level === undefined || level === null) return '';
-      const symbols = ['', '$', '$$', '$$$', '$$$$'];
-      return symbols[level] || '';
+      if (level === undefined || level === null) return "";
+      const symbols = ["", "$", "$$", "$$$", "$$$$"];
+      return symbols[level];
     };
-
     const priceLevelDisplay = getPriceLevelDisplay(normalizedPriceLevel);
 
-    console.log(`💰 Normalized price level: ${normalizedPriceLevel} → Display: ${priceLevelDisplay}`);
-
-    // ✅ SAFE JSON STRINGIFY HELPER
     const safeStringify = (data: any): string | undefined => {
-      if (!data || (typeof data === 'object' && Object.keys(data).length === 0)) {
+      if (!data || typeof data !== "object" || Object.keys(data).length === 0)
         return undefined;
-      }
       try {
         return JSON.stringify(data);
       } catch (error) {
-        console.error('❌ JSON.stringify error:', error);
+        console.error("JSON.stringify error:", error);
         return undefined;
       }
     };
 
+    // ✅ STEP 1: Create temp venue
     const tempVenue = new AgentVenueTemp({
       tempVenueId,
       createdBy: req.user.userId,
       name,
-      category: allTypes || (primaryType ? [primaryType] : []),
+      category: allTypes || [primaryType || ""],
       address: {
         lat: latitude || 0,
         lng: longitude || 0,
-        raw: formattedAddress || '',
+        raw: formattedAddress || "",
         street: street || undefined,
         city: city || undefined,
         district: district || undefined,
@@ -1830,9 +1870,11 @@ export const onboardFromGoogle = async (req: AgentRequest, res: Response): Promi
         countryCode: countryCode || undefined,
       },
       phone: phoneInternational || undefined,
-      socials: website ? { website } : undefined,
+      socials: {
+        website: website || undefined,
+      },
       hours: regularOpeningHours || undefined,
-      status: 'temp',
+      status: "temp",
       onboardingStatus: VenueOnboardingStatus.UNLISTED,
       verificationLevel: VerificationLevel.PROSPECT_REMOTE,
       region,
@@ -1855,13 +1897,10 @@ export const onboardFromGoogle = async (req: AgentRequest, res: Response): Promi
         reviews: safeStringify(reviews),
         businessStatus: businessStatus || undefined,
         editorialSummary: editorialSummary || undefined,
-        
-        // ✅ USE NORMALIZED PRICE LEVEL
         priceLevel: normalizedPriceLevel,
         priceLevelDisplay: priceLevelDisplay || undefined,
         priceRange: priceRange || undefined,
         displayPrice: safeStringify(displayPrice),
-        
         paymentOptions: safeStringify(paymentOptions),
         accessibilityOptions: safeStringify(accessibilityOptions),
         parkingOptions: safeStringify(parkingOptions),
@@ -1875,49 +1914,117 @@ export const onboardFromGoogle = async (req: AgentRequest, res: Response): Promi
 
     await tempVenue.save();
 
-    await createAuditLog(
-      req.user.userId,
-      req.user.role,
-      'agent.venue.added.from.google',
-      {
-        tempVenueId,
-        name,
-        googlePlaceId,
-        region,
-        priceLevel: normalizedPriceLevel,
-        priceRange,
-      },
-      undefined,
-      req
-    );
+    console.log(`✅ Temp venue created: ${tempVenueId}`);
 
-    console.log(`✅ Venue onboarded from Google: ${tempVenueId}`);
+    // ✅ STEP 2: Auto-link to CRM with auto-create
+    console.log(`🔗 Auto-linking ${tempVenueId} to CRM...`);
 
-    return res.status(201).json({
-      success: true,
-      data: tempVenue,
-      message: 'Venue onboarded from Google successfully',
-    });
-  } catch (error: any) {
-    console.error('❌ Error onboarding from Google:', error);
-    console.error('❌ Error stack:', error.stack);
-    console.error('❌ Error name:', error.name);
-    
-    if (error.name === 'ValidationError') {
-      console.error('❌ Validation errors:', JSON.stringify(error.errors, null, 2));
-      return res.status(400).json({
-        success: false,
-        message: 'Validation error',
-        error: error.message,
-        details: error.errors,
+    const fixedCrmId = "1008473000000765011"; // Fixed Zoho CRM Account ID
+
+    try {
+      // Connect to regional database
+      await dbManager.connectRegion(region);
+      const Venue = getVenueModel(region);
+
+      // Auto-create venue in regional database
+      const newVenue = new Venue({
+        globalId: tempVenueId,
+        AccountName: name,
+        name: name,
+        geometry: {
+          type: "Point",
+          coordinates: [longitude || 0, latitude || 0],
+        },
+        address: {
+          lat: latitude || 0,
+          lng: longitude || 0,
+          raw: formattedAddress || "",
+          street: street || undefined,
+          city: city || undefined,
+          district: district || undefined,
+          postalCode: postalCode || undefined,
+          state: state || undefined,
+          country: country || undefined,
+          countryCode: countryCode || undefined,
+        },
+        Phone: phoneInternational || phoneNational,
+        Website: website,
+        category: allTypes || [primaryType || ""],
+        venuetype: primaryType,
+        Hours: regularOpeningHours,
+        region: region,
+        isActive: true,
+        isVerified: false,
+        ownerId: req.user.userId
+          ? new mongoose.Types.ObjectId(req.user.userId)
+          : undefined,
+      });
+
+      await newVenue.save();
+
+      console.log(
+        `✅ Auto-created venue in regional DB: ${newVenue._id.toString()}`
+      );
+
+      // Update temp venue with CRM ID and venue ID
+      tempVenue.crmId = fixedCrmId;
+      tempVenue.venueId = newVenue._id as mongoose.Types.ObjectId;
+      tempVenue.status = "linked";
+      tempVenue.onboardingStatus = VenueOnboardingStatus.SOFT_ONBOARDED;
+
+      await tempVenue.save();
+
+      console.log(
+        `✅ Auto-linked to CRM: ${tempVenueId} -> ${newVenue._id.toString()}`
+      );
+
+      // Create audit log for both actions
+      await createAuditLog(
+        req.user.userId,
+        req.user.role,
+        "agent.venue.onboarded.from.google.auto.linked",
+        {
+          tempVenueId,
+          name,
+          googlePlaceId,
+          region,
+          autoCreated: true,
+          crmId: fixedCrmId,
+          venueId: newVenue._id.toString(),
+        },
+        newVenue._id.toString(),
+        req
+      );
+
+      return res.status(201).json({
+        success: true,
+        data: tempVenue,
+        autoLinked: true,
+        autoCreated: true,
+        message:
+          "Venue onboarded from Google and automatically linked to CRM successfully",
+      });
+    } catch (linkError: any) {
+      console.error("❌ Auto-link to CRM failed:", linkError);
+
+      // Even if linking fails, venue is still created
+      return res.status(201).json({
+        success: true,
+        data: tempVenue,
+        autoLinked: false,
+        autoCreated: false,
+        warning: "Venue created but auto-link to CRM failed",
+        linkError: linkError.message,
+        message:
+          "Venue onboarded from Google successfully (manual CRM link required)",
       });
     }
-
+  } catch (error: any) {
+    console.error("❌ Error onboarding from Google:", error);
     return res.status(500).json({
       success: false,
-      message: 'Error onboarding venue',
+      message: "Error onboarding venue",
       error: error.message,
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
     });
   }
 };
