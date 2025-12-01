@@ -1179,44 +1179,69 @@ export const generateTestToken = async (req: AgentRequest, res: Response): Promi
   }
 };
 
-// ===== CREATE ZONE =====
-
-export const createZone = async (req: AgentRequest, res: Response): Promise<Response> => {
+// CREATE ZONE - UPDATED
+export const createZone = async (
+  req: AgentRequest,
+  res: Response
+): Promise<Response> => {
   try {
-    if (!req.user || !['AGENT', 'ADMIN'].includes(req.user.role)) {
-      return res.status(403).json({ message: 'Insufficient permissions' });
+    if (!req.user || !["AGENT", "ADMIN"].includes(req.user.role)) {
+      return res.status(403).json({ message: "Insufficient permissions" });
     }
 
     const { venueId } = req.params;
     const { name, capacityMin, capacityMax } = req.body;
 
-    console.log(`🏗️ Creating zone "${name}" for venue ${venueId}`);
+    console.log(`🔍 Creating zone "${name}" for venue: ${venueId}`);
 
     if (name.length > 18) {
-      return res.status(400).json({ 
-        message: 'Zone name must be 18 characters or less' 
-      });
+      return res
+        .status(400)
+        .json({ message: "Zone name must be 18 characters or less" });
     }
 
-    const zone = new Zone({
+    // ✅ Determine if it's a temp venue or real venue
+    const isTempVenue = venueId.startsWith("TEMP-");
+
+    const zoneData: any = {
       zoneId: uuidv4(),
-      venueId,
       name,
       capacityMin,
       capacityMax,
       colorToken: generateColorToken(),
       createdBy: req.user.userId,
-      isActive: true
-    });
+      isActive: true,
+    };
 
+    // ✅ Set appropriate venue ID field
+    if (isTempVenue) {
+      zoneData.tempVenueId = venueId;
+    } else {
+      zoneData.venueId = venueId;
+    }
+
+    const zone = new Zone(zoneData);
     await zone.save();
+
+    // ✅ NEW: Update venue's zonesCreated flag
+    if (isTempVenue) {
+      await AgentVenueTemp.findOneAndUpdate(
+        { tempVenueId: venueId },
+        { 
+          $set: { 
+            zonesCreated: true 
+          } 
+        }
+      );
+      console.log(`✅ Updated venue ${venueId} - zonesCreated: true`);
+    }
 
     await createAuditLog(
       req.user.userId,
       req.user.role,
-      'agent.zone_defined',
-      { zoneId: zone.zoneId, name, venueId },
-      venueId,
+      "agent.zone.defined",
+      { zoneId: zone.zoneId, name, venueId, isTempVenue },
+      isTempVenue ? undefined : venueId,
       req
     );
 
@@ -1225,82 +1250,122 @@ export const createZone = async (req: AgentRequest, res: Response): Promise<Resp
     return res.status(201).json({
       success: true,
       data: zone,
-      message: 'Zone created successfully'
+      message: "Zone created successfully",
     });
-
   } catch (error: any) {
-    console.error('❌ Error creating zone:', error);
+    console.error("❌ Error creating zone:", error);
     return res.status(500).json({
       success: false,
-      message: 'Error creating zone',
-      error: error.message
+      message: "Error creating zone",
+      error: error.message,
     });
   }
 };
 
-// ✅ GET VENUE ZONES
-
-export const getVenueZones = async (req: AgentRequest, res: Response): Promise<Response> => {
+// GET VENUE ZONES
+export const getVenueZones = async (
+  req: AgentRequest,
+  res: Response
+): Promise<Response> => {
   try {
-    if (!req.user || !['AGENT', 'ADMIN'].includes(req.user.role)) {
-      return res.status(403).json({ message: 'Insufficient permissions' });
+    if (!req.user || !["AGENT", "ADMIN"].includes(req.user.role)) {
+      return res.status(403).json({ message: "Insufficient permissions" });
     }
 
     const { venueId } = req.params;
 
     console.log(`🔍 Fetching zones for venue: ${venueId}`);
 
-    const zones = await Zone.find({ 
-      venueId: venueId, 
-      isActive: true 
-    }).sort({ createdAt: 1 });
+    // ✅ Determine if it's a temp venue or real venue
+    const isTempVenue = venueId.startsWith("TEMP-");
+
+    const query: any = { isActive: true };
+    if (isTempVenue) {
+      query.tempVenueId = venueId;
+    } else {
+      query.venueId = venueId;
+    }
+
+    const zones = await Zone.find(query).sort({ createdAt: 1 });
 
     console.log(`✅ Found ${zones.length} zones for venue ${venueId}`);
 
     return res.json({
       success: true,
       data: zones,
-      count: zones.length
+      count: zones.length,
     });
-
   } catch (error: any) {
-    console.error('❌ Error fetching zones:', error);
+    console.error("❌ Error fetching zones:", error);
     return res.status(500).json({
       success: false,
-      message: 'Error fetching zones',
-      error: error.message
+      message: "Error fetching zones",
+      error: error.message,
     });
   }
 };
 
-// ✅ DELETE ZONE
-
-export const deleteZone = async (req: AgentRequest, res: Response): Promise<Response> => {
+// DELETE ZONE - UPDATED
+export const deleteZone = async (
+  req: AgentRequest,
+  res: Response
+): Promise<Response> => {
   try {
-    if (!req.user || !['AGENT', 'ADMIN'].includes(req.user.role)) {
-      return res.status(403).json({ message: 'Insufficient permissions' });
+    if (!req.user || !["AGENT", "ADMIN"].includes(req.user.role)) {
+      return res.status(403).json({ message: "Insufficient permissions" });
     }
 
     const { venueId, zoneId } = req.params;
 
     console.log(`🗑️ Deleting zone ${zoneId} from venue ${venueId}`);
 
+    // ✅ Determine if it's a temp venue or real venue
+    const isTempVenue = venueId.startsWith("TEMP-");
+
+    const query: any = { zoneId, isActive: true };
+    if (isTempVenue) {
+      query.tempVenueId = venueId;
+    } else {
+      query.venueId = venueId;
+    }
+
     const zone = await Zone.findOneAndUpdate(
-      { venueId, zoneId },
+      query,
       { isActive: false },
       { new: true }
     );
 
     if (!zone) {
-      return res.status(404).json({ message: 'Zone not found' });
+      return res.status(404).json({ message: "Zone not found" });
+    }
+
+    // ✅ NEW: Check if there are any remaining active zones
+    if (isTempVenue) {
+      const remainingZonesCount = await Zone.countDocuments({
+        tempVenueId: venueId,
+        isActive: true,
+      });
+
+      // If no zones left, update venue's zonesCreated flag
+      if (remainingZonesCount === 0) {
+        await AgentVenueTemp.findOneAndUpdate(
+          { tempVenueId: venueId },
+          { 
+            $set: { 
+              zonesCreated: false 
+            } 
+          }
+        );
+        console.log(`✅ Updated venue ${venueId} - zonesCreated: false (no zones remaining)`);
+      }
     }
 
     await createAuditLog(
       req.user.userId,
       req.user.role,
-      'agent.zone_deleted',
-      { zoneId, venueId },
-      venueId,
+      "agent.zone.deleted",
+      { zoneId, venueId, isTempVenue },
+      isTempVenue ? undefined : venueId,
       req
     );
 
@@ -1308,15 +1373,14 @@ export const deleteZone = async (req: AgentRequest, res: Response): Promise<Resp
 
     return res.json({
       success: true,
-      message: 'Zone deleted successfully'
+      message: "Zone deleted successfully",
     });
-
   } catch (error: any) {
-    console.error('❌ Error deleting zone:', error);
+    console.error("❌ Error deleting zone:", error);
     return res.status(500).json({
       success: false,
-      message: 'Error deleting zone',
-      error: error.message
+      message: "Error deleting zone",
+      error: error.message,
     });
   }
 };
