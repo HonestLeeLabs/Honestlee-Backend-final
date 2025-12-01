@@ -155,12 +155,23 @@ export const getVenueSpeedTests = async (req: AuthRequest, res: Response) => {
     const { venueId } = req.params;
     const { limit = 50 } = req.query;
 
-    const tests = await WifiSpeedTest.find({
-      $or: [
-        { venueId },
-        { tempVenueId: venueId }
-      ]
-    })
+    // ✅ FIX: Check if venueId is a valid ObjectId
+    const isValidObjectId = mongoose.Types.ObjectId.isValid(venueId);
+    
+    // Build query based on whether it's a valid ObjectId or temp ID
+    const query: any = isValidObjectId
+      ? {
+          $or: [
+            { venueId },
+            { tempVenueId: venueId }
+          ]
+        }
+      : {
+          // If not valid ObjectId, only search by tempVenueId
+          tempVenueId: venueId
+        };
+
+    const tests = await WifiSpeedTest.find(query)
       .populate('userId', 'name email')
       .sort({ timestamp: -1 })
       .limit(parseInt(limit as string))
