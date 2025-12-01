@@ -44,12 +44,13 @@ export interface IAgentNote {
 export interface ICategoryTypeData {
   groupId?: string;
   groupIdDisplayName?: string;
-  categoryId?: string;
+  categoryIds: string[];
   categoryDisplayName?: string;
-  venueTypes?: Array<{
-    venueType: string;
-    venueTypeDisplay: string;
-  }>;
+  venueTypes: Array<{
+      venueType: string;
+      venueTypeDisplay: string;
+      categoryId: string;  // ✅ NEW: Track which category this type belongs to
+    }>;
 }
 
 export interface IAgentVenueTemp extends Document {
@@ -478,11 +479,12 @@ const AgentVenueTempSchema = new Schema<IAgentVenueTemp>({
   categoryTypeData: {
     groupId: String,
     groupIdDisplayName: String,
-    categoryId: String,
+    categoryIds: [{ type: String }],
     categoryDisplayName: String,
     venueTypes: [{
       venueType: String,
-      venueTypeDisplay: String
+      venueTypeDisplay: String,
+      categoryId: { type: String }  
     }]
   },
   categoryTypeConfirmed: {
