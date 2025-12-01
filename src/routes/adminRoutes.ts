@@ -37,6 +37,10 @@ router.get('/users', withAuthRequest(getUsers));
 router.get('/users/:id', withAuthRequest(getUserById));
 router.put('/users/:id', withAuthRequest(updateUserById));
 router.delete('/users/:id', withAuthRequest(deleteUserById));
+// DELETE venue - Must come BEFORE /venues/:id
+router.delete('/venues/:tempVenueId', (req: Request, res: Response, next: NextFunction) =>
+  adminAssignmentController.deleteVenue(req as any, res).catch(next)
+);
 
 // ===== Venue Routes =====
 // ✅ IMPORTANT: Specific routes MUST come BEFORE parameterized routes
