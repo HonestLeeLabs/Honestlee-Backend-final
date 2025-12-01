@@ -40,6 +40,15 @@ router.post('/venues/:tempVenueId/finalize', (req: Request, res: Response, next:
   agentController.finalizeOnboarding(req as any, res).catch(next);
 });
 
+// ===== CATEGORY & TYPE OPERATIONS ===== ✅ NEW
+router.put('/venues/:tempVenueId/category-type', (req: Request, res: Response, next: NextFunction) => {
+  agentController.updateVenueCategoryType(req as any, res).catch(next);
+});
+
+router.get('/venues/:tempVenueId/category-type', (req: Request, res: Response, next: NextFunction) => {
+  agentController.getVenueCategoryType(req as any, res).catch(next);
+});
+
 // ===== QR CODE OPERATIONS =====
 router.post('/venues/:venueId/qr/main', (req: Request, res: Response, next: NextFunction) => {
   agentController.attachMainQR(req as any, res).catch(next);
@@ -111,7 +120,7 @@ router.put('/venues/:tempVenueId/gps', (req: Request, res: Response, next: NextF
   agentController.updateVenueGPS(req as any, res).catch(next);
 });
 
-// ===== MEDIA UPLOAD ROUTES (S3) - WITH ENHANCED ERROR LOGGING =====
+// ===== MEDIA UPLOAD ROUTES (S3) =====
 router.post(
   '/venues/:tempVenueId/media',
   (req: Request, res: Response, next: NextFunction) => {
@@ -181,15 +190,6 @@ router.put(
   (req: Request, res: Response, next: NextFunction) =>
     agentController.updateVenueInfo(req as any, res).catch(next)
 );
-
-// ===== CATEGORY & TYPE OPERATIONS ===== ✅ NEW
-router.put('/venues/:tempVenueId/category-type', (req: Request, res: Response, next: NextFunction) => {
-  agentController.updateVenueCategoryType(req as any, res).catch(next);
-});
-
-router.get('/venues/:tempVenueId/category-type', (req: Request, res: Response, next: NextFunction) => {
-  agentController.getVenueCategoryType(req as any, res).catch(next);
-});
 
 // ===== PHOTO OPERATIONS (Legacy) =====
 router.post(
