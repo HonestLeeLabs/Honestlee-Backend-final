@@ -261,6 +261,62 @@ export const assignVenuesToAgent = async (req: AuthRequest, res: Response) => {
     });
   }
 };
+/**
+ * DELETE /api/admin/venues/:tempVenueId
+ * Delete a venue permanently
+ */
+export const deleteVenue = async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user || req.user.role !== 'ADMIN') {
+      return res.status(403).json({ message: 'Admin access required' });
+    }
+
+    const currentUser = req.user;
+    const { tempVenueId } = req.params;
+
+    // ✅ FIX: Find the venue first to get its data
+    const venue = await AgentVenueTemp.findOne({ tempVenueId });
+
+    if (!venue) {
+      return res.status(404).json({ message: 'Venue not found' });
+    }
+
+    // Store venue data before deletion
+    const venueName = venue.name;
+    const venueRegion = venue.region;
+
+    // Now delete the venue
+    await AgentVenueTemp.deleteOne({ tempVenueId });
+
+    // Audit log
+    await AuditLog.create({
+      auditId: uuidv4(),
+      actorId: currentUser.userId,
+      actorRole: currentUser.role,
+      action: 'VENUE_DELETED',
+      meta: {
+        tempVenueId,
+        venueName: venueName,
+        deletedFromRegion: venueRegion
+      }
+    });
+
+    console.log(`Venue deleted: ${tempVenueId}`);
+
+    res.json({
+      success: true,
+      message: 'Venue deleted successfully',
+      data: { tempVenueId, name: venueName }
+    });
+  } catch (error: any) {
+    console.error('Error deleting venue:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete venue',
+      error: error.message
+    });
+  }
+};
 
 /**
  * GET /api/admin/agents
