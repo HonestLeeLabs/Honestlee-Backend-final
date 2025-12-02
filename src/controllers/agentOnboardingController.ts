@@ -1840,17 +1840,6 @@ export const onboardFromGoogle = async (
     };
     const priceLevelDisplay = getPriceLevelDisplay(normalizedPriceLevel);
 
-    const safeStringify = (data: any): string | undefined => {
-      if (!data || typeof data !== "object" || Object.keys(data).length === 0)
-        return undefined;
-      try {
-        return JSON.stringify(data);
-      } catch (error) {
-        console.error("JSON.stringify error:", error);
-        return undefined;
-      }
-    };
-
     // ✅ STEP 1: Create temp venue
     const tempVenue = new AgentVenueTemp({
       tempVenueId,
@@ -1887,26 +1876,30 @@ export const onboardFromGoogle = async (
       },
       googleData: {
         placeId: googlePlaceId,
-        primaryType: primaryType || undefined,
-        primaryTypeLabel: primaryTypeLabel || undefined,
-        allTypes: allTypes || undefined,
-        googleMapsUrl: googleMapsUrl || undefined,
-        utcOffsetMinutes: utcOffsetMinutes || undefined,
-        rating: rating || undefined,
-        userRatingsCount: userRatingsCount || undefined,
-        reviews: safeStringify(reviews),
-        businessStatus: businessStatus || undefined,
-        editorialSummary: editorialSummary || undefined,
+        primaryType: primaryType ?? undefined,
+        primaryTypeLabel: primaryTypeLabel ?? undefined,
+        allTypes: allTypes ?? undefined,
+        googleMapsUrl: googleMapsUrl ?? undefined,
+        utcOffsetMinutes: utcOffsetMinutes ?? undefined,
+        rating: rating ?? undefined,
+        userRatingsCount: userRatingsCount ?? undefined,        
+        // ✅ Store as array
+        reviews: reviews ?? [],        
+        businessStatus: businessStatus ?? undefined,
+        editorialSummary: editorialSummary ?? undefined,
         priceLevel: normalizedPriceLevel,
-        priceLevelDisplay: priceLevelDisplay || undefined,
-        priceRange: priceRange || undefined,
-        displayPrice: safeStringify(displayPrice),
-        paymentOptions: safeStringify(paymentOptions),
-        accessibilityOptions: safeStringify(accessibilityOptions),
-        parkingOptions: safeStringify(parkingOptions),
-        atmosphereFlags: safeStringify(atmosphereFlags),
-        photoReference: photoReference || undefined,
-        allPhotos: safeStringify(allPhotos),
+        priceLevelDisplay: priceLevelDisplay ?? undefined,
+        priceRange: priceRange ?? undefined,        
+        // ✅ Store as object (not string)
+        displayPrice: displayPrice ?? undefined,        
+        // ✅ Store as objects (not strings)
+        paymentOptions: paymentOptions ?? {},
+        accessibilityOptions: accessibilityOptions ?? {},
+        parkingOptions: parkingOptions ?? {},
+        atmosphereFlags: atmosphereFlags ?? {},        
+        photoReference: photoReference ?? undefined,        
+        // ✅ Store as array (not string)
+        allPhotos: allPhotos ?? [],        
         importedAt: new Date(),
         importedBy: req.user.userId,
       },
