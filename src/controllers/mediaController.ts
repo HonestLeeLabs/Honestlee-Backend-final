@@ -56,6 +56,14 @@ const frontendGroupMap: { [key: string]: string } = {
   'COUNTER': 'Vibe',
   'PAYMENT_METHODS': 'Amenities',
   'MENU_PRICES': 'Menu',
+   // ✅ NEW CATEGORIES
+  'COUNTER_AREA': 'Vibe',
+  'STAFF_CONTACTS': 'Operational',
+  'MANAGER_CONTACTS': 'Operational',
+  'RECEIPTS': 'Operational',
+  'SOCIAL_MEDIA': 'Latest',
+  'SPORTS_AMENITIES': 'Amenities',
+  'TV_DISPLAY': 'Amenities',
 };
 
 /**
