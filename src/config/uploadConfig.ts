@@ -96,8 +96,8 @@ const getMimeToExtensionMap = (): { [key: string]: string } => ({
   'image/bmp': '.bmp',
   'image/tiff': '.tiff',
   'image/tif': '.tiff',
-  'image/heic': '.heic',  // Keep original format
-  'image/heif': '.heif',  // Keep original format
+  'image/heic': '.heic',  // ✅ Keep original format
+  'image/heif': '.heif',  // ✅ Keep original format
   'video/mp4': '.mp4',
   'video/quicktime': '.mov',
   'video/webm': '.webm',
@@ -118,8 +118,8 @@ const getContentTypeMap = (): { [key: string]: string } => ({
   '.bmp': 'image/bmp',
   '.tiff': 'image/tiff',
   '.tif': 'image/tiff',
-  '.heic': 'image/heic',  // Preserve HEIC
-  '.heif': 'image/heif',  // Preserve HEIF
+  '.heic': 'image/heic',  // ✅ Preserve HEIC
+  '.heif': 'image/heif',  // ✅ Preserve HEIF
   '.mp4': 'video/mp4',
   '.m4v': 'video/mp4',
   '.mov': 'video/quicktime',
@@ -186,7 +186,8 @@ export const uploadVenueMedia = multer({
         uploadTimestamp: new Date().toISOString(),
         deviceType: deviceType,
         fileSize: file.size.toString(),
-        uncompressed: 'true' // ✅ Mark as original quality
+        uncompressed: 'true', // ✅ Mark as original quality
+        originalQuality: 'true'
       };
       
       console.log(`📋 Metadata:`, metadata);
@@ -218,8 +219,8 @@ export const uploadVenueMedia = multer({
     fileSize: Infinity,        // ✅ NO SIZE LIMIT
     files: 100,                // Max 100 files per batch
     fieldSize: Infinity,       // ✅ Unlimited field size
-    fieldNameSize: 1000,       // Field name size
-    fields: 50                 // Max number of fields
+    fieldNameSize: 1000,
+    fields: 50
   }
 });
 
@@ -232,7 +233,8 @@ export const uploadReviewImages = multer({
       cb(null, { 
         fieldName: file.fieldname,
         originalName: file.originalname,
-        uncompressed: 'true'
+        uncompressed: 'true',
+        originalQuality: 'true'
       });
     },
     key: function (req: any, file, cb) {
@@ -262,7 +264,8 @@ export const uploadProfileImage = multer({
     metadata: function (req, file, cb) {
       cb(null, { 
         fieldName: file.fieldname,
-        uncompressed: 'true'
+        uncompressed: 'true',
+        originalQuality: 'true'
       });
     },
     key: function (req: any, file, cb) {
@@ -291,7 +294,8 @@ export const uploadEventImages = multer({
     metadata: function (req, file, cb) {
       cb(null, { 
         fieldName: file.fieldname,
-        uncompressed: 'true'
+        uncompressed: 'true',
+        originalQuality: 'true'
       });
     },
     key: function (req: any, file, cb) {
