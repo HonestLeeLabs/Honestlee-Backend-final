@@ -203,6 +203,7 @@ export interface IAgentVenueTemp extends Document {
     }>;
   };
 
+  // ✅ FIXED: Google Data with proper types (matching schema)
   googleData?: {
     placeId: string;
     primaryType?: string;
@@ -212,19 +213,70 @@ export interface IAgentVenueTemp extends Document {
     utcOffsetMinutes?: number;
     rating?: number;
     userRatingsCount?: number;
-    reviews?: string;
+    
+    // ✅ FIX: Array of review objects (not string)
+    reviews?: Array<{
+      authorName?: string;
+      rating?: number;
+      text?: string;
+      time?: Date;
+      relativeTime?: string;
+    }>;
+    
     businessStatus?: string;
     editorialSummary?: string;
     priceLevel?: number;    
     priceLevelDisplay?: string; 
     priceRange?: string; 
     displayPrice?: string;
-    paymentOptions?: string;
-    accessibilityOptions?: string;
-    parkingOptions?: string;
-    atmosphereFlags?: string;
+    
+    // ✅ FIX: Object with payment options (not string)
+    paymentOptions?: {
+      acceptsCreditCards?: boolean;
+      acceptsDebitCards?: boolean;
+      acceptsCashOnly?: boolean;
+      acceptsNFC?: boolean;
+    };
+    
+    // ✅ FIX: Object with accessibility options (not string)
+    accessibilityOptions?: {
+      wheelchairAccessibleEntrance?: boolean;
+      wheelchairAccessibleParking?: boolean;
+      wheelchairAccessibleRestroom?: boolean;
+      wheelchairAccessibleSeating?: boolean;
+    };
+    
+    // ✅ FIX: Object with parking options (not string)
+    parkingOptions?: {
+      freeParking?: boolean;
+      paidParking?: boolean;
+      freeStreetParking?: boolean;
+      paidStreetParking?: boolean;
+      valetParking?: boolean;
+      freeParkingLot?: boolean;
+      paidParkingLot?: boolean;
+    };
+    
+    // ✅ FIX: Object with atmosphere flags (not string)
+    atmosphereFlags?: {
+      allowsDogs?: boolean;
+      servesBreakfast?: boolean;
+      servesBrunch?: boolean;
+      servesLunch?: boolean;
+      servesDinner?: boolean;
+      servesBeer?: boolean;
+      servesWine?: boolean;
+      servesCocktails?: boolean;
+      servesCoffee?: boolean;
+      servesDessert?: boolean;
+      servesVegetarianFood?: boolean;
+    };
+    
     photoReference?: string;
-    allPhotos?: string;
+    
+    // ✅ FIX: Array of strings (not single string)
+    allPhotos?: string[];
+    
     importedAt?: Date;
     importedBy?: string;
   };
@@ -266,7 +318,6 @@ export interface IAgentVenueTemp extends Document {
   zonesCreated?: boolean;
   atmosphereSet?: boolean;
 
-  // NEW: Category Type Data
   categoryTypeData?: ICategoryTypeData;
   categoryTypeConfirmed?: boolean;
   categoryTypeConfirmedAt?: Date;
@@ -492,39 +543,78 @@ const AgentVenueTempSchema = new Schema<IAgentVenueTemp>({
     default: false
   },
   categoryTypeConfirmedAt: Date,
-  googleData: {
-    placeId: { type: String, index: true },
-    primaryType: String,
-    primaryTypeLabel: String,
-    allTypes: [String],
-    googleMapsUrl: String,
-    utcOffsetMinutes: Number,
+googleData: {
+  placeId: { type: String, index: true },
+  primaryType: String,
+  primaryTypeLabel: String,
+  allTypes: [String],
+  googleMapsUrl: String,
+  utcOffsetMinutes: Number,
+  rating: Number,
+  userRatingsCount: Number,
+  
+  // ✅ FIX: Change from String to proper structure
+  reviews: [{
+    authorName: String,
     rating: Number,
-    userRatingsCount: Number,
-    reviews: String,
-    businessStatus: String,
-    editorialSummary: String,
-    priceLevel: {
-      type: Number,
-      min: 0,
-      max: 4,
-      index: true
-    },
-    priceLevelDisplay: {
-      type: String,
-      enum: ['', '$', '$$', '$$$', '$$$$']
-    },
-    priceRange: String,
-    displayPrice: String,
-    paymentOptions: String,
-    accessibilityOptions: String,
-    parkingOptions: String,
-    atmosphereFlags: String,
-    photoReference: String,
-    allPhotos: String,
-    importedAt: Date,
-    importedBy: String,
+    text: String,
+    time: Date,
+    relativeTime: String
+  }],
+  
+  businessStatus: String,
+  editorialSummary: String,
+  
+  priceLevel: { type: Number, min: 0, max: 4, index: true },
+  priceLevelDisplay: { type: String, enum: ['', '$', '$$', '$$$', '$$$$'] },
+  priceRange: String,
+  displayPrice: String,
+  
+  // ✅ FIX: Proper object structures
+  paymentOptions: {
+    acceptsCreditCards: Boolean,
+    acceptsDebitCards: Boolean,
+    acceptsCashOnly: Boolean,
+    acceptsNFC: Boolean
   },
+  
+  accessibilityOptions: {
+    wheelchairAccessibleEntrance: Boolean,
+    wheelchairAccessibleParking: Boolean,
+    wheelchairAccessibleRestroom: Boolean,
+    wheelchairAccessibleSeating: Boolean
+  },
+  
+  parkingOptions: {
+    freeParking: Boolean,
+    paidParking: Boolean,
+    freeStreetParking: Boolean,
+    paidStreetParking: Boolean,
+    valetParking: Boolean,
+    freeParkingLot: Boolean,
+    paidParkingLot: Boolean
+  },
+  
+  atmosphereFlags: {
+    allowsDogs: Boolean,
+    servesBreakfast: Boolean,
+    servesBrunch: Boolean,
+    servesLunch: Boolean,
+    servesDinner: Boolean,
+    servesBeer: Boolean,
+    servesWine: Boolean,
+    servesCocktails: Boolean,
+    servesCoffee: Boolean,
+    servesDessert: Boolean,
+    servesVegetarianFood: Boolean
+  },
+  
+  photoReference: String,
+  allPhotos: [String],  // ✅ Array of strings
+  
+  importedAt: Date,
+  importedBy: String,
+},
   assignedTo: {
     type: Schema.Types.ObjectId,
     ref: 'User',
