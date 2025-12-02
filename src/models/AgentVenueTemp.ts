@@ -204,82 +204,88 @@ export interface IAgentVenueTemp extends Document {
   };
 
   // ✅ FIXED: Google Data with proper types (matching schema)
-  googleData?: {
-    placeId: string;
-    primaryType?: string;
-    primaryTypeLabel?: string;
-    allTypes?: string[];
-    googleMapsUrl?: string;
-    utcOffsetMinutes?: number;
+googleData?: {
+  placeId: string;
+  primaryType?: string;
+  primaryTypeLabel?: string;
+  allTypes?: string[];
+  googleMapsUrl?: string;
+  utcOffsetMinutes?: number;
+  rating?: number;
+  userRatingsCount?: number;
+  reviews?: Array<{
+    authorName?: string;
     rating?: number;
-    userRatingsCount?: number;
-    
-    // ✅ FIX: Array of review objects (not string)
-    reviews?: Array<{
-      authorName?: string;
-      rating?: number;
-      text?: string;
-      time?: Date;
-      relativeTime?: string;
-    }>;
-    
-    businessStatus?: string;
-    editorialSummary?: string;
-    priceLevel?: number;    
-    priceLevelDisplay?: string; 
-    priceRange?: string; 
-    displayPrice?: string;
-    
-    // ✅ FIX: Object with payment options (not string)
-    paymentOptions?: {
-      acceptsCreditCards?: boolean;
-      acceptsDebitCards?: boolean;
-      acceptsCashOnly?: boolean;
-      acceptsNFC?: boolean;
-    };
-    
-    // ✅ FIX: Object with accessibility options (not string)
-    accessibilityOptions?: {
-      wheelchairAccessibleEntrance?: boolean;
-      wheelchairAccessibleParking?: boolean;
-      wheelchairAccessibleRestroom?: boolean;
-      wheelchairAccessibleSeating?: boolean;
-    };
-    
-    // ✅ FIX: Object with parking options (not string)
-    parkingOptions?: {
-      freeParking?: boolean;
-      paidParking?: boolean;
-      freeStreetParking?: boolean;
-      paidStreetParking?: boolean;
-      valetParking?: boolean;
-      freeParkingLot?: boolean;
-      paidParkingLot?: boolean;
-    };
-    
-    // ✅ FIX: Object with atmosphere flags (not string)
-    atmosphereFlags?: {
-      allowsDogs?: boolean;
-      servesBreakfast?: boolean;
-      servesBrunch?: boolean;
-      servesLunch?: boolean;
-      servesDinner?: boolean;
-      servesBeer?: boolean;
-      servesWine?: boolean;
-      servesCocktails?: boolean;
-      servesCoffee?: boolean;
-      servesDessert?: boolean;
-      servesVegetarianFood?: boolean;
-    };
-    
-    photoReference?: string;
-    
-    // ✅ FIX: Array of strings (not single string)
-    allPhotos?: string[];
-    
-    importedAt?: Date;
-    importedBy?: string;
+    text?: string;
+    time?: Date;
+    relativeTime?: string;
+  }>;
+  businessStatus?: string;
+  editorialSummary?: string;
+  priceLevel?: number;
+  priceLevelDisplay?: string;
+  priceRange?: string;
+  displayPrice?: string;
+  paymentOptions?: {
+    acceptsCreditCards?: boolean;
+    acceptsDebitCards?: boolean;
+    acceptsCashOnly?: boolean;
+    acceptsNFC?: boolean;
   };
+  accessibilityOptions?: {
+    wheelchairAccessibleEntrance?: boolean;
+    wheelchairAccessibleParking?: boolean;
+    wheelchairAccessibleRestroom?: boolean;
+    wheelchairAccessibleSeating?: boolean;
+  };
+  parkingOptions?: {
+    freeParking?: boolean;
+    paidParking?: boolean;
+    freeStreetParking?: boolean;
+    paidStreetParking?: boolean;
+    valetParking?: boolean;
+    freeParkingLot?: boolean;
+    paidParkingLot?: boolean;
+  };
+  
+  // ✅ NEW FIELDS
+  serviceOptions?: {
+    dineIn?: boolean;
+    takeout?: boolean;
+    delivery?: boolean;
+    curbsidePickup?: boolean;
+    outdoorSeating?: boolean;
+  };
+  amenities?: {
+    restroom?: boolean;
+    goodForChildren?: boolean;
+    goodForGroups?: boolean;
+    allowsDogs?: boolean;
+    menuForChildren?: boolean;
+    liveMusic?: boolean;
+  };
+  planning?: {
+    reservable?: boolean;
+  };
+  
+  atmosphereFlags?: {
+    allowsDogs?: boolean;
+    servesBreakfast?: boolean;
+    servesBrunch?: boolean;
+    servesLunch?: boolean;
+    servesDinner?: boolean;
+    servesBeer?: boolean;
+    servesWine?: boolean;
+    servesCocktails?: boolean;
+    servesCoffee?: boolean;
+    servesDessert?: boolean;
+    servesVegetarianFood?: boolean;
+  };
+  photoReference?: string;
+  allPhotos?: string[];
+  importedAt?: Date;
+  importedBy?: string;
+};
 
   assignedTo?: mongoose.Types.ObjectId;
   assignedBy?: mongoose.Types.ObjectId;
