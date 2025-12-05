@@ -2,11 +2,15 @@ import mongoose, { Schema, Document } from "mongoose";
 
 export interface IZone extends Document {
   zoneId: string;
-  venueId?: mongoose.Types.ObjectId;  // ✅ Make optional
-  tempVenueId?: string;                // ✅ Add this for temp venues
+  venueId?: mongoose.Types.ObjectId;  // ✅ Optional for temp venues
+  tempVenueId?: string;                // ✅ Support temporary venue IDs
   name: string;
   capacityMin?: number;
   capacityMax?: number;
+  // ✅ NEW FIELDS
+  numTables?: number;
+  numSeats?: number;
+  numChargingPorts?: number;
   colorToken: string;
   createdBy: mongoose.Types.ObjectId;
   isActive: boolean;
@@ -28,7 +32,7 @@ const ZoneSchema = new Schema<IZone>(
       sparse: true,  // ✅ Allow null/undefined
       index: true,
     },
-    tempVenueId: {    // ✅ NEW: Support temporary venue IDs
+    tempVenueId: {    // ✅ Support temporary venue IDs
       type: String,
       sparse: true,
       index: true,
@@ -40,11 +44,24 @@ const ZoneSchema = new Schema<IZone>(
     },
     capacityMin: {
       type: Number,
-      min: 1,
+      min: 0,
     },
     capacityMax: {
       type: Number,
-      min: 1,
+      min: 0,
+    },
+    // ✅ NEW FIELDS - Infrastructure tracking
+    numTables: {
+      type: Number,
+      min: 0,
+    },
+    numSeats: {
+      type: Number,
+      min: 0,
+    },
+    numChargingPorts: {
+      type: Number,
+      min: 0,
     },
     colorToken: {
       type: String,
@@ -58,6 +75,7 @@ const ZoneSchema = new Schema<IZone>(
     isActive: {
       type: Boolean,
       default: true,
+      index: true,
     },
   },
   {
@@ -66,7 +84,7 @@ const ZoneSchema = new Schema<IZone>(
   }
 );
 
-// ✅ Add compound index for both venueId and tempVenueId
+// ✅ Add compound indexes for both venueId and tempVenueId
 ZoneSchema.index({ venueId: 1, isActive: 1 });
 ZoneSchema.index({ tempVenueId: 1, isActive: 1 });
 
