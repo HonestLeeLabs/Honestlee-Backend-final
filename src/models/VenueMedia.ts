@@ -41,6 +41,7 @@ const VenueMediaSchema = new Schema<IVenueMedia>(
       type: String,
       required: true,
       enum: [
+        // Existing categories
         'OUTSIDE_VIEW', 'MENU_BOARD', 'FOOD_DISH', 'CHARGING_PORTS',
         'SEATING_AREA_WORK', 'FAMILY_KIDS_AREA', 'KIDS_MENU', 'ROOM_HOTEL',
         'SELFIE_OWNER_AGENT', 'DOC_LICENSE', 'PANO_360', 'USER_GENERAL',
@@ -51,10 +52,20 @@ const VenueMediaSchema = new Schema<IVenueMedia>(
         'SIGNBOARD', 'AMENITIES', 'EVENT_POSTER', 'VIEW_PANORAMA',
         'TOILET_FACILITIES', 'WIFI_SIGN_EXISTING', 'WIFI_BOASTING_SPEED',
         'LOGO', 'QR_INSTALL_SPOT', 'VIDEO_SHORT', 'COUNTER',
-        'PAYMENT_METHODS', 'MENU_PRICES', 'FOOD_DISPLAY_COUNTER', 
-        // ✅ NEW CATEGORIES
+        'PAYMENT_METHODS', 'MENU_PRICES', 'FOOD_DISPLAY_COUNTER',
         'COUNTER_AREA', 'STAFF_CONTACTS', 'MANAGER_CONTACTS', 'RECEIPTS',
         'SOCIAL_MEDIA', 'SPORTS_AMENITIES', 'TV_DISPLAY',
+        
+        // ✅ NEW: POLICY CATEGORIES
+        'POLICY_PAYMENT', 'POLICY_SMOKING', 'POLICY_OUTSIDE_FOOD',
+        'POLICY_DRESS_CODE', 'POLICY_AGE_RESTRICTION', 'POLICY_RESERVATION',
+        'POLICY_CANCELLATION', 'POLICY_REFUND', 'POLICY_PET',
+        'POLICY_ALCOHOL', 'POLICY_NOISE', 'POLICY_PHOTOGRAPHY',
+        'POLICY_TERMS_CONDITIONS', 'POLICY_PRIVACY', 'POLICY_LIABILITY',
+        
+        // ✅ NEW: COFFEE CATEGORIES
+        'COFFEE_MACHINE', 'COFFEE_ACCESSORIES', 'COFFEE_BEANS_DISPLAY',
+        'COFFEE_MENU', 'BARISTA_STATION',
       ],
       index: true,
     },
@@ -109,6 +120,7 @@ const VenueMediaSchema = new Schema<IVenueMedia>(
         'Latest', 'Videos', 'Menu', 'Food & Drink', 'Vibe', 'Amenities',
         'Charging & Power', 'Family-friendly', '360 view', 'Owner photos',
         'User photos', 'Hotel Features', 'Accessibility', 'Events', 'Operational',
+        'Policies', // ✅ NEW GROUP
       ],
       default: 'Latest',
       index: true,

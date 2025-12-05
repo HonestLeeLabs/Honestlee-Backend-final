@@ -17,7 +17,7 @@ const frontendGroupMap: { [key: string]: string } = {
   'OUTSIDE_VIEW': 'Vibe',
   'MENU_BOARD': 'Menu',
   'FOOD_DISH': 'Food & Drink',
-  'FOOD_DISPLAY_COUNTER': 'Food & Drink', // ✅ NEW CATEGORY
+  'FOOD_DISPLAY_COUNTER': 'Food & Drink',
   'CHARGING_PORTS': 'Charging & Power',
   'SEATING_AREA_WORK': 'Vibe',
   'FAMILY_KIDS_AREA': 'Family-friendly',
@@ -56,7 +56,6 @@ const frontendGroupMap: { [key: string]: string } = {
   'COUNTER': 'Vibe',
   'PAYMENT_METHODS': 'Amenities',
   'MENU_PRICES': 'Menu',
-   // ✅ NEW CATEGORIES
   'COUNTER_AREA': 'Vibe',
   'STAFF_CONTACTS': 'Operational',
   'MANAGER_CONTACTS': 'Operational',
@@ -64,11 +63,33 @@ const frontendGroupMap: { [key: string]: string } = {
   'SOCIAL_MEDIA': 'Latest',
   'SPORTS_AMENITIES': 'Amenities',
   'TV_DISPLAY': 'Amenities',
+  
+  // ✅ NEW: POLICY CATEGORIES
+  'POLICY_PAYMENT': 'Policies',
+  'POLICY_SMOKING': 'Policies',
+  'POLICY_OUTSIDE_FOOD': 'Policies',
+  'POLICY_DRESS_CODE': 'Policies',
+  'POLICY_AGE_RESTRICTION': 'Policies',
+  'POLICY_RESERVATION': 'Policies',
+  'POLICY_CANCELLATION': 'Policies',
+  'POLICY_REFUND': 'Policies',
+  'POLICY_PET': 'Policies',
+  'POLICY_ALCOHOL': 'Policies',
+  'POLICY_NOISE': 'Policies',
+  'POLICY_PHOTOGRAPHY': 'Policies',
+  'POLICY_TERMS_CONDITIONS': 'Policies',
+  'POLICY_PRIVACY': 'Policies',
+  'POLICY_LIABILITY': 'Policies',
+  
+  // ✅ NEW: COFFEE CATEGORIES
+  'COFFEE_ACCESSORIES': 'Food & Drink',
+  'COFFEE_BEANS_DISPLAY': 'Food & Drink',
+  'COFFEE_MENU': 'Menu',
+  'BARISTA_STATION': 'Food & Drink',
 };
 
 /**
  * ✅ Generate file hash for duplicate detection
- * Since multer-s3 uploads before we can access buffer, we use metadata
  */
 const generateFileHashFromMetadata = (file: any): string => {
   const identifier = `${file.originalname}_${file.size}_${file.mimetype}`;
@@ -99,14 +120,13 @@ const checkGlobalDuplicate = async (
       };
     }
 
-    // Fallback: Check by size + similar name (for extra safety)
+    // Fallback: Check by size + similar name
     const existingBySize = await VenueMedia.find({
       tempVenueId,
       fileSize,
     }).select('mediaType fileUrl createdAt s3Key');
 
     for (const media of existingBySize) {
-      // Check if filenames are very similar (same base name)
       const existingFileName = media.s3Key.split('/').pop() || '';
       if (existingFileName.includes(fileName.split('.')[0].slice(-10))) {
         console.log(`🚫 DUPLICATE DETECTED (by size + name): ${fileName} matches ${existingFileName}`);
@@ -178,7 +198,7 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    // ✅ GLOBAL DUPLICATE CHECK - Generate hash from file metadata
+    // ✅ GLOBAL DUPLICATE CHECK
     const fileHash = generateFileHashFromMetadata(file);
 
     const duplicateCheck = await checkGlobalDuplicate(
@@ -191,7 +211,6 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
     if (duplicateCheck.isDuplicate && duplicateCheck.existingMedia) {
       console.log(`🚫 DUPLICATE DETECTED: ${file.originalname} already exists`);
       
-      // ✅ Delete the newly uploaded S3 file since it's a duplicate
       if (file.key) {
         await deleteFileFromS3(file.key);
         console.log(`🗑️ Deleted duplicate S3 file: ${file.key}`);
@@ -233,7 +252,7 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
     const frontendGroup = frontendGroupMap[mediaType] || 'Latest';
 
     let publicVisibility = 'Public (frontend)';
-    if (['DOC_LICENSE', 'SELFIE_OWNER_AGENT', 'SCREENSHOT_GPS_CHANGE', 'QR_INSTALL_SPOT'].includes(mediaType)) {
+    if (['DOC_LICENSE', 'SELFIE_OWNER_AGENT', 'SCREENSHOT_GPS_CHANGE', 'QR_INSTALL_SPOT', 'STAFF_CONTACTS', 'MANAGER_CONTACTS', 'RECEIPTS'].includes(mediaType)) {
       publicVisibility = 'Internal only';
     }
 
@@ -261,7 +280,7 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
       s3Key: file.key,
       fileFormat,
       fileSize: file.size,
-      fileHash, // ✅ Store hash for future duplicate checks
+      fileHash,
       isVideo,
       is360,
       publicVisibility,
