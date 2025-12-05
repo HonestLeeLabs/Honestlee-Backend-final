@@ -4,6 +4,7 @@ import { AuthRequest } from '../middlewares/authMiddleware';
 import AgentVenueTemp from '../models/AgentVenueTemp';
 import User from '../models/User';
 import AuditLog from '../models/AuditLog';
+import mongoose from 'mongoose';
 import { v4 as uuidv4 } from 'uuid';
 
 // Verification Level Constants
@@ -31,9 +32,11 @@ export enum VerificationLevel {
 }
 
 /**
- * GET /api/admin/venues/map
- * Get all venues for map view (unassigned + assigned)
+ * ✅ COMPLETE FIXED: GET /api/admin/venues/map
+ * Get all venues for map view with aggregated media, WiFi, and notes counts
  */
+// ✅ FIXED: GET /api/admin/venues/map
+// controllers/adminVenueController.ts
 export const getVenuesForMap = async (req: AuthRequest, res: Response) => {
   try {
     if (!req.user || req.user.role !== 'ADMIN') {
@@ -56,11 +59,306 @@ export const getVenuesForMap = async (req: AuthRequest, res: Response) => {
       filter.verificationLevel = verificationLevel;
     }
 
-    const venues = await AgentVenueTemp.find(filter)
-      .populate('assignedTo', 'name email phone')
-      .populate('assignedBy', 'name email')
-      .select('tempVenueId name category address onboardingStatus verificationLevel assignedTo assignedBy assignmentDate expectedVisitDate visitStatus vitalsCompleted flags')
-      .lean();
+    console.log('🔍 Fetching venues with filter:', filter);
+
+    // ✅ FIXED: Enhanced aggregation with proper venueId/tempVenueId matching
+    const venues = await AgentVenueTemp.aggregate([
+      // Match filter criteria
+      { $match: filter },
+      
+      // ✅ FIXED: Lookup media from venuemedia - check BOTH tempVenueId AND venueId
+    // ✅ SAFER: Lookup media from venuemedia collection
+{
+  $lookup: {
+    from: 'venuemedia',
+    let: { 
+      tempId: '$tempVenueId',
+      venueObjId: '$venueId'
+    },
+    pipeline: [
+      {
+        $match: {
+          $expr: {
+            $or: [
+              { $eq: ['$tempVenueId', '$$tempId'] },
+              { $eq: ['$venueId', '$$venueObjId'] },
+              { $eq: ['$tempVenueId', { $convert: { input: '$$venueObjId', to: 'string', onError: null, onNull: null } }] }
+            ]
+          }
+        }
+      }
+    ],
+    as: 'mediaFiles'
+  }
+},
+
+// ✅ SAFER: Lookup WiFi tests
+{
+  $lookup: {
+    from: 'wifi_speed_tests',
+    let: { 
+      tempId: '$tempVenueId',
+      venueObjId: '$venueId'
+    },
+    pipeline: [
+      {
+        $match: {
+          $expr: {
+            $or: [
+              { $eq: ['$tempVenueId', '$$tempId'] },
+              { $eq: ['$venueId', '$$venueObjId'] },
+              { $eq: ['$tempVenueId', { $convert: { input: '$$venueObjId', to: 'string', onError: null, onNull: null } }] }
+            ]
+          }
+        }
+      }
+    ],
+    as: 'wifiTests'
+  }
+},
+      
+      // ✅ Add computed fields with safe null handling
+      {
+        $addFields: {
+          // Photo count
+          photosCount: { 
+            $cond: {
+              if: { $isArray: '$mediaFiles' },
+              then: { $size: '$mediaFiles' },
+              else: 0
+            }
+          },
+          
+          // WiFi tests count
+          wifiTestsCount: { 
+            $cond: {
+              if: { $isArray: '$wifiTests' },
+              then: { $size: '$wifiTests' },
+              else: 0
+            }
+          },
+          
+          // Notes count
+          notesCount: { 
+            $cond: {
+              if: { $isArray: '$notes' },
+              then: { $size: '$notes' },
+              else: 0
+            }
+          },
+          
+          // Boolean flags
+          hasPhotos: { 
+            $gt: [
+              { 
+                $cond: {
+                  if: { $isArray: '$mediaFiles' },
+                  then: { $size: '$mediaFiles' },
+                  else: 0
+                }
+              }, 
+              0
+            ] 
+          },
+          
+          hasWifiTests: { 
+            $gt: [
+              { 
+                $cond: {
+                  if: { $isArray: '$wifiTests' },
+                  then: { $size: '$wifiTests' },
+                  else: 0
+                }
+              }, 
+              0
+            ] 
+          },
+          
+          hasNotes: { 
+            $gt: [
+              { 
+                $cond: {
+                  if: { $isArray: '$notes' },
+                  then: { $size: '$notes' },
+                  else: 0
+                }
+              }, 
+              0
+            ] 
+          },
+          
+          // Check for reviews with safe null handling
+          hasReviews: {
+            $cond: {
+              if: {
+                $or: [
+                  { $gt: [{ $ifNull: ['$googleData.rating', 0] }, 0] },
+                  { $gt: [{ $ifNull: ['$googleData.userRatingsTotal', 0] }, 0] },
+                  { 
+                    $gt: [
+                      { 
+                        $size: { 
+                          $cond: {
+                            if: { $isArray: '$googleData.reviews' },
+                            then: '$googleData.reviews',
+                            else: []
+                          }
+                        } 
+                      }, 
+                      0
+                    ] 
+                  }
+                ]
+              },
+              then: true,
+              else: false
+            }
+          }
+        }
+      },
+      
+      // ✅ Lookup assignedTo user
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'assignedTo',
+          foreignField: '_id',
+          as: 'assignedToUser'
+        }
+      },
+      
+      // ✅ Lookup assignedBy user
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'assignedBy',
+          foreignField: '_id',
+          as: 'assignedByUser'
+        }
+      },
+      
+      // ✅ Format user data
+      {
+        $addFields: {
+          assignedTo: { 
+            $cond: {
+              if: { $gt: [{ $size: '$assignedToUser' }, 0] },
+              then: { 
+                _id: { $arrayElemAt: ['$assignedToUser._id', 0] },
+                name: { $arrayElemAt: ['$assignedToUser.name', 0] },
+                email: { $arrayElemAt: ['$assignedToUser.email', 0] },
+                phone: { $arrayElemAt: ['$assignedToUser.phone', 0] }
+              },
+              else: null
+            }
+          },
+          assignedBy: { 
+            $cond: {
+              if: { $gt: [{ $size: '$assignedByUser' }, 0] },
+              then: { 
+                _id: { $arrayElemAt: ['$assignedByUser._id', 0] },
+                name: { $arrayElemAt: ['$assignedByUser.name', 0] },
+                email: { $arrayElemAt: ['$assignedByUser.email', 0] }
+              },
+              else: null
+            }
+          }
+        }
+      },
+      
+// ✅ FIXED: Final projection - ONLY use inclusion (no exclusions)
+{
+  $project: {
+    tempVenueId: 1,
+    venueId: 1,
+    name: 1,
+    category: 1,
+    address: 1,
+    onboardingStatus: 1,
+    verificationLevel: 1,
+    assignedTo: 1,
+    assignedBy: 1,
+    assignmentDate: 1,
+    expectedVisitDate: 1,
+    visitStatus: 1,
+    vitalsCompleted: 1,
+    flags: 1,
+    googleData: 1,
+    wifiData: 1,
+    notes: 1,
+    venuetype: 1,
+    venuecategory: 1,
+    venuecategorydisplay: 1,
+    groupid: 1,
+    groupiddisplayname: 1,
+    venuetypedisplay: 1,
+    createdAt: 1,
+    updatedAt: 1,
+    created_at: 1,  
+    photosCount: 1,
+    wifiTestsCount: 1,
+    notesCount: 1,
+    hasPhotos: 1,
+    hasWifiTests: 1,
+    hasNotes: 1,
+    hasReviews: 1
+    // ✅ REMOVED: Don't explicitly exclude fields, just don't include them
+    // mediaFiles: 0,  ❌ REMOVE THIS
+    // wifiTests: 0,   ❌ REMOVE THIS
+    // assignedToUser: 0,  ❌ REMOVE THIS
+    // assignedByUser: 0   ❌ REMOVE THIS
+  }
+}
+    ]);
+
+    console.log(`✅ Fetched ${venues.length} venues`);
+    
+    // ✅ Enhanced logging with counts
+    if (venues.length > 0) {
+      const withPhotos = venues.filter(v => v.hasPhotos).length;
+      const withWifi = venues.filter(v => v.hasWifiTests).length;
+      const withNotes = venues.filter(v => v.hasNotes).length;
+      const withReviews = venues.filter(v => v.hasReviews).length;
+      
+      console.log('📊 Venue Statistics:', {
+        total: venues.length,
+        withPhotos,
+        withWifi,
+        withNotes,
+        withReviews
+      });
+      
+      // Show examples of venues with data
+      const exampleWithPhotos = venues.find(v => v.hasPhotos);
+      if (exampleWithPhotos) {
+        console.log('✅ Example venue WITH photos:', {
+          name: exampleWithPhotos.name,
+          tempVenueId: exampleWithPhotos.tempVenueId,
+          venueId: exampleWithPhotos.venueId,
+          photosCount: exampleWithPhotos.photosCount
+        });
+      }
+      
+      const exampleWithWifi = venues.find(v => v.hasWifiTests);
+      if (exampleWithWifi) {
+        console.log('✅ Example venue WITH WiFi:', {
+          name: exampleWithWifi.name,
+          tempVenueId: exampleWithWifi.tempVenueId,
+          venueId: exampleWithWifi.venueId,
+          wifiTestsCount: exampleWithWifi.wifiTestsCount
+        });
+      }
+      
+      const exampleWithNotes = venues.find(v => v.hasNotes);
+      if (exampleWithNotes) {
+        console.log('✅ Example venue WITH notes:', {
+          name: exampleWithNotes.name,
+          tempVenueId: exampleWithNotes.tempVenueId,
+          venueId: exampleWithNotes.venueId,
+          notesCount: exampleWithNotes.notesCount
+        });
+      }
+    }
 
     res.json({
       success: true,
@@ -68,7 +366,7 @@ export const getVenuesForMap = async (req: AuthRequest, res: Response) => {
       data: venues
     });
   } catch (error: any) {
-    console.error('Error fetching venues for map:', error);
+    console.error('❌ Error fetching venues for map:', error);
     res.status(500).json({
       success: false,
       message: 'Failed to fetch venues',
@@ -79,11 +377,10 @@ export const getVenuesForMap = async (req: AuthRequest, res: Response) => {
 
 /**
  * POST /api/admin/venues/assign
- * ✅ COMPLETE FIX: Assign multiple venues to an agent (creates missing venues)
+ * Assign multiple venues to an agent (creates missing venues)
  */
 export const assignVenuesToAgent = async (req: AuthRequest, res: Response) => {
   try {
-    // ✅ Store user in constant to fix TypeScript error
     if (!req.user || req.user.role !== 'ADMIN') {
       return res.status(403).json({ message: 'Admin access required' });
     }
@@ -91,7 +388,6 @@ export const assignVenuesToAgent = async (req: AuthRequest, res: Response) => {
 
     const { venueIds, agentId, expectedVisitDate, venuesData } = req.body;
 
-    // ✅ Validation
     if (!Array.isArray(venueIds) || venueIds.length === 0) {
       return res.status(400).json({ 
         success: false,
@@ -113,7 +409,6 @@ export const assignVenuesToAgent = async (req: AuthRequest, res: Response) => {
       hasVenuesData: !!venuesData && Array.isArray(venuesData)
     });
 
-    // ✅ Verify agent exists and has AGENT role
     const agent = await User.findById(agentId);
     if (!agent || agent.role !== 'AGENT') {
       return res.status(400).json({ 
@@ -124,10 +419,8 @@ export const assignVenuesToAgent = async (req: AuthRequest, res: Response) => {
 
     console.log('✅ Agent found:', agent.name);
 
-    // ✅ Parse expected visit date
     const visitDate = expectedVisitDate ? new Date(expectedVisitDate) : new Date();
 
-    // ✅ Find existing venues in AgentVenueTemp
     const existingVenues = await AgentVenueTemp.find({
       tempVenueId: { $in: venueIds }
     });
@@ -140,7 +433,6 @@ export const assignVenuesToAgent = async (req: AuthRequest, res: Response) => {
     let assignedCount = 0;
     let createdCount = 0;
 
-    // ✅ UPDATE existing venues
     if (existingVenues.length > 0) {
       const existingIds = existingVenues.map(v => v.tempVenueId);
       const updateResult = await AgentVenueTemp.updateMany(
@@ -164,7 +456,6 @@ export const assignVenuesToAgent = async (req: AuthRequest, res: Response) => {
       console.log('✅ Updated existing venues:', updateResult.modifiedCount);
     }
 
-    // ✅ CREATE missing venues
     const existingIds = existingVenues.map(v => v.tempVenueId);
     const missingIds = venueIds.filter((id: string) => !existingIds.includes(id));
 
@@ -226,7 +517,6 @@ export const assignVenuesToAgent = async (req: AuthRequest, res: Response) => {
       }
     }
 
-    // ✅ Create audit log
     await AuditLog.create({
       auditId: uuidv4(),
       actorId: currentUser.userId,
@@ -261,6 +551,7 @@ export const assignVenuesToAgent = async (req: AuthRequest, res: Response) => {
     });
   }
 };
+
 /**
  * DELETE /api/admin/venues/:tempVenueId
  * Delete a venue permanently
@@ -274,21 +565,17 @@ export const deleteVenue = async (req: AuthRequest, res: Response) => {
     const currentUser = req.user;
     const { tempVenueId } = req.params;
 
-    // ✅ FIX: Find the venue first to get its data
     const venue = await AgentVenueTemp.findOne({ tempVenueId });
 
     if (!venue) {
       return res.status(404).json({ message: 'Venue not found' });
     }
 
-    // Store venue data before deletion
     const venueName = venue.name;
     const venueRegion = venue.region;
 
-    // Now delete the venue
     await AgentVenueTemp.deleteOne({ tempVenueId });
 
-    // Audit log
     await AuditLog.create({
       auditId: uuidv4(),
       actorId: currentUser.userId,
@@ -435,7 +722,6 @@ export const unassignVenue = async (req: AuthRequest, res: Response) => {
       return res.status(404).json({ message: 'Venue not found' });
     }
 
-    // Audit log
     await AuditLog.create({
       auditId: uuidv4(),
       actorId: currentUser.userId,
@@ -570,7 +856,6 @@ export const updateVerificationLevel = async (req: AuthRequest, res: Response) =
       return res.status(404).json({ message: 'Venue not found' });
     }
 
-    // Audit log
     await AuditLog.create({
       auditId: uuidv4(),
       actorId: currentUser.userId,
