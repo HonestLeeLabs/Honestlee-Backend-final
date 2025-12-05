@@ -11,59 +11,81 @@ import { deleteFileFromS3, getS3KeyFromUrl } from '../config/uploadConfig';
 import crypto from 'crypto';
 
 /**
+ * ✅ CloudFront domain (use your final CDN domain or the CloudFront URL)
+ * For now you can use: https://dedllwce1iasg.cloudfront.net
+ * Later switch to: https://media.honestlee.app once DNS is mapped.
+ */
+const CLOUDFRONT_DOMAIN = process.env.CLOUDFRONT_DOMAIN || 'https://dedllwce1iasg.cloudfront.net';
+
+/**
+ * ✅ Convert S3 URL to CloudFront URL
+ * S3 URL:  https://honestlee-user-upload.s3.ap-south-1.amazonaws.com/venue-media/TEMP-123/image.jpg
+ * CDN URL: https://media.honestlee.app/venue-media/TEMP-123/image.jpg
+ */
+function convertToCloudFrontUrl(s3Url: string): string {
+  try {
+    const url = new URL(s3Url);
+    const path = url.pathname.startsWith('/') ? url.pathname.substring(1) : url.pathname;
+    return `${CLOUDFRONT_DOMAIN}/${path}`;
+  } catch (error) {
+    console.error('❌ Error converting S3 URL to CloudFront URL:', error);
+    return s3Url;
+  }
+}
+
+/**
  * COMPLETE FRONTEND GROUP MAPPING
  */
 const frontendGroupMap: { [key: string]: string } = {
-  'OUTSIDE_VIEW': 'Vibe',
-  'MENU_BOARD': 'Menu',
-  'FOOD_DISH': 'Food & Drink',
-  'FOOD_DISPLAY_COUNTER': 'Food & Drink',
-  'CHARGING_PORTS': 'Charging & Power',
-  'SEATING_AREA_WORK': 'Vibe',
-  'FAMILY_KIDS_AREA': 'Family-friendly',
-  'KIDS_MENU': 'Family-friendly',
-  'ROOM_HOTEL': 'Hotel Features',
-  'SELFIE_OWNER_AGENT': 'Owner photos',
-  'DOC_LICENSE': 'Operational',
-  'PANO_360': '360 view',
-  'USER_GENERAL': 'User photos',
-  'DRINKS_BAR': 'Food & Drink',
-  'WORKSTATIONS_LAPTOPS': 'Amenities',
-  'BATHROOM_HOTEL': 'Hotel Features',
-  'LOBBY_RECEPTION': 'Hotel Features',
-  'POOL_AREA': 'Hotel Features',
-  'GYM_AREA': 'Amenities',
-  'CONFERENCE_ROOM': 'Amenities',
-  'SUPERMARKET_AISLE': 'Amenities',
-  'PARKING_AREA': 'Amenities',
-  'ACCESSIBILITY': 'Accessibility',
-  'HIGH_CHAIRS': 'Family-friendly',
-  'PET_AREA': 'Amenities',
-  'COFFEE_MACHINE': 'Food & Drink',
-  'SCREENSHOT_GPS_CHANGE': 'Operational',
-  'EVENTS_PHOTOS': 'Events',
-  'VIBE_INTERIOR': 'Vibe',
-  'SIGNBOARD': 'Latest',
-  'AMENITIES': 'Amenities',
-  'EVENT_POSTER': 'Events',
-  'VIEW_PANORAMA': 'Vibe',
-  'TOILET_FACILITIES': 'Amenities',
-  'WIFI_SIGN_EXISTING': 'Amenities',
-  'WIFI_BOASTING_SPEED': 'Amenities',
-  'LOGO': 'Latest',
-  'QR_INSTALL_SPOT': 'Operational',
-  'VIDEO_SHORT': 'Videos',
-  'COUNTER': 'Vibe',
-  'PAYMENT_METHODS': 'Amenities',
-  'MENU_PRICES': 'Menu',
-  'COUNTER_AREA': 'Vibe',
-  'STAFF_CONTACTS': 'Operational',
-  'MANAGER_CONTACTS': 'Operational',
-  'RECEIPTS': 'Operational',
-  'SOCIAL_MEDIA': 'Latest',
-  'SPORTS_AMENITIES': 'Amenities',
-  'TV_DISPLAY': 'Amenities',
-  
+  OUTSIDE_VIEW: 'Vibe',
+  MENU_BOARD: 'Menu',
+  FOOD_DISH: 'Food & Drink',
+  FOOD_DISPLAY_COUNTER: 'Food & Drink',
+  CHARGING_PORTS: 'Charging & Power',
+  SEATING_AREA_WORK: 'Vibe',
+  FAMILY_KIDS_AREA: 'Family-friendly',
+  KIDS_MENU: 'Family-friendly',
+  ROOM_HOTEL: 'Hotel Features',
+  SELFIE_OWNER_AGENT: 'Owner photos',
+  DOC_LICENSE: 'Operational',
+  PANO_360: '360 view',
+  USER_GENERAL: 'User photos',
+  DRINKS_BAR: 'Food & Drink',
+  WORKSTATIONS_LAPTOPS: 'Amenities',
+  BATHROOM_HOTEL: 'Hotel Features',
+  LOBBY_RECEPTION: 'Hotel Features',
+  POOL_AREA: 'Hotel Features',
+  GYM_AREA: 'Amenities',
+  CONFERENCE_ROOM: 'Amenities',
+  SUPERMARKET_AISLE: 'Amenities',
+  PARKING_AREA: 'Amenities',
+  ACCESSIBILITY: 'Accessibility',
+  HIGH_CHAIRS: 'Family-friendly',
+  PET_AREA: 'Amenities',
+  COFFEE_MACHINE: 'Food & Drink',
+  SCREENSHOT_GPS_CHANGE: 'Operational',
+  EVENTS_PHOTOS: 'Events',
+  VIBE_INTERIOR: 'Vibe',
+  SIGNBOARD: 'Latest',
+  AMENITIES: 'Amenities',
+  EVENT_POSTER: 'Events',
+  VIEW_PANORAMA: 'Vibe',
+  TOILET_FACILITIES: 'Amenities',
+  WIFI_SIGN_EXISTING: 'Amenities',
+  WIFI_BOASTING_SPEED: 'Amenities',
+  LOGO: 'Latest',
+  QR_INSTALL_SPOT: 'Operational',
+  VIDEO_SHORT: 'Videos',
+  COUNTER: 'Vibe',
+  PAYMENT_METHODS: 'Amenities',
+  MENU_PRICES: 'Menu',
+  COUNTER_AREA: 'Vibe',
+  STAFF_CONTACTS: 'Operational',
+  MANAGER_CONTACTS: 'Operational',
+  RECEIPTS: 'Operational',
+  SOCIAL_MEDIA: 'Latest',
+  SPORTS_AMENITIES: 'Amenities',
+  TV_DISPLAY: 'Amenities',
   // ✅ NEW: POLICY CATEGORIES
   'POLICY_PAYMENT': 'Policies',
   'POLICY_SMOKING': 'Policies',
@@ -106,21 +128,18 @@ const checkGlobalDuplicate = async (
   fileName: string
 ): Promise<{ isDuplicate: boolean; existingMedia?: any }> => {
   try {
-    // Check by hash first (most accurate)
     let existingMedia = await VenueMedia.findOne({
       tempVenueId,
       fileHash,
     }).select('mediaType fileUrl createdAt');
 
     if (existingMedia) {
-      console.log(`🚫 DUPLICATE DETECTED (by hash): ${fileName} matches existing file in ${existingMedia.mediaType}`);
-      return {
-        isDuplicate: true,
-        existingMedia,
-      };
+      console.log(
+        `🚫 DUPLICATE DETECTED (by hash): ${fileName} matches existing file in ${existingMedia.mediaType}`
+      );
+      return { isDuplicate: true, existingMedia };
     }
 
-    // Fallback: Check by size + similar name
     const existingBySize = await VenueMedia.find({
       tempVenueId,
       fileSize,
@@ -129,11 +148,10 @@ const checkGlobalDuplicate = async (
     for (const media of existingBySize) {
       const existingFileName = media.s3Key.split('/').pop() || '';
       if (existingFileName.includes(fileName.split('.')[0].slice(-10))) {
-        console.log(`🚫 DUPLICATE DETECTED (by size + name): ${fileName} matches ${existingFileName}`);
-        return {
-          isDuplicate: true,
-          existingMedia: media,
-        };
+        console.log(
+          `🚫 DUPLICATE DETECTED (by size + name): ${fileName} matches ${existingFileName}`
+        );
+        return { isDuplicate: true, existingMedia: media };
       }
     }
 
@@ -146,10 +164,10 @@ const checkGlobalDuplicate = async (
 
 /**
  * POST /api/agent/venues/:tempVenueId/media - Upload media with duplicate detection
+ * ✅ Now stores CloudFront URL in fileUrl
  */
 export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
   try {
-    // ✅ Set extended timeout for large files (10 minutes)
     req.setTimeout(600000);
     res.setTimeout(600000);
 
@@ -178,7 +196,6 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    // Verify venue assignment
     const venue = await AgentVenueTemp.findOne({
       tempVenueId,
       assignedTo: currentUser.userId,
@@ -186,19 +203,18 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
 
     if (!venue) {
       console.error('Venue not found or not assigned:', { tempVenueId, agentId: currentUser.userId });
-      
+
       if (file.key) {
         await deleteFileFromS3(file.key);
         console.log(`🗑️ Deleted S3 file due to venue check failure: ${file.key}`);
       }
-      
+
       return res.status(404).json({
         success: false,
         message: 'Venue not found or not assigned to you',
       });
     }
 
-    // ✅ GLOBAL DUPLICATE CHECK
     const fileHash = generateFileHashFromMetadata(file);
 
     const duplicateCheck = await checkGlobalDuplicate(
@@ -210,12 +226,12 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
 
     if (duplicateCheck.isDuplicate && duplicateCheck.existingMedia) {
       console.log(`🚫 DUPLICATE DETECTED: ${file.originalname} already exists`);
-      
+
       if (file.key) {
         await deleteFileFromS3(file.key);
         console.log(`🗑️ Deleted duplicate S3 file: ${file.key}`);
       }
-      
+
       return res.status(409).json({
         success: false,
         message: 'Duplicate file detected',
@@ -237,7 +253,6 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
       hash: fileHash,
     });
 
-    // Determine file properties
     const fileExtension = path.extname(file.originalname).toLowerCase();
     const isVideo =
       file.contentType?.startsWith('video') ||
@@ -252,22 +267,20 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
     const frontendGroup = frontendGroupMap[mediaType] || 'Latest';
 
     let publicVisibility = 'Public (frontend)';
-    if (['DOC_LICENSE', 'SELFIE_OWNER_AGENT', 'SCREENSHOT_GPS_CHANGE', 'QR_INSTALL_SPOT', 'STAFF_CONTACTS', 'MANAGER_CONTACTS', 'RECEIPTS'].includes(mediaType)) {
+    if (
+      ['DOC_LICENSE', 'SELFIE_OWNER_AGENT', 'SCREENSHOT_GPS_CHANGE', 'QR_INSTALL_SPOT'].includes(
+        mediaType
+      )
+    ) {
       publicVisibility = 'Internal only';
     }
 
-    console.log('Creating media record with:', {
-      tempVenueId,
-      mediaType,
-      fileFormat,
-      fileSize: file.size,
-      fileHash,
-      isVideo,
-      is360,
-      frontendGroup,
-    });
+    // ✅ Convert S3 URL to CloudFront URL and store that
+    const s3Url = file.location;
+    const cloudFrontUrl = convertToCloudFrontUrl(s3Url);
 
-    // Create media record with file hash
+    console.log('🔗 URL conversion:', { s3Url, cloudFrontUrl });
+
     const media = await VenueMedia.create({
       mediaId: `M-${uuidv4().slice(0, 8)}`,
       tempVenueId,
@@ -276,7 +289,7 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
       captureContext: captureContext || 'Agent onboarding',
       submittedByRole: submittedByRole || 'Agent',
       submittedBy: currentUser.userId,
-      fileUrl: file.location,
+      fileUrl: cloudFrontUrl,          // ✅ CloudFront URL
       s3Key: file.key,
       fileFormat,
       fileSize: file.size,
@@ -288,7 +301,6 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
       capturedAt: new Date(),
     });
 
-    // Audit log
     await AuditLog.create({
       auditId: uuidv4(),
       actorId: currentUser.userId,
@@ -310,20 +322,28 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
 
     console.log('Media record created:', media.mediaId);
 
+    // ✅ Include thumbnail URL in response
+    const thumbnailUrl = isVideo
+      ? cloudFrontUrl
+      : `${cloudFrontUrl}?w=200&h=200&q=80&f=webp`;
+
     res.status(201).json({
       success: true,
       message: 'Media uploaded successfully',
-      data: media,
+      data: {
+        ...media.toObject(),
+        thumbnailUrl,
+      },
     });
   } catch (error: any) {
     console.error('Error uploading media:', error);
-    
+
     const file = (req as any).file;
     if (file?.key) {
       await deleteFileFromS3(file.key);
       console.log(`🗑️ Deleted S3 file due to error: ${file.key}`);
     }
-    
+
     res.status(500).json({
       success: false,
       message: 'Failed to upload media',
@@ -334,6 +354,7 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
 
 /**
  * GET /api/agent/venues/:tempVenueId/media - Get all media for venue
+ * ✅ Adds thumbnailUrl for each item using CloudFront resize params
  */
 export const getVenueMedia = async (req: AuthRequest, res: Response) => {
   try {
@@ -350,14 +371,29 @@ export const getVenueMedia = async (req: AuthRequest, res: Response) => {
 
     const media = await VenueMedia.find(filter)
       .populate('submittedBy', 'name email')
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .lean();
 
-    console.log(`Found ${media.length} media items for venue ${tempVenueId}`);
+    const mediaWithThumbnails = media.map((item: any) => {
+      const isVideo = item.isVideo;
+      const fileUrl = item.fileUrl;
+
+      const thumbnailUrl = isVideo
+        ? fileUrl
+        : `${fileUrl}?w=300&h=300&q=80&f=webp`;
+
+      return {
+        ...item,
+        thumbnailUrl,
+      };
+    });
+
+    console.log(`Found ${mediaWithThumbnails.length} media items for venue ${tempVenueId}`);
 
     res.json({
       success: true,
-      count: media.length,
-      data: media,
+      count: mediaWithThumbnails.length,
+      data: mediaWithThumbnails,
     });
   } catch (error: any) {
     console.error('Error fetching media:', error);
@@ -387,7 +423,6 @@ export const deleteVenueMedia = async (req: AuthRequest, res: Response) => {
       return res.status(404).json({ success: false, message: 'Media not found' });
     }
 
-    // Delete from S3
     const s3Key = media.s3Key || getS3KeyFromUrl(media.fileUrl);
     if (s3Key) {
       const deleted = await deleteFileFromS3(s3Key);
@@ -398,10 +433,8 @@ export const deleteVenueMedia = async (req: AuthRequest, res: Response) => {
       }
     }
 
-    // Delete from database
     await media.deleteOne();
 
-    // Audit log
     await AuditLog.create({
       auditId: uuidv4(),
       actorId: currentUser.userId,
