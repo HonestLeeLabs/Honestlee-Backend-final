@@ -1180,6 +1180,7 @@ export const generateTestToken = async (req: AgentRequest, res: Response): Promi
 };
 
 // CREATE ZONE - UPDATED
+// CREATE ZONE - UPDATED WITH NEW FIELDS
 export const createZone = async (
   req: AgentRequest,
   res: Response
@@ -1190,10 +1191,12 @@ export const createZone = async (
     }
 
     const { venueId } = req.params;
-    const { name, capacityMin, capacityMax } = req.body;
+    // ✅ ADD NEW FIELDS TO DESTRUCTURING
+    const { name, capacityMin, capacityMax, numTables, numSeats, numChargingPorts } = req.body;
 
     console.log(`🔍 Creating zone "${name}" for venue: ${venueId}`);
 
+    // Validate zone name length
     if (name.length > 18) {
       return res
         .status(400)
@@ -1208,6 +1211,10 @@ export const createZone = async (
       name,
       capacityMin,
       capacityMax,
+      // ✅ NEW FIELDS - Infrastructure data
+      numTables,
+      numSeats,
+      numChargingPorts,
       colorToken: generateColorToken(),
       createdBy: req.user.userId,
       isActive: true,
@@ -1223,7 +1230,7 @@ export const createZone = async (
     const zone = new Zone(zoneData);
     await zone.save();
 
-    // ✅ NEW: Update venue's zonesCreated flag
+    // ✅ Update venue's zonesCreated flag
     if (isTempVenue) {
       await AgentVenueTemp.findOneAndUpdate(
         { tempVenueId: venueId },
@@ -1240,12 +1247,21 @@ export const createZone = async (
       req.user.userId,
       req.user.role,
       "agent.zone.defined",
-      { zoneId: zone.zoneId, name, venueId, isTempVenue },
+      { 
+        zoneId: zone.zoneId, 
+        name, 
+        venueId, 
+        isTempVenue,
+        // ✅ Include new fields in audit log
+        numTables,
+        numSeats,
+        numChargingPorts
+      },
       isTempVenue ? undefined : venueId,
       req
     );
 
-    console.log(`✅ Zone created: ${zone.zoneId}`);
+    console.log(`✅ Zone created: ${zone.zoneId} with infrastructure data`);
 
     return res.status(201).json({
       success: true,
