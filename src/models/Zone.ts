@@ -2,15 +2,22 @@ import mongoose, { Schema, Document } from "mongoose";
 
 export interface IZone extends Document {
   zoneId: string;
-  venueId?: mongoose.Types.ObjectId;  // ✅ Optional for temp venues
-  tempVenueId?: string;                // ✅ Support temporary venue IDs
+  venueId?: mongoose.Types.ObjectId;
+  tempVenueId?: string;
   name: string;
   capacityMin?: number;
   capacityMax?: number;
-  // ✅ NEW FIELDS
   numTables?: number;
   numSeats?: number;
   numChargingPorts?: number;
+  
+  // ✅ NEW FIELDS
+  isIndoor?: boolean;
+  isOutdoor?: boolean;
+  climateControl?: 'ac' | 'fan' | 'none';
+  noiseLevel?: 'quiet' | 'low_music' | 'moderate_music' | 'loud_music' | 'street_noise' | 'high_traffic';
+  description?: string;
+  
   colorToken: string;
   createdBy: mongoose.Types.ObjectId;
   isActive: boolean;
@@ -29,10 +36,10 @@ const ZoneSchema = new Schema<IZone>(
     venueId: {
       type: Schema.Types.ObjectId,
       ref: "Venue",
-      sparse: true,  // ✅ Allow null/undefined
+      sparse: true,
       index: true,
     },
-    tempVenueId: {    // ✅ Support temporary venue IDs
+    tempVenueId: {
       type: String,
       sparse: true,
       index: true,
@@ -50,7 +57,6 @@ const ZoneSchema = new Schema<IZone>(
       type: Number,
       min: 0,
     },
-    // ✅ NEW FIELDS - Infrastructure tracking
     numTables: {
       type: Number,
       min: 0,
@@ -63,6 +69,30 @@ const ZoneSchema = new Schema<IZone>(
       type: Number,
       min: 0,
     },
+    
+    // ✅ NEW FIELDS
+    isIndoor: {
+      type: Boolean,
+      default: false,
+    },
+    isOutdoor: {
+      type: Boolean,
+      default: false,
+    },
+    climateControl: {
+      type: String,
+      enum: ['ac', 'fan', 'none'],
+      default: 'none',
+    },
+    noiseLevel: {
+      type: String,
+      enum: ['quiet', 'low_music', 'moderate_music', 'loud_music', 'street_noise', 'high_traffic'],
+    },
+    description: {
+      type: String,
+      maxlength: 500,
+    },
+    
     colorToken: {
       type: String,
       required: true,
@@ -84,11 +114,9 @@ const ZoneSchema = new Schema<IZone>(
   }
 );
 
-// ✅ Add compound indexes for both venueId and tempVenueId
 ZoneSchema.index({ venueId: 1, isActive: 1 });
 ZoneSchema.index({ tempVenueId: 1, isActive: 1 });
 
-// ✅ Add validation to ensure at least one venue identifier exists
 ZoneSchema.pre("validate", function (next) {
   if (!this.venueId && !this.tempVenueId) {
     next(new Error("Either venueId or tempVenueId must be provided"));

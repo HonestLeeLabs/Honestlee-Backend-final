@@ -1180,7 +1180,6 @@ export const generateTestToken = async (req: AgentRequest, res: Response): Promi
 };
 
 // CREATE ZONE - UPDATED
-// CREATE ZONE - UPDATED WITH NEW FIELDS
 export const createZone = async (
   req: AgentRequest,
   res: Response
@@ -1191,8 +1190,20 @@ export const createZone = async (
     }
 
     const { venueId } = req.params;
-    // ✅ ADD NEW FIELDS TO DESTRUCTURING
-    const { name, capacityMin, capacityMax, numTables, numSeats, numChargingPorts } = req.body;
+    const { 
+      name, 
+      capacityMin, 
+      capacityMax, 
+      numTables, 
+      numSeats, 
+      numChargingPorts,
+      // ✅ NEW FIELDS
+      isIndoor,
+      isOutdoor,
+      climateControl,
+      noiseLevel,
+      description
+    } = req.body;
 
     console.log(`🔍 Creating zone "${name}" for venue: ${venueId}`);
 
@@ -1203,7 +1214,6 @@ export const createZone = async (
         .json({ message: "Zone name must be 18 characters or less" });
     }
 
-    // ✅ Determine if it's a temp venue or real venue
     const isTempVenue = venueId.startsWith("TEMP-");
 
     const zoneData: any = {
@@ -1211,16 +1221,20 @@ export const createZone = async (
       name,
       capacityMin,
       capacityMax,
-      // ✅ NEW FIELDS - Infrastructure data
       numTables,
       numSeats,
       numChargingPorts,
+      // ✅ NEW FIELDS
+      isIndoor: isIndoor || false,
+      isOutdoor: isOutdoor || false,
+      climateControl: climateControl || 'none',
+      noiseLevel,
+      description: description?.trim(),
       colorToken: generateColorToken(),
       createdBy: req.user.userId,
       isActive: true,
     };
 
-    // ✅ Set appropriate venue ID field
     if (isTempVenue) {
       zoneData.tempVenueId = venueId;
     } else {
@@ -1230,7 +1244,6 @@ export const createZone = async (
     const zone = new Zone(zoneData);
     await zone.save();
 
-    // ✅ Update venue's zonesCreated flag
     if (isTempVenue) {
       await AgentVenueTemp.findOneAndUpdate(
         { tempVenueId: venueId },
@@ -1252,16 +1265,20 @@ export const createZone = async (
         name, 
         venueId, 
         isTempVenue,
-        // ✅ Include new fields in audit log
         numTables,
         numSeats,
-        numChargingPorts
+        numChargingPorts,
+        isIndoor,
+        isOutdoor,
+        climateControl,
+        noiseLevel,
+        hasDescription: !!description
       },
       isTempVenue ? undefined : venueId,
       req
     );
 
-    console.log(`✅ Zone created: ${zone.zoneId} with infrastructure data`);
+    console.log(`✅ Zone created: ${zone.zoneId} with all attributes`);
 
     return res.status(201).json({
       success: true,
