@@ -10,88 +10,72 @@ import path from 'path';
 import { deleteFileFromS3, getS3KeyFromUrl } from '../config/uploadConfig';
 import crypto from 'crypto';
 
-
 /**
- * ✅ CloudFront domain (use your final CDN domain or the CloudFront URL)
- * For now you can use: https://dedllwce1iasg.cloudfront.net
- * Later switch to: https://media.honestlee.app once DNS is mapped.
+ * ✅ CloudFront domain (PRIMARY CDN)
+ * TEMP: https://dedllwce1iasg.cloudfront.net (your CloudFront distribution)
+ * PROD: https://media.honestlee.app (once DNS mapped)
  */
 const CLOUDFRONT_DOMAIN = process.env.CLOUDFRONT_DOMAIN || 'https://dedllwce1iasg.cloudfront.net';
 
-
 /**
- * ✅ Cloudinary Configuration
- * Free tier: 25 credits/month (can be split between storage, transformations, bandwidth)
- * Sign up: https://cloudinary.com
- * Set these in your .env file:
- * - CLOUDINARY_CLOUD_NAME=your-cloud-name
- * - USE_CLOUDINARY=true
+ * ✅ Cloudinary Configuration (OPTIONAL image optimization)
+ * Set USE_CLOUDINARY=false until CloudFront is stable
  */
-const CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME || 'your-cloud-name';
+const CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME || 'dqftjs96p';
 const USE_CLOUDINARY = process.env.USE_CLOUDINARY === 'true';
 
-
 /**
- * ✅ Convert S3 URL to CloudFront URL
- * S3 URL:  https://honestlee-user-upload.s3.ap-south-1.amazonaws.com/venue-media/TEMP-123/image.jpg
- * CDN URL: https://media.honestlee.app/venue-media/TEMP-123/image.jpg
+ * ✅ CRITICAL: Convert S3 → CloudFront (FIXES 403 FORBIDDEN)
+ * S3: https://honestlee-user-upload.s3.ap-south-1.amazonaws.com/venue-media/TEMP-123/image.jpg
+ * ✅ CF: https://dedllwce1iasg.cloudfront.net/venue-media/TEMP-123/image.jpg
  */
 function convertToCloudFrontUrl(s3Url: string): string {
   try {
     const url = new URL(s3Url);
     const path = url.pathname.startsWith('/') ? url.pathname.substring(1) : url.pathname;
+    
+    // ✅ FORCE CloudFront (browser CANNOT access S3 directly)
     return `${CLOUDFRONT_DOMAIN}/${path}`;
   } catch (error) {
-    console.error('❌ Error converting S3 URL to CloudFront URL:', error);
-    return s3Url;
+    console.error('❌ S3→CloudFront conversion failed:', error, s3Url);
+    throw new Error(`Invalid S3 URL: ${s3Url}`);
   }
 }
 
-
 /**
- * ✅ Convert CloudFront/S3 URL to Cloudinary fetch URL with transformations
- * This applies image optimization on top of your CloudFront CDN
- * 
- * Original: https://media.honestlee.app/venue-media/123/image.jpg
- * Cloudinary: https://res.cloudinary.com/your-cloud/image/fetch/w_300,h_300,q_80,f_webp/https://media.honestlee.app/venue-media/123/image.jpg
- * 
- * @param cdnUrl - The CloudFront or S3 URL
- * @param width - Desired width in pixels
- * @param height - Desired height in pixels
- * @param quality - Image quality (1-100, default 80)
- * @param format - Output format (webp, jpg, png, auto)
+ * ✅ OPTIONAL: CloudFront → Cloudinary (image optimization)
+ * ONLY works AFTER CloudFront URLs are accessible
+ * CF: https://dedllwce1iasg.cloudfront.net/venue-media/123/image.jpg
+ * CL: https://res.cloudinary.com/dqftjs96p/image/fetch/w_300,h_300,q_80,f_webp/CF_URL
  */
 function convertToCloudinaryUrl(
   cdnUrl: string,
   width?: number,
   height?: number,
   quality = 80,
-  format: string = 'webp'
+  format: string = 'auto'
 ): string {
+  // ✅ DISABLED BY DEFAULT - enable only after CloudFront works
   if (!USE_CLOUDINARY || !CLOUDINARY_CLOUD_NAME) {
-    // Fallback: If Cloudinary not configured, return original URL
     return cdnUrl;
   }
 
-  // Build transformation string
+  // ✅ Validate CloudFront URL first (no S3 allowed)
+  if (cdnUrl.includes('s3.ap-south-1.amazonaws.com')) {
+    console.warn('🚫 Cloudinary blocked: S3 URL detected', cdnUrl);
+    return cdnUrl;
+  }
+
   const transformations: string[] = [];
-  
   if (width) transformations.push(`w_${width}`);
   if (height) transformations.push(`h_${height}`);
-  
-  // Add crop mode to maintain aspect ratio
   if (width || height) transformations.push('c_fill');
-  
   transformations.push(`q_${quality}`);
-  
-  if (format) transformations.push(`f_${format}`);
-  
-  const transformString = transformations.join(',');
-  
-  // Cloudinary fetch URL format: https://res.cloudinary.com/{cloud_name}/image/fetch/{transformations}/{remote_url}
-  return `https://res.cloudinary.com/${CLOUDINARY_CLOUD_NAME}/image/fetch/${transformString}/${cdnUrl}`;
-}
+  transformations.push(`f_${format}`);
 
+  const transformString = transformations.join(',');
+  return `https://res.cloudinary.com/${CLOUDINARY_CLOUD_NAME}/image/fetch/${transformString}/${encodeURI(cdnUrl)}`;
+}
 
 /**
  * COMPLETE FRONTEND GROUP MAPPING
@@ -169,7 +153,6 @@ const frontendGroupMap: { [key: string]: string } = {
   'BARISTA_STATION': 'Food & Drink',
 };
 
-
 /**
  * ✅ Generate file hash for duplicate detection
  */
@@ -177,7 +160,6 @@ const generateFileHashFromMetadata = (file: any): string => {
   const identifier = `${file.originalname}_${file.size}_${file.mimetype}`;
   return crypto.createHash('sha256').update(identifier).digest('hex');
 };
-
 
 /**
  * ✅ Check if duplicate file exists in venue
@@ -223,7 +205,6 @@ const checkGlobalDuplicate = async (
   }
 };
 
-
 /**
  * POST /api/agent/venues/:tempVenueId/media - Upload media with duplicate detection
  * ✅ Stores CloudFront URL, generates Cloudinary thumbnail URLs
@@ -245,7 +226,7 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
     if ((req as any).fileValidationError) {
       console.error('File validation error:', (req as any).fileValidationError);
       return res.status(400).json({
-        success: false,
+                success: false,
         message: (req as any).fileValidationError,
       });
     }
@@ -306,11 +287,10 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    console.log('File uploaded to S3:', {
+    console.log('🔍 S3 UPLOAD COMPLETE:', {
       key: file.key,
-      location: file.location,
+      s3Url: file.location,
       size: file.size,
-      contentType: file.contentType,
       originalName: file.originalname,
       hash: fileHash,
     });
@@ -337,12 +317,27 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
       publicVisibility = 'Internal only';
     }
 
-    // ✅ Convert S3 URL to CloudFront URL and store that
+    // ✅ CRITICAL: S3 → CloudFront conversion (FIXES 403)
     const s3Url = file.location;
     const cloudFrontUrl = convertToCloudFrontUrl(s3Url);
 
-    console.log('🔗 URL conversion:', { s3Url, cloudFrontUrl });
+    console.log('✅ URL CONVERSION:', { s3Url, cloudFrontUrl });
 
+    // ✅ Generate thumbnail URL
+    const thumbnailUrl = isVideo
+      ? cloudFrontUrl  // Videos: native CloudFront
+      : USE_CLOUDINARY 
+        ? convertToCloudinaryUrl(cloudFrontUrl, 300, 300, 80, 'webp')  // Images: Cloudinary
+        : cloudFrontUrl;  // Fallback: CloudFront only
+
+    console.log('✅ FINAL URLS:', { 
+      fileUrl: cloudFrontUrl, 
+      thumbnailUrl, 
+      isVideo,
+      usingCloudinary: USE_CLOUDINARY 
+    });
+
+    // ✅ STORE CloudFront URLs in database
     const media = await VenueMedia.create({
       mediaId: `M-${uuidv4().slice(0, 8)}`,
       tempVenueId,
@@ -351,7 +346,8 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
       captureContext: captureContext || 'Agent onboarding',
       submittedByRole: submittedByRole || 'Agent',
       submittedBy: currentUser.userId,
-      fileUrl: cloudFrontUrl,          // ✅ CloudFront URL stored
+      fileUrl: cloudFrontUrl,          // ✅ PRIMARY: CloudFront full-size
+      thumbnailUrl,                    // ✅ SECONDARY: Optimized thumbnail
       s3Key: file.key,
       fileFormat,
       fileSize: file.size,
@@ -377,28 +373,25 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
         fileHash,
         isVideo,
         is360,
+        cloudFrontUrl,
+        thumbnailUrl,
         originalName: file.originalname,
-        contentType: file.contentType,
       },
     });
 
-    console.log('Media record created:', media.mediaId);
-
-    // ✅ Generate thumbnail URL with Cloudinary transformation
-    const thumbnailUrl = isVideo
-      ? cloudFrontUrl
-      : convertToCloudinaryUrl(cloudFrontUrl, 200, 200, 80, 'webp');
+    console.log('✅ Media record created:', media.mediaId);
 
     res.status(201).json({
       success: true,
       message: 'Media uploaded successfully',
       data: {
         ...media.toObject(),
-        thumbnailUrl, // ✅ Cloudinary-optimized thumbnail
+        fileUrl: cloudFrontUrl,
+        thumbnailUrl,
       },
     });
   } catch (error: any) {
-    console.error('Error uploading media:', error);
+    console.error('❌ Error uploading media:', error);
 
     const file = (req as any).file;
     if (file?.key) {
@@ -414,10 +407,9 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
   }
 };
 
-
 /**
  * GET /api/agent/venues/:tempVenueId/media - Get all media for venue
- * ✅ Adds Cloudinary-optimized thumbnail URLs for each item
+ * ✅ FIXED: Converts BOTH fileUrl AND thumbnailUrl from S3 to CloudFront
  */
 export const getVenueMedia = async (req: AuthRequest, res: Response) => {
   try {
@@ -437,23 +429,40 @@ export const getVenueMedia = async (req: AuthRequest, res: Response) => {
       .sort({ createdAt: -1 })
       .lean();
 
-    // ✅ Add dynamic Cloudinary thumbnail URLs
+    // ✅ CRITICAL FIX: Convert ALL S3 URLs to CloudFront (fileUrl AND thumbnailUrl)
     const mediaWithThumbnails = media.map((item: any) => {
-      const isVideo = item.isVideo;
-      const fileUrl = item.fileUrl;
+      let fileUrl = item.fileUrl;
+      let thumbnailUrl = item.thumbnailUrl;
 
-      // For videos, return original URL; for images, use Cloudinary transformation
-      const thumbnailUrl = isVideo
-        ? fileUrl
-        : convertToCloudinaryUrl(fileUrl, 300, 300, 80, 'webp');
+      // ✅ FIX 1: Convert S3 fileUrl to CloudFront
+      if (fileUrl && fileUrl.includes('s3.ap-south-1.amazonaws.com')) {
+        console.warn('🔧 Converting legacy S3 fileUrl:', fileUrl);
+        fileUrl = convertToCloudFrontUrl(fileUrl);
+      }
+
+      // ✅ FIX 2: Convert S3 thumbnailUrl to CloudFront (CRITICAL!)
+      if (thumbnailUrl && thumbnailUrl.includes('s3.ap-south-1.amazonaws.com')) {
+        console.warn('🔧 Converting legacy S3 thumbnailUrl:', thumbnailUrl);
+        thumbnailUrl = convertToCloudFrontUrl(thumbnailUrl);
+      }
+
+      // ✅ FIX 3: Generate thumbnail if missing or same as fileUrl
+      if (!thumbnailUrl || thumbnailUrl === fileUrl) {
+        thumbnailUrl = item.isVideo 
+          ? fileUrl 
+          : USE_CLOUDINARY 
+            ? convertToCloudinaryUrl(fileUrl, 300, 300, 80, 'webp')
+            : fileUrl;
+      }
 
       return {
         ...item,
-        thumbnailUrl, // ✅ Cloudinary-optimized thumbnail
+        fileUrl,        // ✅ CloudFront full-size
+        thumbnailUrl,   // ✅ CloudFront/Cloudinary thumbnail
       };
     });
 
-    console.log(`Found ${mediaWithThumbnails.length} media items for venue ${tempVenueId}`);
+    console.log(`✅ Found ${mediaWithThumbnails.length} media items for ${tempVenueId}`);
 
     res.json({
       success: true,
@@ -469,7 +478,6 @@ export const getVenueMedia = async (req: AuthRequest, res: Response) => {
     });
   }
 };
-
 
 /**
  * DELETE /api/agent/venues/:tempVenueId/media/:mediaId - Delete media
@@ -495,7 +503,7 @@ export const deleteVenueMedia = async (req: AuthRequest, res: Response) => {
       if (!deleted) {
         console.warn(`Failed to delete S3 file: ${s3Key}`);
       } else {
-        console.log(`S3 file deleted: ${s3Key}`);
+        console.log(`✅ S3 file deleted: ${s3Key}`);
       }
     }
 
@@ -514,7 +522,7 @@ export const deleteVenueMedia = async (req: AuthRequest, res: Response) => {
       },
     });
 
-    console.log(`Media deleted: ${media.mediaId}`);
+    console.log(`✅ Media deleted: ${media.mediaId}`);
 
     res.json({
       success: true,
@@ -529,7 +537,6 @@ export const deleteVenueMedia = async (req: AuthRequest, res: Response) => {
     });
   }
 };
-
 
 /**
  * GET /api/agent/venues/:tempVenueId/media/stats - Get upload stats
@@ -555,8 +562,8 @@ export const getMediaStats = async (req: AuthRequest, res: Response) => {
 
     const stats = {
       totalMedia: await VenueMedia.countDocuments({ tempVenueId }),
-      totalSize: mediaByType.reduce((sum, item) => sum + item.totalSize, 0),
-      byType: mediaByType.reduce((acc: any, item) => {
+      totalSize: mediaByType.reduce((sum: number, item: any) => sum + item.totalSize, 0),
+      byType: mediaByType.reduce((acc: any, item: any) => {
         acc[item._id] = {
           count: item.count,
           totalSize: item.totalSize,
@@ -577,4 +584,11 @@ export const getMediaStats = async (req: AuthRequest, res: Response) => {
       error: error.message,
     });
   }
+};
+
+export default {
+  uploadVenueMedia,
+  getVenueMedia,
+  deleteVenueMedia,
+  getMediaStats,
 };
