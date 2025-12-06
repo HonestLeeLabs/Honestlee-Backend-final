@@ -1,4 +1,4 @@
-// controllers/adminVenueController.ts
+// controllers/adminVenueController.ts - FIXED VERSION
 import { Response } from 'express';
 import { AuthRequest } from '../middlewares/authMiddleware';
 import AgentVenueTemp from '../models/AgentVenueTemp';
@@ -32,9 +32,301 @@ export enum VerificationLevel {
 }
 
 /**
- * ✅ COMPLETE FIXED: GET /api/admin/venues/map
- * Get all venues for map view with aggregated media, WiFi, and notes counts
+ * ✅ FIXED: POST /api/admin/venues/assign
+ * Assign multiple venues to an agent (allows re-assignment of unvisited venues)
  */
+export const assignVenuesToAgent = async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user || req.user.role !== 'ADMIN') {
+      return res.status(403).json({ message: 'Admin access required' });
+    }
+    const currentUser = req.user;
+
+    const { venueIds, agentId, expectedVisitDate, venuesData, allowReassign } = req.body;
+
+    if (!Array.isArray(venueIds) || venueIds.length === 0) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'venueIds array is required and must not be empty' 
+      });
+    }
+
+    if (!agentId) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'agentId is required' 
+      });
+    }
+
+    console.log('📍 Assignment request:', {
+      venueIds,
+      venueCount: venueIds.length,
+      agentId,
+      expectedVisitDate,
+      allowReassign,
+      hasVenuesData: !!venuesData && Array.isArray(venuesData)
+    });
+
+    const agent = await User.findById(agentId);
+    if (!agent || agent.role !== 'AGENT') {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Invalid agent ID or user is not an agent' 
+      });
+    }
+
+    console.log('✅ Agent found:', agent.name);
+
+    const visitDate = expectedVisitDate ? new Date(expectedVisitDate) : new Date();
+
+    // ✅ FIXED: Find all venues that match the IDs
+    const existingVenues = await AgentVenueTemp.find({
+      tempVenueId: { $in: venueIds }
+    });
+
+    console.log('📊 Existing venues in AgentVenueTemp:', {
+      requested: venueIds.length,
+      found: existingVenues.length
+    });
+
+    let assignedCount = 0;
+    let createdCount = 0;
+    let reassignedCount = 0;
+    let skippedVisitedCount = 0;
+    const errors: string[] = [];
+
+    if (existingVenues.length > 0) {
+      // ✅ FIXED: Separate venues into categories
+      const visitedVenues = existingVenues.filter(v => v.visitStatus === 'visited');
+      const unvisitedVenues = existingVenues.filter(v => v.visitStatus !== 'visited');
+
+      // ✅ Skip visited venues (cannot be reassigned)
+      if (visitedVenues.length > 0) {
+        skippedVisitedCount = visitedVenues.length;
+        console.log(`⚠️ Skipping ${skippedVisitedCount} already visited venues:`, 
+          visitedVenues.map(v => `${v.name} (${v.tempVenueId})`));
+        
+        visitedVenues.forEach(v => {
+          errors.push(`"${v.name}" already visited on ${v.visitedAt?.toLocaleDateString()}`);
+        });
+      }
+
+      // ✅ FIXED: Update unvisited venues (including those assigned to other agents)
+      if (unvisitedVenues.length > 0) {
+        const unvisitedIds = unvisitedVenues.map(v => v.tempVenueId);
+        
+        // Check which venues are already assigned
+        const alreadyAssignedVenues = unvisitedVenues.filter(v => 
+          v.assignedTo && v.assignedTo.toString() !== agentId
+        );
+
+        if (alreadyAssignedVenues.length > 0 && !allowReassign) {
+          // If re-assignment not explicitly allowed, return error
+          return res.status(400).json({
+            success: false,
+            message: `${alreadyAssignedVenues.length} venue(s) already assigned to other agents. Set allowReassign=true to override.`,
+            conflictingVenues: alreadyAssignedVenues.map(v => ({
+              tempVenueId: v.tempVenueId,
+              name: v.name,
+              currentAgent: v.assignedTo,
+              expectedVisitDate: v.expectedVisitDate
+            }))
+          });
+        }
+
+        // ✅ Count how many are being reassigned
+        reassignedCount = alreadyAssignedVenues.length;
+
+        const updateResult = await AgentVenueTemp.updateMany(
+          {
+            tempVenueId: { $in: unvisitedIds },
+            status: { $ne: 'finalized' }
+          },
+          {
+            $set: {
+              assignedTo: agentId,
+              assignedBy: currentUser.userId,
+              assignmentDate: new Date(),
+              expectedVisitDate: visitDate,
+              visitStatus: 'not_visited',
+              verificationLevel: VerificationLevel.ASSIGNED_TO_AGENT,
+              // ✅ Clear previous visit data if reassigning
+              visitedAt: null
+            }
+          }
+        );
+
+        assignedCount += updateResult.modifiedCount;
+        console.log(`✅ Updated ${updateResult.modifiedCount} unvisited venues`);
+        
+        if (reassignedCount > 0) {
+          console.log(`🔄 Reassigned ${reassignedCount} venues from other agents`);
+        }
+      }
+    }
+
+    // ✅ Handle missing venues (create new ones)
+    const existingIds = existingVenues.map(v => v.tempVenueId);
+    const missingIds = venueIds.filter((id: string) => !existingIds.includes(id));
+
+    if (missingIds.length > 0) {
+      console.log(`📝 Creating ${missingIds.length} missing venues...`);
+
+      if (venuesData && Array.isArray(venuesData) && venuesData.length > 0) {
+        const newVenues = venuesData
+          .filter((v: any) => {
+            const venueId = v.tempVenueId || v.id || v.Dubaiid || v._id;
+            return missingIds.includes(venueId);
+          })
+          .map((venue: any) => {
+            const venueId = venue.tempVenueId || venue.id || venue.Dubaiid || venue._id;
+            
+            return {
+              tempVenueId: venueId,
+              name: venue.name || venue.AccountName || 'Unnamed Venue',
+              category: venue.category || ['restaurant'],
+              address: {
+                lat: venue.address?.lat || venue.geometry?.coordinates?.[1] || 0,
+                lng: venue.address?.lng || venue.geometry?.coordinates?.[0] || 0,
+                raw: venue.address?.raw || venue.address?.street || 'Unknown Address',
+                city: venue.address?.city,
+                district: venue.address?.district,
+                state: venue.address?.state,
+                country: venue.address?.country || 'Thailand',
+                countryCode: venue.address?.countryCode || 'TH'
+              },
+              phone: venue.phone,
+              assignedTo: agentId,
+              assignedBy: currentUser.userId,
+              assignmentDate: new Date(),
+              expectedVisitDate: visitDate,
+              visitStatus: 'not_visited',
+              verificationLevel: VerificationLevel.ASSIGNED_TO_AGENT,
+              status: 'temp',
+              onboardingStatus: 'UNLISTED',
+              region: currentUser.region || 'th',
+              createdBy: currentUser.userId,
+              flags: {
+                qrCodesLeftBehind: false,
+                ownerMet: false,
+                haveOwnersContact: false,
+                managerMet: false,
+                haveManagersContact: false
+              }
+            };
+          });
+
+        if (newVenues.length > 0) {
+          await AgentVenueTemp.insertMany(newVenues);
+          createdCount = newVenues.length;
+          assignedCount += createdCount;
+          console.log(`✅ Created and assigned ${createdCount} new venues`);
+        }
+      } else {
+        console.warn('⚠️ No venuesData provided, cannot create missing venues');
+      }
+    }
+
+    // ✅ Create audit log with detailed info
+    await AuditLog.create({
+      auditId: uuidv4(),
+      actorId: currentUser.userId,
+      actorRole: currentUser.role,
+      action: reassignedCount > 0 ? 'VENUES_REASSIGNED' : 'VENUES_ASSIGNED',
+      meta: {
+        venueIds,
+        agentId,
+        agentName: agent.name,
+        expectedVisitDate: visitDate,
+        assignedCount,
+        createdCount,
+        reassignedCount,
+        skippedVisitedCount,
+        totalRequested: venueIds.length
+      }
+    });
+
+    // ✅ Build response message
+    let message = '';
+    const details: string[] = [];
+    
+    if (assignedCount > 0) {
+      details.push(`${assignedCount} venue(s) assigned to ${agent.name}`);
+    }
+    if (createdCount > 0) {
+      details.push(`${createdCount} newly created`);
+    }
+    if (reassignedCount > 0) {
+      details.push(`${reassignedCount} reassigned from other agents`);
+    }
+    if (skippedVisitedCount > 0) {
+      details.push(`${skippedVisitedCount} already visited (skipped)`);
+    }
+
+    message = '✅ ' + details.join(', ');
+
+    res.json({
+      success: true,
+      message,
+      data: {
+        assignedCount,
+        createdCount,
+        reassignedCount,
+        skippedVisitedCount,
+        totalRequested: venueIds.length,
+        agentName: agent.name,
+        expectedVisitDate: visitDate,
+        errors: errors.length > 0 ? errors : undefined
+      }
+    });
+  } catch (error: any) {
+    console.error('❌ Error assigning venues:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to assign venues',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * ✅ NEW: GET /api/admin/venues/:tempVenueId/assignment-history
+ * Get assignment history for a venue
+ */
+export const getVenueAssignmentHistory = async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user || req.user.role !== 'ADMIN') {
+      return res.status(403).json({ message: 'Admin access required' });
+    }
+
+    const { tempVenueId } = req.params;
+
+    // Get audit logs for this venue
+    const auditLogs = await AuditLog.find({
+      $or: [
+        { 'meta.tempVenueId': tempVenueId },
+        { 'meta.venueIds': tempVenueId }
+      ],
+      action: { $in: ['VENUES_ASSIGNED', 'VENUES_REASSIGNED', 'VENUE_UNASSIGNED'] }
+    })
+      .sort({ createdAt: -1 })
+      .limit(20)
+      .populate('actorId', 'name email')
+      .lean();
+
+    res.json({
+      success: true,
+      data: auditLogs
+    });
+  } catch (error: any) {
+    console.error('Error fetching assignment history:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch assignment history',
+      error: error.message
+    });
+  }
+};
 // ✅ FIXED: GET /api/admin/venues/map
 // controllers/adminVenueController.ts
 export const getVenuesForMap = async (req: AuthRequest, res: Response) => {
@@ -370,183 +662,6 @@ export const getVenuesForMap = async (req: AuthRequest, res: Response) => {
     res.status(500).json({
       success: false,
       message: 'Failed to fetch venues',
-      error: error.message
-    });
-  }
-};
-
-/**
- * POST /api/admin/venues/assign
- * Assign multiple venues to an agent (creates missing venues)
- */
-export const assignVenuesToAgent = async (req: AuthRequest, res: Response) => {
-  try {
-    if (!req.user || req.user.role !== 'ADMIN') {
-      return res.status(403).json({ message: 'Admin access required' });
-    }
-    const currentUser = req.user;
-
-    const { venueIds, agentId, expectedVisitDate, venuesData } = req.body;
-
-    if (!Array.isArray(venueIds) || venueIds.length === 0) {
-      return res.status(400).json({ 
-        success: false,
-        message: 'venueIds array is required and must not be empty' 
-      });
-    }
-
-    if (!agentId) {
-      return res.status(400).json({ 
-        success: false,
-        message: 'agentId is required' 
-      });
-    }
-
-    console.log('📍 Assignment request:', {
-      venueIds,
-      venueCount: venueIds.length,
-      agentId,
-      hasVenuesData: !!venuesData && Array.isArray(venuesData)
-    });
-
-    const agent = await User.findById(agentId);
-    if (!agent || agent.role !== 'AGENT') {
-      return res.status(400).json({ 
-        success: false,
-        message: 'Invalid agent ID or user is not an agent' 
-      });
-    }
-
-    console.log('✅ Agent found:', agent.name);
-
-    const visitDate = expectedVisitDate ? new Date(expectedVisitDate) : new Date();
-
-    const existingVenues = await AgentVenueTemp.find({
-      tempVenueId: { $in: venueIds }
-    });
-
-    console.log('📊 Existing venues in AgentVenueTemp:', {
-      requested: venueIds.length,
-      found: existingVenues.length
-    });
-
-    let assignedCount = 0;
-    let createdCount = 0;
-
-    if (existingVenues.length > 0) {
-      const existingIds = existingVenues.map(v => v.tempVenueId);
-      const updateResult = await AgentVenueTemp.updateMany(
-        {
-          tempVenueId: { $in: existingIds },
-          status: { $ne: 'finalized' }
-        },
-        {
-          $set: {
-            assignedTo: agentId,
-            assignedBy: currentUser.userId,
-            assignmentDate: new Date(),
-            expectedVisitDate: visitDate,
-            visitStatus: 'not_visited',
-            verificationLevel: VerificationLevel.ASSIGNED_TO_AGENT
-          }
-        }
-      );
-
-      assignedCount += updateResult.modifiedCount;
-      console.log('✅ Updated existing venues:', updateResult.modifiedCount);
-    }
-
-    const existingIds = existingVenues.map(v => v.tempVenueId);
-    const missingIds = venueIds.filter((id: string) => !existingIds.includes(id));
-
-    if (missingIds.length > 0) {
-      console.log(`📝 Creating ${missingIds.length} missing venues...`);
-
-      if (venuesData && Array.isArray(venuesData) && venuesData.length > 0) {
-        const newVenues = venuesData
-          .filter((v: any) => {
-            const venueId = v.tempVenueId || v.id || v.Dubaiid || v._id;
-            return missingIds.includes(venueId);
-          })
-          .map((venue: any) => {
-            const venueId = venue.tempVenueId || venue.id || venue.Dubaiid || venue._id;
-            
-            return {
-              tempVenueId: venueId,
-              name: venue.name || venue.AccountName || 'Unnamed Venue',
-              category: venue.category || ['restaurant'],
-              address: {
-                lat: venue.address?.lat || venue.geometry?.coordinates?.[1] || 0,
-                lng: venue.address?.lng || venue.geometry?.coordinates?.[0] || 0,
-                raw: venue.address?.raw || venue.address?.street || 'Unknown Address',
-                city: venue.address?.city,
-                district: venue.address?.district,
-                state: venue.address?.state,
-                country: venue.address?.country || 'Thailand',
-                countryCode: venue.address?.countryCode || 'TH'
-              },
-              phone: venue.phone,
-              assignedTo: agentId,
-              assignedBy: currentUser.userId,
-              assignmentDate: new Date(),
-              expectedVisitDate: visitDate,
-              visitStatus: 'not_visited',
-              verificationLevel: VerificationLevel.ASSIGNED_TO_AGENT,
-              status: 'temp',
-              onboardingStatus: 'UNLISTED',
-              region: currentUser.region || 'th',
-              createdBy: currentUser.userId,
-              flags: {
-                qrCodesLeftBehind: false,
-                ownerMet: false,
-                haveOwnersContact: false,
-                managerMet: false,
-                haveManagersContact: false
-              }
-            };
-          });
-
-        if (newVenues.length > 0) {
-          await AgentVenueTemp.insertMany(newVenues);
-          createdCount = newVenues.length;
-          assignedCount += createdCount;
-          console.log(`✅ Created and assigned ${createdCount} new venues`);
-        }
-      } else {
-        console.warn('⚠️ No venuesData provided, cannot create missing venues');
-      }
-    }
-
-    await AuditLog.create({
-      auditId: uuidv4(),
-      actorId: currentUser.userId,
-      actorRole: currentUser.role,
-      action: 'VENUES_ASSIGNED',
-      meta: {
-        venueIds,
-        agentId,
-        agentName: agent.name,
-        expectedVisitDate: visitDate,
-        assignedCount,
-        createdCount
-      }
-    });
-
-    res.json({
-      success: true,
-      message: `${assignedCount} venues assigned to ${agent.name}`,
-      data: {
-        assignedCount,
-        createdCount,
-        agentName: agent.name,
-        expectedVisitDate: visitDate
-      }
-    });
-  } catch (error: any) {
-    console.error('❌ Error assigning venues:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to assign venues',
       error: error.message
     });
   }
