@@ -117,6 +117,7 @@ const frontendGroupMap: { [key: string]: string } = {
   TOILET_FACILITIES: 'Amenities',
   WIFI_SIGN_EXISTING: 'Amenities',
   WIFI_BOASTING_SPEED: 'Amenities',
+  WIFI_PASSWORD: 'Amenities',
   LOGO: 'Latest',
   QR_INSTALL_SPOT: 'Operational',
   VIDEO_SHORT: 'Videos',
