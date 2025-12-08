@@ -22,6 +22,14 @@ export interface IVenueMedia extends Document {
   capturedAt?: Date;
   capturedGPSLat?: number;
   capturedGPSLng?: number;
+  
+  // EXIF metadata fields
+  exifDateTaken?: string;
+  exifLatitude?: number;
+  exifLongitude?: number;
+  exifCamera?: string;
+  exifAltitude?: number;
+  
   aiTags?: string[];
   containsFaces: boolean;
   containsChildren: boolean;
@@ -125,10 +133,17 @@ const VenueMediaSchema = new Schema<IVenueMedia>(
       default: 'Latest',
       index: true,
     },
-
     capturedAt: Date,
     capturedGPSLat: Number,
     capturedGPSLng: Number,
+    
+    // EXIF metadata fields
+    exifDateTaken: { type: String },
+    exifLatitude: { type: Number },
+    exifLongitude: { type: Number },
+    exifCamera: { type: String },
+    exifAltitude: { type: Number },
+    
     aiTags: [String],
     containsFaces: { type: Boolean, default: false },
     containsChildren: { type: Boolean, default: false },
