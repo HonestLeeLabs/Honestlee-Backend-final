@@ -42,7 +42,7 @@ export const assignVenuesToAgent = async (req: AuthRequest, res: Response) => {
     }
     const currentUser = req.user;
 
-    const { venueIds, agentId, expectedVisitDate, venuesData, allowReassign } = req.body;
+    const { venueIds, agentId, expectedVisitDate, venuesData, allowReassign, allowRevisit } = req.body;
 
     if (!Array.isArray(venueIds) || venueIds.length === 0) {
       return res.status(400).json({ 
@@ -64,7 +64,7 @@ export const assignVenuesToAgent = async (req: AuthRequest, res: Response) => {
       agentId,
       expectedVisitDate,
       allowReassign,
-      hasVenuesData: !!venuesData && Array.isArray(venuesData)
+      allowRevisit // ✅ NEW: Flag to allow revisiting venues
     });
 
     const agent = await User.findById(agentId);
@@ -79,7 +79,7 @@ export const assignVenuesToAgent = async (req: AuthRequest, res: Response) => {
 
     const visitDate = expectedVisitDate ? new Date(expectedVisitDate) : new Date();
 
-    // ✅ FIXED: Find all venues that match the IDs
+    // ✅ Find all venues that match the IDs
     const existingVenues = await AgentVenueTemp.find({
       tempVenueId: { $in: venueIds }
     });
@@ -92,26 +92,57 @@ export const assignVenuesToAgent = async (req: AuthRequest, res: Response) => {
     let assignedCount = 0;
     let createdCount = 0;
     let reassignedCount = 0;
-    let skippedVisitedCount = 0;
+    let revisitCount = 0; // ✅ NEW: Track venues being revisited
     const errors: string[] = [];
+    const revisitWarnings: string[] = []; // ✅ NEW: Track revisit warnings
 
     if (existingVenues.length > 0) {
       // ✅ FIXED: Separate venues into categories
       const visitedVenues = existingVenues.filter(v => v.visitStatus === 'visited');
       const unvisitedVenues = existingVenues.filter(v => v.visitStatus !== 'visited');
 
-      // ✅ Skip visited venues (cannot be reassigned)
+      // ✅ Handle visited venues - allow reassignment if allowRevisit is true
       if (visitedVenues.length > 0) {
-        skippedVisitedCount = visitedVenues.length;
-        console.log(`⚠️ Skipping ${skippedVisitedCount} already visited venues:`, 
-          visitedVenues.map(v => `${v.name} (${v.tempVenueId})`));
-        
-        visitedVenues.forEach(v => {
-          errors.push(`"${v.name}" already visited on ${v.visitedAt?.toLocaleDateString()}`);
-        });
+        if (allowRevisit) {
+          // ✅ Allow revisiting - update visited venues
+          const visitedIds = visitedVenues.map(v => v.tempVenueId);
+          
+          const updateResult = await AgentVenueTemp.updateMany(
+            {
+              tempVenueId: { $in: visitedIds }
+            },
+            {
+              $set: {
+                assignedTo: agentId,
+                assignedBy: currentUser.userId,
+                assignmentDate: new Date(),
+                expectedVisitDate: visitDate,
+                visitStatus: 'revisit_scheduled', // ✅ NEW: Special status for revisits
+                verificationLevel: VerificationLevel.ASSIGNED_TO_AGENT
+                // ✅ DON'T clear visitedAt or vitalsCompleted - keep history
+              }
+            }
+          );
+
+          revisitCount = updateResult.modifiedCount;
+          assignedCount += revisitCount;
+          
+          console.log(`🔄 ${revisitCount} visited venues scheduled for revisit`);
+          
+          visitedVenues.forEach(v => {
+            revisitWarnings.push(`"${v.name}" was visited on ${v.visitedAt?.toLocaleDateString()} - now scheduled for revisit`);
+          });
+        } else {
+          // Skip visited venues if allowRevisit is false
+          console.log(`⚠️ Skipping ${visitedVenues.length} already visited venues (set allowRevisit=true to enable revisits)`);
+          
+          visitedVenues.forEach(v => {
+            errors.push(`"${v.name}" already visited on ${v.visitedAt?.toLocaleDateString()} - cannot reassign (enable revisit to override)`);
+          });
+        }
       }
 
-      // ✅ FIXED: Update unvisited venues (including those assigned to other agents)
+      // ✅ Update unvisited venues (including those assigned to other agents)
       if (unvisitedVenues.length > 0) {
         const unvisitedIds = unvisitedVenues.map(v => v.tempVenueId);
         
@@ -150,7 +181,6 @@ export const assignVenuesToAgent = async (req: AuthRequest, res: Response) => {
               expectedVisitDate: visitDate,
               visitStatus: 'not_visited',
               verificationLevel: VerificationLevel.ASSIGNED_TO_AGENT,
-              // ✅ Clear previous visit data if reassigning
               visitedAt: null
             }
           }
@@ -222,8 +252,6 @@ export const assignVenuesToAgent = async (req: AuthRequest, res: Response) => {
           assignedCount += createdCount;
           console.log(`✅ Created and assigned ${createdCount} new venues`);
         }
-      } else {
-        console.warn('⚠️ No venuesData provided, cannot create missing venues');
       }
     }
 
@@ -232,7 +260,8 @@ export const assignVenuesToAgent = async (req: AuthRequest, res: Response) => {
       auditId: uuidv4(),
       actorId: currentUser.userId,
       actorRole: currentUser.role,
-      action: reassignedCount > 0 ? 'VENUES_REASSIGNED' : 'VENUES_ASSIGNED',
+      action: revisitCount > 0 ? 'VENUES_REVISIT_SCHEDULED' : 
+              reassignedCount > 0 ? 'VENUES_REASSIGNED' : 'VENUES_ASSIGNED',
       meta: {
         venueIds,
         agentId,
@@ -241,7 +270,8 @@ export const assignVenuesToAgent = async (req: AuthRequest, res: Response) => {
         assignedCount,
         createdCount,
         reassignedCount,
-        skippedVisitedCount,
+        revisitCount, // ✅ NEW
+        skippedVisitedCount: errors.length,
         totalRequested: venueIds.length
       }
     });
@@ -259,8 +289,11 @@ export const assignVenuesToAgent = async (req: AuthRequest, res: Response) => {
     if (reassignedCount > 0) {
       details.push(`${reassignedCount} reassigned from other agents`);
     }
-    if (skippedVisitedCount > 0) {
-      details.push(`${skippedVisitedCount} already visited (skipped)`);
+    if (revisitCount > 0) {
+      details.push(`${revisitCount} scheduled for revisit`); // ✅ NEW
+    }
+    if (errors.length > 0) {
+      details.push(`${errors.length} skipped (already visited)`);
     }
 
     message = '✅ ' + details.join(', ');
@@ -272,11 +305,13 @@ export const assignVenuesToAgent = async (req: AuthRequest, res: Response) => {
         assignedCount,
         createdCount,
         reassignedCount,
-        skippedVisitedCount,
+        revisitCount, // ✅ NEW
+        skippedVisitedCount: errors.length,
         totalRequested: venueIds.length,
         agentName: agent.name,
         expectedVisitDate: visitDate,
-        errors: errors.length > 0 ? errors : undefined
+        errors: errors.length > 0 ? errors : undefined,
+        revisitWarnings: revisitWarnings.length > 0 ? revisitWarnings : undefined // ✅ NEW
       }
     });
   } catch (error: any) {
