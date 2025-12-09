@@ -39,18 +39,17 @@ export interface IAgentNote {
   createdAt: Date;
   updatedAt?: Date;
 }
-
-// NEW: Category Type Interface
 export interface ICategoryTypeData {
-  groupId?: string;
-  groupIdDisplayName?: string;
+  groupIds?: string[]; // ← Changed from groupId to groupIds array
+  groupDisplayNames?: string[]; // ← Optional: store display names for all groups
   categoryIds: string[];
   categoryDisplayName?: string;
   venueTypes: Array<{
-      venueType: string;
-      venueTypeDisplay: string;
-      categoryId: string;  // ✅ NEW: Track which category this type belongs to
-    }>;
+    venueType: string;
+    venueTypeDisplay: string;
+    categoryId: string;
+    groupId: string; // ← Add groupId to each venue type
+  }>;
 }
 
 export interface IAgentVenueTemp extends Document {
@@ -532,16 +531,16 @@ const AgentVenueTempSchema = new Schema<IAgentVenueTemp>({
       }
     ]
   },
-  // ✅ FIXED: Category Type Data Schema
   categoryTypeData: {
-    groupId: String,
-    groupIdDisplayName: String,
+    groupIds: [String], // ← Changed from groupId: String
+    groupDisplayNames: [String], // ← Optional
     categoryIds: [{ type: String }],
     categoryDisplayName: String,
     venueTypes: [{
       venueType: String,
       venueTypeDisplay: String,
-      categoryId: { type: String }  
+      categoryId: { type: String },
+      groupId: { type: String } // ← Add this
     }]
   },
   categoryTypeConfirmed: {

@@ -2923,95 +2923,71 @@ export const finalizeOnboarding = async (req: AuthRequest, res: Response) => {
  * PUT /api/agent/venues/:tempVenueId/category-type
  * Update venue category and types (supports multiple categories)
  */
-export const updateVenueCategoryType = async (req: AuthRequest, res: Response): Promise<Response> => {
+export const updateVenueCategoryType = async (req: AuthRequest, res: Response) => {
   try {
-    if (!req.user || !['AGENT', 'ADMIN'].includes(req.user.role)) {
-      return res.status(403).json({ message: 'Agent or Admin access required' });
-    }
-
     const { tempVenueId } = req.params;
-    const { groupId, categoryIds, venueTypes } = req.body;
+    const { groupIds, categoryIds, venueTypes } = req.body; // ← Changed from groupId
 
-    // ✅ Validation
-    if (!groupId || !categoryIds || !Array.isArray(categoryIds) || categoryIds.length === 0) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'groupId and categoryIds array (with at least one category) are required' 
+    // Validation
+    if (!Array.isArray(groupIds) || groupIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "At least one groupId is required"
       });
     }
 
-    if (!venueTypes || !Array.isArray(venueTypes) || venueTypes.length === 0) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'venueTypes array (with at least one type) is required' 
+    if (!Array.isArray(categoryIds) || categoryIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "At least one categoryId is required"
       });
     }
 
-    console.log(`Updating category/type for venue ${tempVenueId}`, { groupId, categoryIds, venueTypesCount: venueTypes.length });
-
-    // Find venue
-    const venue = await AgentVenueTemp.findOne({ tempVenueId });
-    
-    if (!venue) {
-      return res.status(404).json({ success: false, message: 'Venue not found' });
-    }
-
-    // ✅ Check permission (only assigned agent or admin)
-    if (req.user.role === 'AGENT' && venue.assignedTo?.toString() !== req.user.userId) {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'You can only update venues assigned to you' 
+    if (!Array.isArray(venueTypes) || venueTypes.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "At least one venue type is required"
       });
     }
 
-    // ✅ Update category type data
-    const updateData: any = {
-      categoryTypeData: {
-        groupId,
-        categoryIds,  // ✅ Multiple categories
-        venueTypes
-      },
-      // ✅ Update legacy category field (use first category for backward compatibility)
-      category: categoryIds[0],
-      categoryTypeConfirmed: true,
-      categoryTypeConfirmedAt: new Date()
+    // Build update payload
+    const categoryTypeData = {
+      groupIds, // ← Array now
+      categoryIds,
+      venueTypes
     };
 
-    const updatedVenue = await AgentVenueTemp.findOneAndUpdate(
+    const venue = await AgentVenueTemp.findOneAndUpdate(
       { tempVenueId },
-      { $set: updateData },
+      {
+        $set: {
+          categoryTypeData,
+          categoryTypeConfirmed: true,
+          categoryTypeConfirmedAt: new Date()
+        }
+      },
       { new: true }
     );
 
-    // Audit log
-    await AuditLog.create({
-      auditId: uuidv4(),
-      actorId: req.user.userId,
-      actorRole: req.user.role,
-      venueId: venue.venueId?.toString(),
-      action: 'CATEGORY_TYPE_UPDATED',
-      meta: {
-        tempVenueId,
-        venueName: venue.name,
-        groupId,
-        categoryIds,
-        venueTypesCount: venueTypes.length
+    if (!venue) {
+      return res.status(404).json({
+        success: false,
+        message: "Venue not found"
+      });
+    }
+
+    res.json({
+      success: true,
+      message: "Category type data updated successfully",
+      data: {
+        categoryTypeData: venue.categoryTypeData
       }
     });
-
-    console.log(`Category/type updated for venue ${tempVenueId}`);
-
-    return res.json({
-      success: true,
-      message: 'Category and types updated successfully',
-      data: updatedVenue
-    });
-
   } catch (error: any) {
-    console.error('Error updating category/type:', error);
-    return res.status(500).json({
+    console.error("Error updating category type:", error);
+    res.status(500).json({
       success: false,
-      message: 'Failed to update category/type',
+      message: "Failed to update category type",
       error: error.message
     });
   }

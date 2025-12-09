@@ -1,12 +1,10 @@
-// src/controllers/venueController.ts
-
 import { Response } from 'express';
 import { AuthRequest } from '../middlewares/authMiddleware';
 import { RegionRequest } from '../middlewares/regionMiddleware';
 import { getVenueModel } from '../models/Venue';
 import { dbManager } from '../config/database';
 import mongoose from 'mongoose';
-import { Role } from '../models/User';
+import User, { Role } from '../models/User'; // ✅ CRITICAL: Import User model
 
 type CombinedRequest = AuthRequest & RegionRequest;
 
@@ -267,8 +265,7 @@ export const updateVenue = async (req: CombinedRequest, res: Response) => {
   }
 };
 
-// GET VENUES (keep existing)
-// GET VENUES (keep existing)
+// GET VENUES
 export const getVenues = async (req: CombinedRequest, res: Response) => {
   try {
     const region = req.region || 'ae';
@@ -331,7 +328,6 @@ export const getVenues = async (req: CombinedRequest, res: Response) => {
       };
     }
 
-    // ✅ FIXED: Define sortObj BEFORE using it
     const sortObj: any = {};
     sortObj[sortBy.toString()] = sortOrder === 'asc' ? 1 : -1;
 
@@ -341,11 +337,8 @@ export const getVenues = async (req: CombinedRequest, res: Response) => {
     let query_result;
     
     if (shouldFetchAll) {
-      // Fetch ALL venues without pagination
-      query_result = await Venue.find(query)
-        .sort(sortObj);
+      query_result = await Venue.find(query).sort(sortObj);
     } else {
-      // Use pagination with limit (default to 10 if not specified)
       const limitNum = limit ? Number(limit) : 10;
       query_result = await Venue.find(query)
         .sort(sortObj)
@@ -381,7 +374,7 @@ export const getVenues = async (req: CombinedRequest, res: Response) => {
   }
 };
 
-// GET VENUE BY ID (keep existing)
+// ✅ FIXED: GET VENUE BY ID - Removed .populate() to avoid User model error
 export const getVenueById = async (req: CombinedRequest, res: Response) => {
   try {
     const region = req.region || 'ae';
@@ -401,13 +394,31 @@ export const getVenueById = async (req: CombinedRequest, res: Response) => {
       });
     }
 
-    const venue = await Venue.findById(id).populate('ownerId', 'name email phone');
+    // ✅ FIXED: Use .lean() and remove .populate() to avoid User schema error
+    const venue = await Venue.findById(id).lean().exec();
 
     if (!venue) {
       return res.status(404).json({ 
         success: false, 
         message: 'Venue not found' 
       });
+    }
+
+    // ✅ If you need owner info, fetch it separately
+    if (venue.ownerId) {
+      try {
+        const owner = await User.findById(venue.ownerId)
+          .select('name email phone')
+          .lean()
+          .exec();
+        
+        if (owner) {
+          (venue as any).owner = owner;
+        }
+      } catch (ownerError) {
+        console.warn('Could not fetch owner info:', ownerError);
+        // Continue without owner info
+      }
     }
 
     res.json({ success: true, data: venue });
@@ -422,7 +433,7 @@ export const getVenueById = async (req: CombinedRequest, res: Response) => {
   }
 };
 
-// DELETE VENUE (keep existing)
+// DELETE VENUE
 export const deleteVenue = async (req: CombinedRequest, res: Response) => {
   try {
     const region = req.region || 'ae';
@@ -604,4 +615,3 @@ export const updateVenueVitals = async (req: CombinedRequest, res: Response) => 
     res.status(400).json({ success: false, message: 'Error updating venue vitals', error: error.message });
   }
 };
-

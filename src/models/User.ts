@@ -16,6 +16,8 @@ export enum LoginMethod {
 }
 
 export interface IUser extends Document {
+  _id: mongoose.Types.ObjectId;
+  userId?: string;
   phone?: string;
   email?: string;
   name?: string;
@@ -27,6 +29,11 @@ export interface IUser extends Document {
   loginMethod?: LoginMethod;
   otpCode?: string;
   otpExpiresAt?: Date;
+  region?: string;
+  
+  // ✅ Google OAuth fields
+  googleId?: string;
+  lastLogin?: Date;
   
   // QR Tracking Fields
   hl_source_token?: string;
@@ -47,6 +54,7 @@ export interface IUser extends Document {
 }
 
 const UserSchema = new Schema<IUser>({
+  userId: { type: String, unique: true, sparse: true },
   phone: { type: String, unique: true, sparse: true },
   email: { type: String, unique: true, sparse: true },
   name: { type: String },
@@ -58,6 +66,11 @@ const UserSchema = new Schema<IUser>({
   loginMethod: { type: String, enum: Object.values(LoginMethod) },
   otpCode: { type: String },
   otpExpiresAt: { type: Date },
+  region: { type: String },
+  
+  // ✅ Google OAuth fields
+  googleId: { type: String, unique: true, sparse: true },
+  lastLogin: { type: Date },
   
   // QR Tracking Fields
   hl_source_token: { type: String, sparse: true },
@@ -71,10 +84,19 @@ const UserSchema = new Schema<IUser>({
   qr_landing_timestamp: { type: Date },
   qr_auth_timestamp: { type: Date },
   qr_flow_completed: { type: Boolean, default: false }
-}, { timestamps: true });
+}, { 
+  timestamps: true,
+  collection: 'users'
+});
 
-// Index for QR token lookups
+// Indexes
 UserSchema.index({ hl_source_token: 1 });
 UserSchema.index({ 'hl_utm_data.utm_campaign': 1 });
+UserSchema.index({ email: 1 });
+UserSchema.index({ phone: 1 });
+UserSchema.index({ googleId: 1 }); // ✅ Add index for Google ID
 
-export default mongoose.model<IUser>('User', UserSchema);
+// ✅ Prevent duplicate model compilation
+const User = mongoose.models.User || mongoose.model<IUser>('User', UserSchema);
+
+export default User;

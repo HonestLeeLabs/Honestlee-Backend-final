@@ -1,5 +1,3 @@
-// ===== FILE: src/routes/venueRoutes.ts =====
-
 import express, { Request, Response, NextFunction, RequestHandler } from 'express';
 import { authenticate, AuthRequest } from '../middlewares/authMiddleware';
 import { RegionRequest } from '../middlewares/regionMiddleware';
@@ -13,13 +11,12 @@ import {
   getVenueVitals,
   updateVenueVitals
 } from '../controllers/venueController';
+import { getPublicVenueMedia } from '../controllers/mediaController';
 
-// Combine Auth and Region types for requests
 type CombinedRequest = AuthRequest & RegionRequest;
 
 const router = express.Router();
 
-// Wrapper utility: Casts Request to CombinedRequest for handlers
 function wrapCombinedHandler(
   handler: (req: CombinedRequest, res: Response, next?: NextFunction) => any
 ): RequestHandler {
@@ -28,18 +25,34 @@ function wrapCombinedHandler(
   };
 }
 
+// ✅ CRITICAL: PUBLIC ROUTES MUST BE BEFORE authenticate middleware
+console.log('✅ Registering PUBLIC venue routes');
+
+// Public media endpoint (NO authentication required)
+router.get('/:id/media', (req: Request, res: Response, next: NextFunction) => {
+  console.log('🔓 Public media request for venue:', req.params.id);
+  return wrapCombinedHandler(getPublicVenueMedia)(req, res, next);
+});
+
+// ✅ ALL ROUTES BELOW THIS LINE REQUIRE AUTHENTICATION
+router.use(authenticate);
+
+console.log('✅ Registering AUTHENTICATED venue routes');
+
 // Basic CRUD routes
-router.post('/', authenticate, wrapCombinedHandler(createVenue));
-router.get('/', authenticate, wrapCombinedHandler(getVenues));
-router.get('/:id', authenticate, wrapCombinedHandler(getVenueById));
-router.put('/:id', authenticate, wrapCombinedHandler(updateVenue));
-router.delete('/:id', authenticate, wrapCombinedHandler(deleteVenue));
+router.post('/', wrapCombinedHandler(createVenue));
+router.get('/', wrapCombinedHandler(getVenues));
+router.get('/:id', wrapCombinedHandler(getVenueById)); // ✅ Must be AFTER /:id/media
+router.put('/:id', wrapCombinedHandler(updateVenue));
+router.delete('/:id', wrapCombinedHandler(deleteVenue));
 
 // Category routes
-router.get('/category/:category', authenticate, wrapCombinedHandler(getVenuesByCategory));
+router.get('/category/:category', wrapCombinedHandler(getVenuesByCategory));
 
-// ✅ NEW: Vitals endpoints (must be before /:id to avoid conflict)
-router.get('/:id/vitals', authenticate, wrapCombinedHandler(getVenueVitals));
-router.put('/:id/vitals', authenticate, wrapCombinedHandler(updateVenueVitals));
+// Vitals endpoints
+router.get('/:id/vitals', wrapCombinedHandler(getVenueVitals));
+router.put('/:id/vitals', wrapCombinedHandler(updateVenueVitals));
+
+console.log('✅ All venue routes registered successfully');
 
 export default router;
