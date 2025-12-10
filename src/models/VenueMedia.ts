@@ -74,6 +74,7 @@ const VenueMediaSchema = new Schema<IVenueMedia>(
         // ✅ NEW: COFFEE CATEGORIES
         'COFFEE_MACHINE', 'COFFEE_ACCESSORIES', 'COFFEE_BEANS_DISPLAY',
         'COFFEE_MENU', 'BARISTA_STATION', 'ICE_CREAM_FREEZERS',
+        'FREE_WATER_REFILLS', 'PROMOTIONAL_FLYERS', 'OFFERS',
       ],
       index: true,
     },
