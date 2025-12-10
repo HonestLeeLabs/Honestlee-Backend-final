@@ -141,6 +141,10 @@ const frontendGroupMap: { [key: string]: string } = {
   'COFFEE_MENU': 'Menu',
   'BARISTA_STATION': 'Food & Drink',
   'ICE_CREAM_FREEZERS': 'Food & Drink',
+  // ✅ NEW: AMENITIES & PROMOTIONS
+  'FREE_WATER_REFILLS': 'Amenities',
+  'PROMOTIONAL_FLYERS': 'Latest',
+  'OFFERS': 'Latest',
 };
 
 /**
