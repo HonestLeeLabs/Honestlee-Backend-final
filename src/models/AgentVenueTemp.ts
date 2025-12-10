@@ -39,16 +39,17 @@ export interface IAgentNote {
   createdAt: Date;
   updatedAt?: Date;
 }
+
 export interface ICategoryTypeData {
-  groupIds?: string[]; // ← Changed from groupId to groupIds array
-  groupDisplayNames?: string[]; // ← Optional: store display names for all groups
+  groupIds?: string[];
+  groupDisplayNames?: string[];
   categoryIds: string[];
   categoryDisplayName?: string;
   venueTypes: Array<{
     venueType: string;
     venueTypeDisplay: string;
     categoryId: string;
-    groupId: string; // ← Add groupId to each venue type
+    groupId: string;
   }>;
 }
 
@@ -134,25 +135,33 @@ export interface IAgentVenueTemp extends Document {
     offsetDistance?: number;
   };
 
-  paymentTypes?: {
+paymentTypes?: {
     cash?: boolean;
     creditCard?: boolean;
     debitCard?: boolean;
-    upi?: boolean;
     nfc?: boolean;
     applePay?: boolean;
     googlePay?: boolean;
+    upi?: boolean;
+    promptpay?: boolean;
     alipay?: boolean;
     wechatPay?: boolean;
-    promptpay?: boolean;
     paynow?: boolean;
-    venmo?: boolean;
     paypal?: boolean;
+    venmo?: boolean;
     other?: string[];
   };
-
+  
+  paymentData?: {
+    cashOnly?: boolean;
+    contactlessCardAccepted?: boolean;
+    primaryMdrLocalCardsPercent?: number | null;
+  };
+  
   paymentTypesConfirmed?: boolean;
   paymentTypesConfirmedAt?: Date;
+  paymentMethodsConfirmed?: boolean;
+  paymentMethodsConfirmedAt?: Date;
 
   gpsData?: {
     src_lat?: number;
@@ -202,89 +211,85 @@ export interface IAgentVenueTemp extends Document {
     }>;
   };
 
-  // ✅ FIXED: Google Data with proper types (matching schema)
-googleData?: {
-  placeId: string;
-  primaryType?: string;
-  primaryTypeLabel?: string;
-  allTypes?: string[];
-  googleMapsUrl?: string;
-  utcOffsetMinutes?: number;
-  rating?: number;
-  userRatingsCount?: number;
-  reviews?: Array<{
-    authorName?: string;
+  googleData?: {
+    placeId: string;
+    primaryType?: string;
+    primaryTypeLabel?: string;
+    allTypes?: string[];
+    googleMapsUrl?: string;
+    utcOffsetMinutes?: number;
     rating?: number;
-    text?: string;
-    time?: Date;
-    relativeTime?: string;
-  }>;
-  businessStatus?: string;
-  editorialSummary?: string;
-  priceLevel?: number;
-  priceLevelDisplay?: string;
-  priceRange?: string;
-  displayPrice?: string;
-  paymentOptions?: {
-    acceptsCreditCards?: boolean;
-    acceptsDebitCards?: boolean;
-    acceptsCashOnly?: boolean;
-    acceptsNFC?: boolean;
+    userRatingsCount?: number;
+    reviews?: Array<{
+      authorName?: string;
+      rating?: number;
+      text?: string;
+      time?: Date;
+      relativeTime?: string;
+    }>;
+    businessStatus?: string;
+    editorialSummary?: string;
+    priceLevel?: number;
+    priceLevelDisplay?: string;
+    priceRange?: string;
+    displayPrice?: string;
+    paymentOptions?: {
+      acceptsCreditCards?: boolean;
+      acceptsDebitCards?: boolean;
+      acceptsCashOnly?: boolean;
+      acceptsNFC?: boolean;
+    };
+    accessibilityOptions?: {
+      wheelchairAccessibleEntrance?: boolean;
+      wheelchairAccessibleParking?: boolean;
+      wheelchairAccessibleRestroom?: boolean;
+      wheelchairAccessibleSeating?: boolean;
+    };
+    parkingOptions?: {
+      freeParking?: boolean;
+      paidParking?: boolean;
+      freeStreetParking?: boolean;
+      paidStreetParking?: boolean;
+      valetParking?: boolean;
+      freeParkingLot?: boolean;
+      paidParkingLot?: boolean;
+    };
+    serviceOptions?: {
+      dineIn?: boolean;
+      takeout?: boolean;
+      delivery?: boolean;
+      curbsidePickup?: boolean;
+      outdoorSeating?: boolean;
+    };
+    amenities?: {
+      restroom?: boolean;
+      goodForChildren?: boolean;
+      goodForGroups?: boolean;
+      allowsDogs?: boolean;
+      menuForChildren?: boolean;
+      liveMusic?: boolean;
+    };
+    planning?: {
+      reservable?: boolean;
+    };
+    atmosphereFlags?: {
+      allowsDogs?: boolean;
+      servesBreakfast?: boolean;
+      servesBrunch?: boolean;
+      servesLunch?: boolean;
+      servesDinner?: boolean;
+      servesBeer?: boolean;
+      servesWine?: boolean;
+      servesCocktails?: boolean;
+      servesCoffee?: boolean;
+      servesDessert?: boolean;
+      servesVegetarianFood?: boolean;
+    };
+    photoReference?: string;
+    allPhotos?: string[];
+    importedAt?: Date;
+    importedBy?: string;
   };
-  accessibilityOptions?: {
-    wheelchairAccessibleEntrance?: boolean;
-    wheelchairAccessibleParking?: boolean;
-    wheelchairAccessibleRestroom?: boolean;
-    wheelchairAccessibleSeating?: boolean;
-  };
-  parkingOptions?: {
-    freeParking?: boolean;
-    paidParking?: boolean;
-    freeStreetParking?: boolean;
-    paidStreetParking?: boolean;
-    valetParking?: boolean;
-    freeParkingLot?: boolean;
-    paidParkingLot?: boolean;
-  };
-  
-  // ✅ NEW FIELDS
-  serviceOptions?: {
-    dineIn?: boolean;
-    takeout?: boolean;
-    delivery?: boolean;
-    curbsidePickup?: boolean;
-    outdoorSeating?: boolean;
-  };
-  amenities?: {
-    restroom?: boolean;
-    goodForChildren?: boolean;
-    goodForGroups?: boolean;
-    allowsDogs?: boolean;
-    menuForChildren?: boolean;
-    liveMusic?: boolean;
-  };
-  planning?: {
-    reservable?: boolean;
-  };
-  
-  atmosphereFlags?: {
-    allowsDogs?: boolean;
-    servesBreakfast?: boolean;
-    servesBrunch?: boolean;
-    servesLunch?: boolean;
-    servesDinner?: boolean;
-    servesBeer?: boolean;
-    servesWine?: boolean;
-    servesCocktails?: boolean;
-    servesCoffee?: boolean;
-    servesDessert?: boolean;
-    servesVegetarianFood?: boolean;
-  };
-  photoReference?: string;
-  allPhotos?: string[];
-  importedAt?: Date;
-  importedBy?: string;
-};
 
   assignedTo?: mongoose.Types.ObjectId;
   assignedBy?: mongoose.Types.ObjectId;
@@ -456,49 +461,57 @@ const AgentVenueTempSchema = new Schema<IAgentVenueTemp>({
     },
     offsetDistance: Number
   },
-  paymentTypes: {
+paymentTypes: {
     cash: { type: Boolean, default: false },
     creditCard: { type: Boolean, default: false },
     debitCard: { type: Boolean, default: false },
-    upi: { type: Boolean, default: false },
     nfc: { type: Boolean, default: false },
     applePay: { type: Boolean, default: false },
     googlePay: { type: Boolean, default: false },
+    upi: { type: Boolean, default: false },
+    promptpay: { type: Boolean, default: false },
     alipay: { type: Boolean, default: false },
     wechatPay: { type: Boolean, default: false },
-    promptpay: { type: Boolean, default: false },
     paynow: { type: Boolean, default: false },
-    venmo: { type: Boolean, default: false },
     paypal: { type: Boolean, default: false },
+    venmo: { type: Boolean, default: false },
     other: [{ type: String }]
   },
-  paymentTypesConfirmed: { type: Boolean, default: false },
-  paymentTypesConfirmedAt: Date,
-  gpsData: {
-  src_lat: Number,
-  src_lng: Number,
-  src_provider: String,
-  hl_confirmed_lat: Number,
-  hl_confirmed_lng: Number,
-  hl_gps_accuracy_m: Number,
-  hl_gps_distance_m: Number,
-  hl_gps_status: {
-    type: String,
-    enum: ['not_checked', 'confirmed', 'kept_original', 'rejected', 'skipped', 'manual_placement'], // ✅ Added
-    default: 'not_checked',
+  
+  paymentData: {
+    cashOnly: { type: Boolean, default: false },
+    contactlessCardAccepted: { type: Boolean, default: false },
+    primaryMdrLocalCardsPercent: { type: Number, default: null }
   },
-  hl_gps_updated_at: Date,
-  hl_gps_history: [
-    {
-      lat: Number,
-      lng: Number,
-      source: String,
-      taken_at: Date,
-      by_agent: { type: Schema.Types.ObjectId, ref: 'User' },
-      accuracy_m: Number,
+  
+  paymentMethodsConfirmed: { type: Boolean, default: false },
+  paymentMethodsConfirmedAt: { type: Date },
+  
+  gpsData: {
+    src_lat: Number,
+    src_lng: Number,
+    src_provider: String,
+    hl_confirmed_lat: Number,
+    hl_confirmed_lng: Number,
+    hl_gps_accuracy_m: Number,
+    hl_gps_distance_m: Number,
+    hl_gps_status: {
+      type: String,
+      enum: ['not_checked', 'confirmed', 'kept_original', 'rejected', 'skipped', 'manual_placement'],
+      default: 'not_checked',
     },
-  ],
-},
+    hl_gps_updated_at: Date,
+    hl_gps_history: [
+      {
+        lat: Number,
+        lng: Number,
+        source: String,
+        taken_at: Date,
+        by_agent: { type: Schema.Types.ObjectId, ref: 'User' },
+        accuracy_m: Number,
+      },
+    ],
+  },
   wifiData: {
     hasSpeedTest: { type: Boolean, default: false },
     latestSpeedTest: {
@@ -532,15 +545,15 @@ const AgentVenueTempSchema = new Schema<IAgentVenueTemp>({
     ]
   },
   categoryTypeData: {
-    groupIds: [String], // ← Changed from groupId: String
-    groupDisplayNames: [String], // ← Optional
+    groupIds: [String],
+    groupDisplayNames: [String],
     categoryIds: [{ type: String }],
     categoryDisplayName: String,
     venueTypes: [{
       venueType: String,
       venueTypeDisplay: String,
       categoryId: { type: String },
-      groupId: { type: String } // ← Add this
+      groupId: { type: String }
     }]
   },
   categoryTypeConfirmed: {
@@ -548,78 +561,85 @@ const AgentVenueTempSchema = new Schema<IAgentVenueTemp>({
     default: false
   },
   categoryTypeConfirmedAt: Date,
-googleData: {
-  placeId: { type: String, index: true },
-  primaryType: String,
-  primaryTypeLabel: String,
-  allTypes: [String],
-  googleMapsUrl: String,
-  utcOffsetMinutes: Number,
-  rating: Number,
-  userRatingsCount: Number,
-  
-  // ✅ FIX: Change from String to proper structure
-  reviews: [{
-    authorName: String,
+  googleData: {
+    placeId: { type: String, index: true },
+    primaryType: String,
+    primaryTypeLabel: String,
+    allTypes: [String],
+    googleMapsUrl: String,
+    utcOffsetMinutes: Number,
     rating: Number,
-    text: String,
-    time: Date,
-    relativeTime: String
-  }],
-  
-  businessStatus: String,
-  editorialSummary: String,
-  
-  priceLevel: { type: Number, min: 0, max: 4, index: true },
-  priceLevelDisplay: { type: String, enum: ['', '$', '$$', '$$$', '$$$$'] },
-  priceRange: String,
-  displayPrice: String,
-  
-  // ✅ FIX: Proper object structures
-  paymentOptions: {
-    acceptsCreditCards: Boolean,
-    acceptsDebitCards: Boolean,
-    acceptsCashOnly: Boolean,
-    acceptsNFC: Boolean
+    userRatingsCount: Number,
+    reviews: [{
+      authorName: String,
+      rating: Number,
+      text: String,
+      time: Date,
+      relativeTime: String
+    }],
+    businessStatus: String,
+    editorialSummary: String,
+    priceLevel: { type: Number, min: 0, max: 4, index: true },
+    priceLevelDisplay: { type: String, enum: ['', '$', '$$', '$$$', '$$$$'] },
+    priceRange: String,
+    displayPrice: String,
+    paymentOptions: {
+      acceptsCreditCards: Boolean,
+      acceptsDebitCards: Boolean,
+      acceptsCashOnly: Boolean,
+      acceptsNFC: Boolean
+    },
+    accessibilityOptions: {
+      wheelchairAccessibleEntrance: Boolean,
+      wheelchairAccessibleParking: Boolean,
+      wheelchairAccessibleRestroom: Boolean,
+      wheelchairAccessibleSeating: Boolean
+    },
+    parkingOptions: {
+      freeParking: Boolean,
+      paidParking: Boolean,
+      freeStreetParking: Boolean,
+      paidStreetParking: Boolean,
+      valetParking: Boolean,
+      freeParkingLot: Boolean,
+      paidParkingLot: Boolean
+    },
+    serviceOptions: {
+      dineIn: Boolean,
+      takeout: Boolean,
+      delivery: Boolean,
+      curbsidePickup: Boolean,
+      outdoorSeating: Boolean
+    },
+    amenities: {
+      restroom: Boolean,
+      goodForChildren: Boolean,
+      goodForGroups: Boolean,
+      allowsDogs: Boolean,
+      menuForChildren: Boolean,
+      liveMusic: Boolean
+    },
+    planning: {
+      reservable: Boolean
+    },
+    atmosphereFlags: {
+      allowsDogs: Boolean,
+      servesBreakfast: Boolean,
+      servesBrunch: Boolean,
+      servesLunch: Boolean,
+      servesDinner: Boolean,
+      servesBeer: Boolean,
+      servesWine: Boolean,
+      servesCocktails: Boolean,
+      servesCoffee: Boolean,
+      servesDessert: Boolean,
+      servesVegetarianFood: Boolean
+    },
+    photoReference: String,
+    allPhotos: [String],
+    importedAt: Date,
+    importedBy: String,
   },
-  
-  accessibilityOptions: {
-    wheelchairAccessibleEntrance: Boolean,
-    wheelchairAccessibleParking: Boolean,
-    wheelchairAccessibleRestroom: Boolean,
-    wheelchairAccessibleSeating: Boolean
-  },
-  
-  parkingOptions: {
-    freeParking: Boolean,
-    paidParking: Boolean,
-    freeStreetParking: Boolean,
-    paidStreetParking: Boolean,
-    valetParking: Boolean,
-    freeParkingLot: Boolean,
-    paidParkingLot: Boolean
-  },
-  
-  atmosphereFlags: {
-    allowsDogs: Boolean,
-    servesBreakfast: Boolean,
-    servesBrunch: Boolean,
-    servesLunch: Boolean,
-    servesDinner: Boolean,
-    servesBeer: Boolean,
-    servesWine: Boolean,
-    servesCocktails: Boolean,
-    servesCoffee: Boolean,
-    servesDessert: Boolean,
-    servesVegetarianFood: Boolean
-  },
-  
-  photoReference: String,
-  allPhotos: [String],  // ✅ Array of strings
-  
-  importedAt: Date,
-  importedBy: String,
-},
   assignedTo: {
     type: Schema.Types.ObjectId,
     ref: 'User',
@@ -721,5 +741,6 @@ AgentVenueTempSchema.index({ 'gpsData.hl_confirmed_lat': 1, 'gpsData.hl_confirme
 AgentVenueTempSchema.index({ 'wifiData.hasSpeedTest': 1 });
 AgentVenueTempSchema.index({ 'wifiData.latestSpeedTest.qualityScore': 1 });
 AgentVenueTempSchema.index({ categoryTypeConfirmed: 1 });
+AgentVenueTempSchema.index({ paymentMethodsConfirmed: 1 }); // ✅ NEW
 
 export default mongoose.model<IAgentVenueTemp>('AgentVenueTemp', AgentVenueTempSchema);

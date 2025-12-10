@@ -15,6 +15,8 @@ import { AuthRequest } from '../middlewares/authMiddleware';
 import { RegionRequest } from '../middlewares/regionMiddleware';
 import { dbManager, Region } from '../config/database';
 import { getS3KeyFromUrl, deleteFileFromS3 } from '../config/uploadConfig';
+import CardMachine from '../models/CardMachine';
+import UpiQrPayment from '../models/UpiQrPayment';
 
 type AgentRequest = AuthRequest & RegionRequest;
 
@@ -1174,6 +1176,621 @@ export const generateTestToken = async (req: AgentRequest, res: Response): Promi
     return res.status(500).json({
       success: false,
       message: 'Error generating test token',
+      error: error.message
+    });
+  }
+};
+
+// ===== UPDATE PAYMENT METHODS =====
+// ===== UPDATE PAYMENT METHODS =====
+export const updatePaymentMethods = async (req: AgentRequest, res: Response): Promise<Response> => {
+  try {
+    if (!req.user || !['AGENT', 'ADMIN'].includes(req.user.role)) {
+      return res.status(403).json({ message: 'Agent or Admin access required' });
+    }
+
+    const { tempVenueId } = req.params;
+    const { 
+      paymentMethods,
+      contactlessCardAccepted,
+      cashOnly,
+      primaryMdrLocalCardsPercent 
+    } = req.body;
+
+    if (!paymentMethods || !Array.isArray(paymentMethods)) {
+      return res.status(400).json({
+        success: false,
+        message: 'paymentMethods array is required'
+      });
+    }
+
+    console.log(`💳 Updating payment methods for venue ${tempVenueId}`);
+    console.log('📦 Request body:', { paymentMethods, contactlessCardAccepted, cashOnly, primaryMdrLocalCardsPercent });
+
+    const venue = await AgentVenueTemp.findOne({ tempVenueId });
+
+    if (!venue) {
+      return res.status(404).json({
+        success: false,
+        message: 'Venue not found'
+      });
+    }
+
+    // Check permission
+    if (req.user.role === 'AGENT' && venue.assignedTo?.toString() !== req.user.userId) {
+      return res.status(403).json({
+        success: false,
+        message: 'You can only update venues assigned to you'
+      });
+    }
+
+    // Build payment types object from array
+    const paymentTypesObj: any = {
+      cash: paymentMethods.includes('Cash'),
+      creditCard: paymentMethods.includes('Card'),
+      debitCard: paymentMethods.includes('Card'),
+      nfc: contactlessCardAccepted || false,
+      applePay: paymentMethods.includes('Apple Pay'),
+      googlePay: paymentMethods.includes('Google Pay'),
+      upi: paymentMethods.includes('QR_UPI'),
+      promptpay: paymentMethods.includes('QR_PromptPay'),
+      alipay: paymentMethods.includes('Alipay'),
+      wechatPay: paymentMethods.includes('WeChatPay'),
+      paynow: paymentMethods.includes('PayNow'),
+      paypal: paymentMethods.includes('PayPal'),
+      venmo: paymentMethods.includes('Venmo'),
+      other: [] // Initialize empty array
+    };
+
+    // ✅ FIX: Build paymentData as a complete object, not using dot notation
+    const paymentDataObj = {
+      cashOnly: cashOnly || false,
+      contactlessCardAccepted: contactlessCardAccepted || false,
+      primaryMdrLocalCardsPercent: primaryMdrLocalCardsPercent ? parseFloat(primaryMdrLocalCardsPercent) : null,
+    };
+
+    // ✅ FIX: Use direct object assignment instead of dot notation
+    const updateData: any = {
+      paymentTypes: paymentTypesObj,
+      paymentTypesConfirmed: true,
+      paymentTypesConfirmedAt: new Date(),
+      paymentData: paymentDataObj, // ✅ Complete object, not dot notation
+      paymentMethodsConfirmed: true, // ✅ NEW: Set this flag as well
+      paymentMethodsConfirmedAt: new Date(), // ✅ NEW: Add timestamp
+    };
+
+    console.log('📝 Update data being saved:', JSON.stringify(updateData, null, 2));
+
+    // ✅ FIX: Update the venue and explicitly save
+    const updatedVenue = await AgentVenueTemp.findOneAndUpdate(
+      { tempVenueId },
+      { $set: updateData },
+      { 
+        new: true,
+        runValidators: true // ✅ Run schema validators
+      }
+    );
+
+    if (!updatedVenue) {
+      return res.status(404).json({
+        success: false,
+        message: 'Venue not found after update'
+      });
+    }
+
+    console.log('✅ Venue updated successfully');
+    console.log('📊 Updated payment data:', updatedVenue.paymentData);
+    console.log('📊 Updated payment types:', updatedVenue.paymentTypes);
+
+    await createAuditLog(
+      req.user.userId,
+      req.user.role,
+      'PAYMENT_METHODS_UPDATED',
+      { 
+        tempVenueId, 
+        paymentMethods, 
+        contactlessCardAccepted, 
+        cashOnly,
+        primaryMdrLocalCardsPercent 
+      },
+      venue.venueId?.toString(),
+      req
+    );
+
+    console.log(`✅ Payment methods updated for venue ${tempVenueId}`);
+
+    return res.json({
+      success: true,
+      message: 'Payment methods updated successfully',
+      data: updatedVenue
+    });
+
+  } catch (error: any) {
+    console.error('❌ Error updating payment methods:', error);
+    console.error('Stack trace:', error.stack);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to update payment methods',
+      error: error.message
+    });
+  }
+};
+
+// ===== GET PAYMENT METHODS =====
+// ===== GET PAYMENT METHODS =====
+export const getPaymentMethods = async (req: AgentRequest, res: Response): Promise<Response> => {
+  try {
+    if (!req.user || !['AGENT', 'ADMIN'].includes(req.user.role)) {
+      return res.status(403).json({ message: 'Agent or Admin access required' });
+    }
+
+    const { tempVenueId } = req.params;
+
+    console.log(`🔍 Fetching payment methods for venue ${tempVenueId}`);
+
+    const venue = await AgentVenueTemp.findOne({ tempVenueId })
+      .select('tempVenueId name paymentTypes paymentTypesConfirmed paymentTypesConfirmedAt paymentData paymentMethodsConfirmed paymentMethodsConfirmedAt');
+
+    if (!venue) {
+      return res.status(404).json({
+        success: false,
+        message: 'Venue not found'
+      });
+    }
+
+    console.log('📊 Retrieved payment data from DB:', {
+      paymentTypes: venue.paymentTypes,
+      paymentData: venue.paymentData,
+      paymentTypesConfirmed: venue.paymentTypesConfirmed,
+      paymentMethodsConfirmed: venue.paymentMethodsConfirmed
+    });
+
+    return res.json({
+      success: true,
+      data: {
+        tempVenueId: venue.tempVenueId,
+        name: venue.name,
+        paymentTypes: venue.paymentTypes || {},
+        confirmed: venue.paymentTypesConfirmed || false,
+        confirmedAt: venue.paymentTypesConfirmedAt,
+        paymentData: venue.paymentData || {},
+        paymentMethodsConfirmed: venue.paymentMethodsConfirmed || false, // ✅ NEW
+        paymentMethodsConfirmedAt: venue.paymentMethodsConfirmedAt // ✅ NEW
+      }
+    });
+
+  } catch (error: any) {
+    console.error('❌ Error fetching payment methods:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to fetch payment methods',
+      error: error.message
+    });
+  }
+};
+
+// ===== ADD CARD MACHINE =====
+export const addCardMachine = async (req: AgentRequest, res: Response): Promise<Response> => {
+  try {
+    if (!req.user || !['AGENT', 'ADMIN'].includes(req.user.role)) {
+      return res.status(403).json({ message: 'Insufficient permissions' });
+    }
+
+    const { venueId } = req.params;
+    const {
+      brandProvider,
+      contactlessEnabled,
+      supportedNetworks,
+      mdrLocalCardsPercent,
+      mdrDebitPercent,
+      mdrCreditPercent,
+      mdrInternationalPercent,
+      notes,
+      monthlyRental,
+      machinePhotoUrl
+    } = req.body;
+
+    console.log(`💳 Adding card machine for venue: ${venueId}`);
+
+    if (!brandProvider) {
+      return res.status(400).json({
+        success: false,
+        message: 'brandProvider is required'
+      });
+    }
+
+    const isTempVenue = venueId.startsWith('TEMP-');
+
+    const machineData: any = {
+      machineId: uuidv4(),
+      brandProvider,
+      contactlessEnabled: contactlessEnabled || false,
+      supportedNetworks: supportedNetworks || [],
+      mdrLocalCardsPercent,
+      mdrDebitPercent,
+      mdrCreditPercent,
+      mdrInternationalPercent,
+      notes,
+      monthlyRental,
+      machinePhotoUrl,
+      createdBy: req.user.userId,
+      isActive: true,
+    };
+
+    if (isTempVenue) {
+      machineData.tempVenueId = venueId;
+    } else {
+      machineData.venueId = venueId;
+    }
+
+    const cardMachine = new CardMachine(machineData);
+    await cardMachine.save();
+
+    await createAuditLog(
+      req.user.userId,
+      req.user.role,
+      'agent.card_machine.added',
+      { machineId: cardMachine.machineId, brandProvider, venueId, isTempVenue },
+      isTempVenue ? undefined : venueId,
+      req
+    );
+
+    console.log(`✅ Card machine added: ${cardMachine.machineId}`);
+
+    return res.status(201).json({
+      success: true,
+      data: cardMachine,
+      message: 'Card machine added successfully',
+    });
+  } catch (error: any) {
+    console.error('❌ Error adding card machine:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Error adding card machine',
+      error: error.message,
+    });
+  }
+};
+
+// ===== GET CARD MACHINES =====
+export const getCardMachines = async (req: AgentRequest, res: Response): Promise<Response> => {
+  try {
+    if (!req.user || !['AGENT', 'ADMIN'].includes(req.user.role)) {
+      return res.status(403).json({ message: 'Insufficient permissions' });
+    }
+
+    const { venueId } = req.params;
+
+    console.log(`🔍 Fetching card machines for venue: ${venueId}`);
+
+    const isTempVenue = venueId.startsWith('TEMP-');
+
+    const query: any = { isActive: true };
+    if (isTempVenue) {
+      query.tempVenueId = venueId;
+    } else {
+      query.venueId = venueId;
+    }
+
+    const cardMachines = await CardMachine.find(query).sort({ createdAt: -1 });
+
+    console.log(`✅ Found ${cardMachines.length} card machines for venue ${venueId}`);
+
+    return res.json({
+      success: true,
+      data: cardMachines,
+      count: cardMachines.length,
+    });
+  } catch (error: any) {
+    console.error('❌ Error fetching card machines:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Error fetching card machines',
+      error: error.message,
+    });
+  }
+};
+
+// ===== DELETE CARD MACHINE =====
+export const deleteCardMachine = async (req: AgentRequest, res: Response): Promise<Response> => {
+  try {
+    if (!req.user || !['AGENT', 'ADMIN'].includes(req.user.role)) {
+      return res.status(403).json({ message: 'Insufficient permissions' });
+    }
+
+    const { venueId, machineId } = req.params;
+
+    console.log(`🗑️ Deleting card machine ${machineId} from venue ${venueId}`);
+
+    const isTempVenue = venueId.startsWith('TEMP-');
+
+    const query: any = { machineId, isActive: true };
+    if (isTempVenue) {
+      query.tempVenueId = venueId;
+    } else {
+      query.venueId = venueId;
+    }
+
+    const cardMachine = await CardMachine.findOneAndUpdate(
+      query,
+      { isActive: false },
+      { new: true }
+    );
+
+    if (!cardMachine) {
+      return res.status(404).json({ message: 'Card machine not found' });
+    }
+
+    await createAuditLog(
+      req.user.userId,
+      req.user.role,
+      'agent.card_machine.deleted',
+      { machineId, venueId, isTempVenue },
+      isTempVenue ? undefined : venueId,
+      req
+    );
+
+    console.log(`✅ Card machine deleted: ${machineId}`);
+
+    return res.json({
+      success: true,
+      message: 'Card machine deleted successfully',
+    });
+  } catch (error: any) {
+    console.error('❌ Error deleting card machine:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Error deleting card machine',
+      error: error.message,
+    });
+  }
+};
+
+// ===== ADD UPI/QR PAYMENT =====
+export const addUpiQrPayment = async (req: AgentRequest, res: Response): Promise<Response> => {
+  try {
+    if (!req.user || !['AGENT', 'ADMIN'].includes(req.user.role)) {
+      return res.status(403).json({ message: 'Insufficient permissions' });
+    }
+
+    const { venueId } = req.params;
+    const {
+      paymentScheme,
+      qrRawPayload,
+      upiVpa,
+      upiPayeeName,
+      upiMerchantCode,
+      accountType,
+      ownerClaimName,
+      zoneId,
+      isPrimary,
+      qrPhotoUrl,
+      qrImageHash
+    } = req.body;
+
+    console.log(`💳 Adding UPI/QR payment for venue: ${venueId}`);
+
+    if (!qrRawPayload || !qrPhotoUrl || !accountType) {
+      return res.status(400).json({
+        success: false,
+        message: 'qrRawPayload, qrPhotoUrl, and accountType are required'
+      });
+    }
+
+    const isTempVenue = venueId.startsWith('TEMP-');
+
+    const qrData: any = {
+      qrId: uuidv4(),
+      paymentScheme: paymentScheme || 'UPI',
+      qrRawPayload,
+      upiVpa,
+      upiPayeeName,
+      upiMerchantCode,
+      accountType,
+      ownerClaimName,
+      zoneId,
+      isPrimary: isPrimary || false,
+      qrPhotoUrl,
+      qrImageHash,
+      createdBy: req.user.userId,
+      isActive: true,
+    };
+
+    if (isTempVenue) {
+      qrData.tempVenueId = venueId;
+    } else {
+      qrData.venueId = venueId;
+    }
+
+    const upiQr = new UpiQrPayment(qrData);
+    await upiQr.save();
+
+    await createAuditLog(
+      req.user.userId,
+      req.user.role,
+      'agent.upi_qr.added',
+      { qrId: upiQr.qrId, paymentScheme, venueId, isTempVenue, accountType },
+      isTempVenue ? undefined : venueId,
+      req
+    );
+
+    console.log(`✅ UPI/QR payment added: ${upiQr.qrId}`);
+
+    return res.status(201).json({
+      success: true,
+      data: upiQr,
+      message: 'UPI/QR payment added successfully',
+    });
+  } catch (error: any) {
+    console.error('❌ Error adding UPI/QR payment:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Error adding UPI/QR payment',
+      error: error.message,
+    });
+  }
+};
+
+// ===== GET UPI/QR PAYMENTS =====
+export const getUpiQrPayments = async (req: AgentRequest, res: Response): Promise<Response> => {
+  try {
+    if (!req.user || !['AGENT', 'ADMIN'].includes(req.user.role)) {
+      return res.status(403).json({ message: 'Insufficient permissions' });
+    }
+
+    const { venueId } = req.params;
+
+    console.log(`🔍 Fetching UPI/QR payments for venue: ${venueId}`);
+
+    const isTempVenue = venueId.startsWith('TEMP-');
+
+    const query: any = { isActive: true };
+    if (isTempVenue) {
+      query.tempVenueId = venueId;
+    } else {
+      query.venueId = venueId;
+    }
+
+    const upiQrPayments = await UpiQrPayment.find(query).sort({ isPrimary: -1, createdAt: -1 });
+
+    console.log(`✅ Found ${upiQrPayments.length} UPI/QR payments for venue ${venueId}`);
+
+    return res.json({
+      success: true,
+      data: upiQrPayments,
+      count: upiQrPayments.length,
+    });
+  } catch (error: any) {
+    console.error('❌ Error fetching UPI/QR payments:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Error fetching UPI/QR payments',
+      error: error.message,
+    });
+  }
+};
+
+// ===== DELETE UPI/QR PAYMENT =====
+export const deleteUpiQrPayment = async (req: AgentRequest, res: Response): Promise<Response> => {
+  try {
+    if (!req.user || !['AGENT', 'ADMIN'].includes(req.user.role)) {
+      return res.status(403).json({ message: 'Insufficient permissions' });
+    }
+
+    const { venueId, qrId } = req.params;
+
+    console.log(`🗑️ Deleting UPI/QR payment ${qrId} from venue ${venueId}`);
+
+    const isTempVenue = venueId.startsWith('TEMP-');
+
+    const query: any = { qrId, isActive: true };
+    if (isTempVenue) {
+      query.tempVenueId = venueId;
+    } else {
+      query.venueId = venueId;
+    }
+
+    const upiQr = await UpiQrPayment.findOneAndUpdate(
+      query,
+      { isActive: false },
+      { new: true }
+    );
+
+    if (!upiQr) {
+      return res.status(404).json({ message: 'UPI/QR payment not found' });
+    }
+
+    await createAuditLog(
+      req.user.userId,
+      req.user.role,
+      'agent.upi_qr.deleted',
+      { qrId, venueId, isTempVenue },
+      isTempVenue ? undefined : venueId,
+      req
+    );
+
+    console.log(`✅ UPI/QR payment deleted: ${qrId}`);
+
+    return res.json({
+      success: true,
+      message: 'UPI/QR payment deleted successfully',
+    });
+  } catch (error: any) {
+    console.error('❌ Error deleting UPI/QR payment:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Error deleting UPI/QR payment',
+      error: error.message,
+    });
+  }
+};
+
+// ===== PARSE QR CODE =====
+export const parseQrCode = async (req: AgentRequest, res: Response): Promise<Response> => {
+  try {
+    if (!req.user || !['AGENT', 'ADMIN'].includes(req.user.role)) {
+      return res.status(403).json({ message: 'Insufficient permissions' });
+    }
+
+    const { qrRawPayload } = req.body;
+
+    if (!qrRawPayload) {
+      return res.status(400).json({
+        success: false,
+        message: 'qrRawPayload is required'
+      });
+    }
+
+    console.log(`🔍 Parsing QR code payload`);
+
+    let parsedData: any = {
+      scheme: 'UNKNOWN',
+      raw: qrRawPayload
+    };
+
+    // Check if UPI
+    if (qrRawPayload.startsWith('upi://pay')) {
+      try {
+        const url = new URL(qrRawPayload);
+        const params = url.searchParams;
+
+        parsedData = {
+          scheme: 'UPI',
+          vpa: params.get('pa'),
+          payeeName: params.get('pn'),
+          amount: params.get('am'),
+          currency: params.get('cu') || 'INR',
+          note: params.get('tn'),
+          txnId: params.get('tid'),
+          merchantCode: params.get('mc'),
+          raw: qrRawPayload
+        };
+      } catch (error) {
+        console.error('Error parsing UPI QR:', error);
+      }
+    }
+    // Check if EMVCo (PromptPay, etc.)
+    else if (/^[0-9]+$/.test(qrRawPayload)) {
+      // Simple EMVCo parser
+      parsedData = {
+        scheme: 'EMVCO',
+        raw: qrRawPayload,
+        note: 'Use dedicated EMVCo parser for full details'
+      };
+    }
+
+    console.log(`✅ QR code parsed:`, parsedData);
+
+    return res.json({
+      success: true,
+      data: parsedData
+    });
+
+  } catch (error: any) {
+    console.error('❌ Error parsing QR code:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to parse QR code',
       error: error.message
     });
   }
