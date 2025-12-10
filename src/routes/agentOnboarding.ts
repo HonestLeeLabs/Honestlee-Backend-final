@@ -40,13 +40,62 @@ router.post('/venues/:tempVenueId/finalize', (req: Request, res: Response, next:
   agentController.finalizeOnboarding(req as any, res).catch(next);
 });
 
-// ===== CATEGORY & TYPE OPERATIONS ===== ✅ NEW
+// ===== CATEGORY & TYPE OPERATIONS =====
 router.put('/venues/:tempVenueId/category-type', (req: Request, res: Response, next: NextFunction) => {
   agentController.updateVenueCategoryType(req as any, res).catch(next);
 });
 
 router.get('/venues/:tempVenueId/category-type', (req: Request, res: Response, next: NextFunction) => {
   agentController.getVenueCategoryType(req as any, res).catch(next);
+});
+
+// ===== PAYMENT OPERATIONS ===== ✅ NEW
+router.put('/venues/:tempVenueId/payment-methods', (req: Request, res: Response, next: NextFunction) => {
+  agentController.updatePaymentMethods(req as any, res).catch(next);
+});
+
+router.get('/venues/:tempVenueId/payment-methods', (req: Request, res: Response, next: NextFunction) => {
+  agentController.getPaymentMethods(req as any, res).catch(next);
+});
+
+// Card machines
+router.post('/venues/:venueId/card-machines', (req: Request, res: Response, next: NextFunction) => {
+  agentController.addCardMachine(req as any, res).catch(next);
+});
+
+router.get('/venues/:venueId/card-machines', (req: Request, res: Response, next: NextFunction) => {
+  agentController.getCardMachines(req as any, res).catch(next);
+});
+
+router.delete('/venues/:venueId/card-machines/:machineId', (req: Request, res: Response, next: NextFunction) => {
+  agentController.deleteCardMachine(req as any, res).catch(next);
+});
+
+// UPI/QR payments
+router.post('/venues/:venueId/upi-qr-payments', (req: Request, res: Response, next: NextFunction) => {
+  agentController.addUpiQrPayment(req as any, res).catch(next);
+});
+
+router.get('/venues/:venueId/upi-qr-payments', (req: Request, res: Response, next: NextFunction) => {
+  agentController.getUpiQrPayments(req as any, res).catch(next);
+});
+
+router.delete('/venues/:venueId/upi-qr-payments/:qrId', (req: Request, res: Response, next: NextFunction) => {
+  agentController.deleteUpiQrPayment(req as any, res).catch(next);
+});
+
+// QR code parser
+router.post('/parse-qr-code', (req: Request, res: Response, next: NextFunction) => {
+  agentController.parseQrCode(req as any, res).catch(next);
+});
+
+// Legacy payment types (for backward compatibility)
+router.put('/venues/:tempVenueId/payment-types', (req: Request, res: Response, next: NextFunction) => {
+  agentController.updatePaymentTypes(req as any, res).catch(next);
+});
+
+router.get('/venues/:tempVenueId/payment-types', (req: Request, res: Response, next: NextFunction) => {
+  agentController.getPaymentTypes(req as any, res).catch(next);
 });
 
 // ===== QR CODE OPERATIONS =====
@@ -176,14 +225,6 @@ router.get('/venues/:tempVenueId/media/stats', (req: Request, res: Response, nex
 router.delete('/venues/:tempVenueId/media/:mediaId', (req: Request, res: Response, next: NextFunction) =>
   mediaController.deleteVenueMedia(req as any, res).catch(next)
 );
-
-router.put('/venues/:tempVenueId/payment-types', (req: Request, res: Response, next: NextFunction) => {
-  agentController.updatePaymentTypes(req as any, res).catch(next);
-});
-
-router.get('/venues/:tempVenueId/payment-types', (req: Request, res: Response, next: NextFunction) => {
-  agentController.getPaymentTypes(req as any, res).catch(next);
-});
 
 router.put(
   '/venues/:tempVenueId/info',
