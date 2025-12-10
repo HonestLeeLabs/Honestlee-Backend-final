@@ -10,14 +10,16 @@ export interface IZone extends Document {
   numTables?: number;
   numSeats?: number;
   numChargingPorts?: number;
-  
-  // ✅ NEW FIELDS
+  // Existing fields
   isIndoor?: boolean;
   isOutdoor?: boolean;
   climateControl?: 'ac' | 'fan' | 'none';
   noiseLevel?: 'quiet' | 'low_music' | 'moderate_music' | 'loud_music' | 'street_noise' | 'high_traffic';
+  // ✅ NEW: View field
+  view?: 'mountain_view' | 'river_view' | 'sea_view' | 'ocean_view' | 'lake_view' | 
+        'garden_view' | 'pool_view' | 'street_view' | 'city_view' | 'skyline_view' | 
+        'courtyard_view' | 'park_view' | 'beach_view' | 'forest_view' | 'no_view' | 'interior_facing';
   description?: string;
-  
   colorToken: string;
   createdBy: mongoose.Types.ObjectId;
   isActive: boolean;
@@ -69,8 +71,7 @@ const ZoneSchema = new Schema<IZone>(
       type: Number,
       min: 0,
     },
-    
-    // ✅ NEW FIELDS
+    // Existing fields
     isIndoor: {
       type: Boolean,
       default: false,
@@ -88,11 +89,32 @@ const ZoneSchema = new Schema<IZone>(
       type: String,
       enum: ['quiet', 'low_music', 'moderate_music', 'loud_music', 'street_noise', 'high_traffic'],
     },
+    // ✅ NEW: View field
+    view: {
+      type: String,
+      enum: [
+        'mountain_view',
+        'river_view',
+        'sea_view',
+        'ocean_view',
+        'lake_view',
+        'garden_view',
+        'pool_view',
+        'street_view',
+        'city_view',
+        'skyline_view',
+        'courtyard_view',
+        'park_view',
+        'beach_view',
+        'forest_view',
+        'no_view',
+        'interior_facing'
+      ],
+    },
     description: {
       type: String,
       maxlength: 500,
     },
-    
     colorToken: {
       type: String,
       required: true,
@@ -114,9 +136,11 @@ const ZoneSchema = new Schema<IZone>(
   }
 );
 
+// Indexes
 ZoneSchema.index({ venueId: 1, isActive: 1 });
 ZoneSchema.index({ tempVenueId: 1, isActive: 1 });
 
+// Validation
 ZoneSchema.pre("validate", function (next) {
   if (!this.venueId && !this.tempVenueId) {
     next(new Error("Either venueId or tempVenueId must be provided"));

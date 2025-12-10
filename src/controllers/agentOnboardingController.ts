@@ -1179,7 +1179,7 @@ export const generateTestToken = async (req: AgentRequest, res: Response): Promi
   }
 };
 
-// CREATE ZONE - UPDATED
+// CREATE ZONE - UPDATED WITH VIEW
 export const createZone = async (
   req: AgentRequest,
   res: Response
@@ -1197,11 +1197,13 @@ export const createZone = async (
       numTables, 
       numSeats, 
       numChargingPorts,
-      // ✅ NEW FIELDS
+      // Existing new fields
       isIndoor,
       isOutdoor,
       climateControl,
       noiseLevel,
+      // ✅ NEW: View field
+      view,
       description
     } = req.body;
 
@@ -1224,11 +1226,13 @@ export const createZone = async (
       numTables,
       numSeats,
       numChargingPorts,
-      // ✅ NEW FIELDS
+      // Existing new fields
       isIndoor: isIndoor || false,
       isOutdoor: isOutdoor || false,
       climateControl: climateControl || 'none',
       noiseLevel,
+      // ✅ NEW: View field
+      view,
       description: description?.trim(),
       colorToken: generateColorToken(),
       createdBy: req.user.userId,
@@ -1272,13 +1276,15 @@ export const createZone = async (
         isOutdoor,
         climateControl,
         noiseLevel,
+        // ✅ NEW: Include view in audit log
+        view,
         hasDescription: !!description
       },
       isTempVenue ? undefined : venueId,
       req
     );
 
-    console.log(`✅ Zone created: ${zone.zoneId} with all attributes`);
+    console.log(`✅ Zone created: ${zone.zoneId} with all attributes including view`);
 
     return res.status(201).json({
       success: true,
