@@ -5,6 +5,7 @@ import { detectRegion } from '../middlewares/regionMiddleware';
 import { uploadEventImages, uploadVenueMedia } from '../config/uploadConfig';
 import * as agentController from '../controllers/agentOnboardingController';
 import * as mediaController from '../controllers/mediaController';
+import * as paymentController from '../controllers/paymentMethodController';
 
 const router = Router();
 
@@ -49,7 +50,7 @@ router.get('/venues/:tempVenueId/category-type', (req: Request, res: Response, n
   agentController.getVenueCategoryType(req as any, res).catch(next);
 });
 
-// ===== PAYMENT OPERATIONS ===== ✅ NEW
+// ===== PAYMENT OPERATIONS ===== ✅ FIXED
 router.put('/venues/:tempVenueId/payment-methods', (req: Request, res: Response, next: NextFunction) => {
   agentController.updatePaymentMethods(req as any, res).catch(next);
 });
@@ -58,35 +59,35 @@ router.get('/venues/:tempVenueId/payment-methods', (req: Request, res: Response,
   agentController.getPaymentMethods(req as any, res).catch(next);
 });
 
-// Card machines
+// Card machines - FIXED: Using paymentController
 router.post('/venues/:venueId/card-machines', (req: Request, res: Response, next: NextFunction) => {
-  agentController.addCardMachine(req as any, res).catch(next);
+  paymentController.addCardMachine(req as any, res).catch(next);
 });
 
 router.get('/venues/:venueId/card-machines', (req: Request, res: Response, next: NextFunction) => {
-  agentController.getCardMachines(req as any, res).catch(next);
+  paymentController.getCardMachines(req as any, res).catch(next);
 });
 
 router.delete('/venues/:venueId/card-machines/:machineId', (req: Request, res: Response, next: NextFunction) => {
-  agentController.deleteCardMachine(req as any, res).catch(next);
+  paymentController.deleteCardMachine(req as any, res).catch(next);
 });
 
-// UPI/QR payments
+// UPI/QR payments - FIXED: Using paymentController
 router.post('/venues/:venueId/upi-qr-payments', (req: Request, res: Response, next: NextFunction) => {
-  agentController.addUpiQrPayment(req as any, res).catch(next);
+  paymentController.addUpiQrPayment(req as any, res).catch(next);
 });
 
 router.get('/venues/:venueId/upi-qr-payments', (req: Request, res: Response, next: NextFunction) => {
-  agentController.getUpiQrPayments(req as any, res).catch(next);
+  paymentController.getUpiQrPayments(req as any, res).catch(next);
 });
 
 router.delete('/venues/:venueId/upi-qr-payments/:qrId', (req: Request, res: Response, next: NextFunction) => {
-  agentController.deleteUpiQrPayment(req as any, res).catch(next);
+  paymentController.deleteUpiQrPayment(req as any, res).catch(next);
 });
 
-// QR code parser
+// QR code parser - FIXED: Using paymentController
 router.post('/parse-qr-code', (req: Request, res: Response, next: NextFunction) => {
-  agentController.parseQrCode(req as any, res).catch(next);
+  paymentController.parseQrCode(req as any, res).catch(next);
 });
 
 // Legacy payment types (for backward compatibility)
