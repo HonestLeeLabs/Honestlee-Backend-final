@@ -15,8 +15,8 @@ import { AuthRequest } from '../middlewares/authMiddleware';
 import { RegionRequest } from '../middlewares/regionMiddleware';
 import { dbManager, Region } from '../config/database';
 import { getS3KeyFromUrl, deleteFileFromS3 } from '../config/uploadConfig';
-import CardMachine from '../models/CardMachine';
-import UpiQrPayment from '../models/UpiQrPayment';
+import CardMachineModel from '../models/PaymentMethod';
+import UpiQrModel from '../models/PaymentMethod';
 
 type AgentRequest = AuthRequest & RegionRequest;
 
@@ -1182,7 +1182,6 @@ export const generateTestToken = async (req: AgentRequest, res: Response): Promi
 };
 
 // ===== UPDATE PAYMENT METHODS =====
-// ===== UPDATE PAYMENT METHODS =====
 export const updatePaymentMethods = async (req: AgentRequest, res: Response): Promise<Response> => {
   try {
     if (!req.user || !['AGENT', 'ADMIN'].includes(req.user.role)) {
@@ -1317,7 +1316,6 @@ export const updatePaymentMethods = async (req: AgentRequest, res: Response): Pr
 };
 
 // ===== GET PAYMENT METHODS =====
-// ===== GET PAYMENT METHODS =====
 export const getPaymentMethods = async (req: AgentRequest, res: Response): Promise<Response> => {
   try {
     if (!req.user || !['AGENT', 'ADMIN'].includes(req.user.role)) {
@@ -1370,7 +1368,7 @@ export const getPaymentMethods = async (req: AgentRequest, res: Response): Promi
 };
 
 // ===== ADD CARD MACHINE =====
-export const addCardMachine = async (req: AgentRequest, res: Response): Promise<Response> => {
+export const addCardMachineModel = async (req: AgentRequest, res: Response): Promise<Response> => {
   try {
     if (!req.user || !['AGENT', 'ADMIN'].includes(req.user.role)) {
       return res.status(403).json({ message: 'Insufficient permissions' });
@@ -1423,23 +1421,24 @@ export const addCardMachine = async (req: AgentRequest, res: Response): Promise<
       machineData.venueId = venueId;
     }
 
-    const cardMachine = new CardMachine(machineData);
-    await cardMachine.save();
+    // ✅ FIX: Rename variable to avoid conflict with imported model
+    const newCardMachine = new CardMachineModel(machineData);
+    await newCardMachine.save();
 
     await createAuditLog(
       req.user.userId,
       req.user.role,
       'agent.card_machine.added',
-      { machineId: cardMachine.machineId, brandProvider, venueId, isTempVenue },
+      { machineId: newCardMachine.machineId, brandProvider, venueId, isTempVenue },
       isTempVenue ? undefined : venueId,
       req
     );
 
-    console.log(`✅ Card machine added: ${cardMachine.machineId}`);
+    console.log(`✅ Card machine added: ${newCardMachine.machineId}`);
 
     return res.status(201).json({
       success: true,
-      data: cardMachine,
+      data: newCardMachine,
       message: 'Card machine added successfully',
     });
   } catch (error: any) {
@@ -1453,7 +1452,7 @@ export const addCardMachine = async (req: AgentRequest, res: Response): Promise<
 };
 
 // ===== GET CARD MACHINES =====
-export const getCardMachines = async (req: AgentRequest, res: Response): Promise<Response> => {
+export const getCardMachineModels = async (req: AgentRequest, res: Response): Promise<Response> => {
   try {
     if (!req.user || !['AGENT', 'ADMIN'].includes(req.user.role)) {
       return res.status(403).json({ message: 'Insufficient permissions' });
@@ -1472,7 +1471,8 @@ export const getCardMachines = async (req: AgentRequest, res: Response): Promise
       query.venueId = venueId;
     }
 
-    const cardMachines = await CardMachine.find(query).sort({ createdAt: -1 });
+    // ✅ FIX: Use imported model directly
+    const cardMachines = await CardMachineModel.find(query).sort({ createdAt: -1 });
 
     console.log(`✅ Found ${cardMachines.length} card machines for venue ${venueId}`);
 
@@ -1492,7 +1492,7 @@ export const getCardMachines = async (req: AgentRequest, res: Response): Promise
 };
 
 // ===== DELETE CARD MACHINE =====
-export const deleteCardMachine = async (req: AgentRequest, res: Response): Promise<Response> => {
+export const deleteCardMachineModel = async (req: AgentRequest, res: Response): Promise<Response> => {
   try {
     if (!req.user || !['AGENT', 'ADMIN'].includes(req.user.role)) {
       return res.status(403).json({ message: 'Insufficient permissions' });
@@ -1511,7 +1511,8 @@ export const deleteCardMachine = async (req: AgentRequest, res: Response): Promi
       query.venueId = venueId;
     }
 
-    const cardMachine = await CardMachine.findOneAndUpdate(
+    // ✅ FIX: Rename variable to avoid conflict
+    const cardMachine = await CardMachineModel.findOneAndUpdate(
       query,
       { isActive: false },
       { new: true }
@@ -1547,7 +1548,7 @@ export const deleteCardMachine = async (req: AgentRequest, res: Response): Promi
 };
 
 // ===== ADD UPI/QR PAYMENT =====
-export const addUpiQrPayment = async (req: AgentRequest, res: Response): Promise<Response> => {
+export const addUpiQrModel = async (req: AgentRequest, res: Response): Promise<Response> => {
   try {
     if (!req.user || !['AGENT', 'ADMIN'].includes(req.user.role)) {
       return res.status(403).json({ message: 'Insufficient permissions' });
@@ -1602,23 +1603,24 @@ export const addUpiQrPayment = async (req: AgentRequest, res: Response): Promise
       qrData.venueId = venueId;
     }
 
-    const upiQr = new UpiQrPayment(qrData);
-    await upiQr.save();
+    // ✅ FIX: Rename variable to avoid conflict with imported model
+    const newUpiQr = new UpiQrModel(qrData);
+    await newUpiQr.save();
 
     await createAuditLog(
       req.user.userId,
       req.user.role,
       'agent.upi_qr.added',
-      { qrId: upiQr.qrId, paymentScheme, venueId, isTempVenue, accountType },
+      { qrId: newUpiQr.qrId, paymentScheme, venueId, isTempVenue, accountType },
       isTempVenue ? undefined : venueId,
       req
     );
 
-    console.log(`✅ UPI/QR payment added: ${upiQr.qrId}`);
+    console.log(`✅ UPI/QR payment added: ${newUpiQr.qrId}`);
 
     return res.status(201).json({
       success: true,
-      data: upiQr,
+      data: newUpiQr,
       message: 'UPI/QR payment added successfully',
     });
   } catch (error: any) {
@@ -1632,7 +1634,7 @@ export const addUpiQrPayment = async (req: AgentRequest, res: Response): Promise
 };
 
 // ===== GET UPI/QR PAYMENTS =====
-export const getUpiQrPayments = async (req: AgentRequest, res: Response): Promise<Response> => {
+export const getUpiQrModels = async (req: AgentRequest, res: Response): Promise<Response> => {
   try {
     if (!req.user || !['AGENT', 'ADMIN'].includes(req.user.role)) {
       return res.status(403).json({ message: 'Insufficient permissions' });
@@ -1651,14 +1653,15 @@ export const getUpiQrPayments = async (req: AgentRequest, res: Response): Promis
       query.venueId = venueId;
     }
 
-    const upiQrPayments = await UpiQrPayment.find(query).sort({ isPrimary: -1, createdAt: -1 });
+    // ✅ FIX: Use imported model directly
+    const upiQrs = await UpiQrModel.find(query).sort({ isPrimary: -1, createdAt: -1 });
 
-    console.log(`✅ Found ${upiQrPayments.length} UPI/QR payments for venue ${venueId}`);
+    console.log(`✅ Found ${upiQrs.length} UPI/QR payments for venue ${venueId}`);
 
     return res.json({
       success: true,
-      data: upiQrPayments,
-      count: upiQrPayments.length,
+      data: upiQrs,
+      count: upiQrs.length,
     });
   } catch (error: any) {
     console.error('❌ Error fetching UPI/QR payments:', error);
@@ -1671,7 +1674,7 @@ export const getUpiQrPayments = async (req: AgentRequest, res: Response): Promis
 };
 
 // ===== DELETE UPI/QR PAYMENT =====
-export const deleteUpiQrPayment = async (req: AgentRequest, res: Response): Promise<Response> => {
+export const deleteUpiQrModel = async (req: AgentRequest, res: Response): Promise<Response> => {
   try {
     if (!req.user || !['AGENT', 'ADMIN'].includes(req.user.role)) {
       return res.status(403).json({ message: 'Insufficient permissions' });
@@ -1690,7 +1693,8 @@ export const deleteUpiQrPayment = async (req: AgentRequest, res: Response): Prom
       query.venueId = venueId;
     }
 
-    const upiQr = await UpiQrPayment.findOneAndUpdate(
+    // ✅ FIX: Rename variable to avoid conflict
+    const upiQr = await UpiQrModel.findOneAndUpdate(
       query,
       { isActive: false },
       { new: true }
