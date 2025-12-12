@@ -70,6 +70,10 @@ export const getPaymentMethods = async (req: AuthRequest, res: Response) => {
         cashOnly: false,
         contactlessSurchargePercent: null,
         primaryMdrLocalCardsPercent: null,
+        // ✅ NEW: Tax fields with defaults
+        salesTaxPercent: null,
+        serviceChargePercent: null,
+        taxIncludedInMenu: false,
         confirmed: false,
         confirmedAt: null
       },
@@ -106,7 +110,11 @@ export const updatePaymentSettings = async (req: AuthRequest, res: Response) => 
       paymentMethods,
       contactlessCardAccepted,
       cashOnly,
-      contactlessSurchargePercent
+      contactlessSurchargePercent,
+      // ✅ NEW: Tax fields
+      salesTaxPercent,
+      serviceChargePercent,
+      taxIncludedInMenu
     } = req.body;
 
     const resolvedVenueId = resolveVenueId(venueId);
@@ -117,6 +125,10 @@ export const updatePaymentSettings = async (req: AuthRequest, res: Response) => 
       {
         cashOnly,
         contactlessSurchargePercent: contactlessSurchargePercent || null,
+        // ✅ NEW: Update tax fields
+        salesTaxPercent: salesTaxPercent || null,
+        serviceChargePercent: serviceChargePercent || null,
+        taxIncludedInMenu: taxIncludedInMenu || false,
         confirmed: true,
         confirmedAt: new Date()
       },
@@ -142,6 +154,9 @@ export const updatePaymentSettings = async (req: AuthRequest, res: Response) => 
 
     const cashOnlyValue = paymentData?.cashOnly || false;
     const contactlessSurchargePercentValue = paymentData?.contactlessSurchargePercent || null;
+    const salesTaxPercentValue = paymentData?.salesTaxPercent || null;
+    const serviceChargePercentValue = paymentData?.serviceChargePercent || null;
+    const taxIncludedInMenuValue = paymentData?.taxIncludedInMenu || false;
     const confirmedValue = paymentData?.confirmed || false;
     const confirmedAtValue = paymentData?.confirmedAt || null;
 
@@ -151,7 +166,11 @@ export const updatePaymentSettings = async (req: AuthRequest, res: Response) => 
         paymentTypes,
         paymentData: {
           cashOnly: cashOnlyValue,
-          contactlessSurchargePercent: contactlessSurchargePercentValue
+          contactlessSurchargePercent: contactlessSurchargePercentValue,
+          // ✅ NEW: Return tax fields
+          salesTaxPercent: salesTaxPercentValue,
+          serviceChargePercent: serviceChargePercentValue,
+          taxIncludedInMenu: taxIncludedInMenuValue
         },
         confirmed: confirmedValue,
         confirmedAt: confirmedAtValue
