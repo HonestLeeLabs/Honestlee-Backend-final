@@ -12,6 +12,32 @@ const router = Router();
 router.use(authenticateToken);
 router.use(detectRegion);
 
+// ✅ Add CloudFront URL transformation helper function
+const getCloudFrontUrl = (s3Url: string): string => {
+  if (!s3Url) return '';
+  
+  const cloudFrontDomain = process.env.CLOUDFRONT_DOMAIN || 'dedllwce1iasg.cloudfront.net';
+  const s3BucketDomain = process.env.S3_BUCKET_NAME || 'honestlee-user-upload';
+  
+  // Replace S3 URL with CloudFront URL
+  if (s3Url.includes('.s3.') || s3Url.includes('.amazonaws.com')) {
+    // Extract the S3 key (path after bucket name)
+    const s3Key = s3Url.split('.com/')[1] || s3Url.split(`${s3BucketDomain}/`)[1];
+    
+    if (s3Key) {
+      const cloudFrontUrl = `https://${cloudFrontDomain}/${s3Key}`;
+      console.log(`🔄 Transformed S3 URL to CloudFront:`, {
+        original: s3Url,
+        cloudFront: cloudFrontUrl
+      });
+      return cloudFrontUrl;
+    }
+  }
+  
+  // Already a CloudFront URL or unknown format
+  return s3Url;
+};
+
 // ===== ZONE PHOTO UPLOAD (MUST BE FIRST - before parameterized routes) =====
 router.post(
   "/zones/upload-photo",
@@ -27,8 +53,12 @@ router.post(
 
       const file = req.file as any;
       
+      // ✅ Transform S3 URL to CloudFront URL
+      const cloudFrontUrl = getCloudFrontUrl(file.location);
+
       console.log("✅ Zone photo uploaded successfully:", {
         url: file.location,
+        cloudFrontUrl: cloudFrontUrl,
         key: file.key,
         size: `${(file.size / 1024).toFixed(2)} KB`,
         mimetype: file.mimetype,
@@ -37,7 +67,7 @@ router.post(
       return res.json({
         success: true,
         data: {
-          url: file.location,
+          url: cloudFrontUrl,  // ✅ Return CloudFront URL instead of S3 URL
           s3Key: file.key,
           size: file.size,
           mimetype: file.mimetype,
@@ -175,11 +205,56 @@ router.post(
     agentController.createZone(req as any, res).catch(next)
 );
 
-// ✅ GET ZONES
+// ✅ GET ZONES - Need to update the controller to use CloudFront URLs
+// Since we're calling the controller, we need to update the controller itself
+// For now, let's create a wrapper that transforms the response
+const getVenueZonesWithCloudFront = async (req: any, res: Response) => {
+  try {
+    // Call the original controller
+    const originalSend = res.json;
+    let responseData: any;
+
+    // Override res.json to intercept the response
+    res.json = function(data: any) {
+      responseData = data;
+      
+      if (responseData.success && responseData.data) {
+        // ✅ Transform all zone photo URLs to CloudFront
+        if (Array.isArray(responseData.data)) {
+          const zonesWithCloudFront = responseData.data.map((zone: any) => {
+            if (zone.zonePhotoUrl) {
+              return {
+                ...zone,
+                zonePhotoUrl: getCloudFrontUrl(zone.zonePhotoUrl),
+              };
+            }
+            return zone;
+          });
+          
+          responseData.data = zonesWithCloudFront;
+          responseData.count = zonesWithCloudFront.length;
+        }
+      }
+      
+      return originalSend.call(this, responseData);
+    };
+    
+    await agentController.getVenueZones(req, res);
+  } catch (error: any) {
+    console.error("Error fetching zones with CloudFront transformation:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch zones",
+      error: error.message,
+    });
+  }
+};
+
+// ✅ GET ZONES - Updated to use CloudFront transformation
 router.get(
   "/venues/:venueId/zones",
   (req: Request, res: Response, next: NextFunction) =>
-    agentController.getVenueZones(req as any, res).catch(next)
+    getVenueZonesWithCloudFront(req as any, res).catch(next)
 );
 
 // ✅ UPDATE ZONE
@@ -230,6 +305,50 @@ router.put('/venues/:tempVenueId/gps', (req: Request, res: Response, next: NextF
 });
 
 // ===== MEDIA UPLOAD ROUTES (S3) =====
+// Wrapper for media upload to use CloudFront URLs
+const uploadVenueMediaWithCloudFront = async (req: any, res: Response) => {
+  try {
+    // Call the original controller
+    const originalSend = res.json;
+    let responseData: any;
+
+    res.json = function(data: any) {
+      responseData = data;
+      
+      if (responseData.success && responseData.data) {
+        // ✅ Transform media URLs to CloudFront
+        if (Array.isArray(responseData.data)) {
+          const mediaWithCloudFront = responseData.data.map((media: any) => {
+            if (media.url) {
+              return {
+                ...media,
+                url: getCloudFrontUrl(media.url),
+              };
+            }
+            return media;
+          });
+          
+          responseData.data = mediaWithCloudFront;
+        } else if (responseData.data.url) {
+          // Single media item
+          responseData.data.url = getCloudFrontUrl(responseData.data.url);
+        }
+      }
+      
+      return originalSend.call(this, responseData);
+    };
+    
+    await mediaController.uploadVenueMedia(req, res);
+  } catch (error: any) {
+    console.error("Error in media upload with CloudFront transformation:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to upload media",
+      error: error.message,
+    });
+  }
+};
+
 router.post(
   '/venues/:tempVenueId/media',
   (req: Request, res: Response, next: NextFunction) => {
@@ -271,11 +390,51 @@ router.post(
     });
   },
   (req: Request, res: Response, next: NextFunction) =>
-    mediaController.uploadVenueMedia(req as any, res).catch(next)
+    uploadVenueMediaWithCloudFront(req as any, res).catch(next)
 );
 
+// Wrapper for get media to use CloudFront URLs
+const getVenueMediaWithCloudFront = async (req: any, res: Response) => {
+  try {
+    const originalSend = res.json;
+    let responseData: any;
+
+    res.json = function(data: any) {
+      responseData = data;
+      
+      if (responseData.success && responseData.data) {
+        // ✅ Transform media URLs to CloudFront
+        if (Array.isArray(responseData.data)) {
+          const mediaWithCloudFront = responseData.data.map((media: any) => {
+            if (media.url) {
+              return {
+                ...media,
+                url: getCloudFrontUrl(media.url),
+              };
+            }
+            return media;
+          });
+          
+          responseData.data = mediaWithCloudFront;
+        }
+      }
+      
+      return originalSend.call(this, responseData);
+    };
+    
+    await mediaController.getVenueMedia(req, res);
+  } catch (error: any) {
+    console.error("Error fetching media with CloudFront transformation:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch media",
+      error: error.message,
+    });
+  }
+};
+
 router.get('/venues/:tempVenueId/media', (req: Request, res: Response, next: NextFunction) =>
-  mediaController.getVenueMedia(req as any, res).catch(next)
+  getVenueMediaWithCloudFront(req as any, res).catch(next)
 );
 
 router.get('/venues/:tempVenueId/media/stats', (req: Request, res: Response, next: NextFunction) =>
@@ -301,9 +460,49 @@ router.post(
   }
 );
 
-router.get('/venues/:venueId/photos', (req: Request, res: Response, next: NextFunction) => {
-  agentController.getVenuePhotos(req as any, res).catch(next);
-});
+// Wrapper for get photos to use CloudFront URLs
+const getVenuePhotosWithCloudFront = async (req: any, res: Response) => {
+  try {
+    const originalSend = res.json;
+    let responseData: any;
+
+    res.json = function(data: any) {
+      responseData = data;
+      
+      if (responseData.success && responseData.data) {
+        // ✅ Transform photo URLs to CloudFront
+        if (Array.isArray(responseData.data)) {
+          const photosWithCloudFront = responseData.data.map((photo: any) => {
+            if (photo.url) {
+              return {
+                ...photo,
+                url: getCloudFrontUrl(photo.url),
+              };
+            }
+            return photo;
+          });
+          
+          responseData.data = photosWithCloudFront;
+        }
+      }
+      
+      return originalSend.call(this, responseData);
+    };
+    
+    await agentController.getVenuePhotos(req, res);
+  } catch (error: any) {
+    console.error("Error fetching photos with CloudFront transformation:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch photos",
+      error: error.message,
+    });
+  }
+};
+
+router.get('/venues/:venueId/photos', (req: Request, res: Response, next: NextFunction) =>
+  getVenuePhotosWithCloudFront(req as any, res).catch(next)
+);
 
 router.delete('/venues/:venueId/photos/:assetId', (req: Request, res: Response, next: NextFunction) => {
   agentController.deleteVenuePhoto(req as any, res).catch(next);
