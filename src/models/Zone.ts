@@ -14,11 +14,12 @@ export interface IZone extends Document {
   isIndoor?: boolean;
   isOutdoor?: boolean;
   climateControl?: 'ac' | 'fan' | 'none';
-  noiseLevel?: 'quiet' | 'low_music' | 'moderate_music' | 'loud_music' | 'street_noise' | 'high_traffic';
-  // ✅ NEW: View field
-  view?: 'mountain_view' | 'river_view' | 'sea_view' | 'ocean_view' | 'lake_view' | 
-        'garden_view' | 'pool_view' | 'street_view' | 'city_view' | 'skyline_view' | 
-        'courtyard_view' | 'park_view' | 'beach_view' | 'forest_view' | 'no_view' | 'interior_facing';
+  // ✅ FIXED: Changed from snake_case to camelCase
+  noiseLevel?: 'quiet' | 'lowmusic' | 'moderatemusic' | 'loudmusic' | 'streetnoise' | 'hightraffic';
+  // ✅ FIXED: Changed from snake_case to camelCase
+  view?: 'mountainview' | 'riverview' | 'seaview' | 'oceanview' | 'lakeview' | 
+        'gardenview' | 'poolview' | 'streetview' | 'cityview' | 'skylineview' | 
+        'courtyardview' | 'parkview' | 'beachview' | 'forestview' | 'noview' | 'interiorfacing';
   description?: string;
   colorToken: string;
   createdBy: mongoose.Types.ObjectId;
@@ -85,30 +86,31 @@ const ZoneSchema = new Schema<IZone>(
       enum: ['ac', 'fan', 'none'],
       default: 'none',
     },
+    // ✅ FIXED: Changed from snake_case to camelCase (no underscores)
     noiseLevel: {
       type: String,
-      enum: ['quiet', 'low_music', 'moderate_music', 'loud_music', 'street_noise', 'high_traffic'],
+      enum: ['quiet', 'lowmusic', 'moderatemusic', 'loudmusic', 'streetnoise', 'hightraffic'],
     },
-    // ✅ NEW: View field
+    // ✅ FIXED: Changed from snake_case to camelCase (no underscores)
     view: {
       type: String,
       enum: [
-        'mountain_view',
-        'river_view',
-        'sea_view',
-        'ocean_view',
-        'lake_view',
-        'garden_view',
-        'pool_view',
-        'street_view',
-        'city_view',
-        'skyline_view',
-        'courtyard_view',
-        'park_view',
-        'beach_view',
-        'forest_view',
-        'no_view',
-        'interior_facing'
+        'mountainview',
+        'riverview',
+        'seaview',
+        'oceanview',
+        'lakeview',
+        'gardenview',
+        'poolview',
+        'streetview',
+        'cityview',
+        'skylineview',
+        'courtyardview',
+        'parkview',
+        'beachview',
+        'forestview',
+        'noview',
+        'interiorfacing'
       ],
     },
     description: {
