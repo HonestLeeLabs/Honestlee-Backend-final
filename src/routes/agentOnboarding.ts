@@ -129,6 +129,33 @@ router.post('/venues/:venueId/zones', (req: Request, res: Response, next: NextFu
   agentController.createZone(req as any, res).catch(next);
 });
 
+// ✅ ZONE PHOTO UPLOAD
+router.post(
+  "/zones/upload-photo",
+  uploadVenueMedia.single("zonePhoto"),
+  (req: Request, res: Response, next: NextFunction) => {
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: "No photo uploaded",
+      });
+    }
+
+    const file = req.file as any;
+    
+    return res.json({
+      success: true,
+      data: {
+        url: file.location,
+        s3Key: file.key,
+        size: file.size,
+        mimetype: file.mimetype,
+      },
+      message: "Zone photo uploaded successfully",
+    });
+  }
+);
+
 router.get('/venues/:venueId/zones', (req: Request, res: Response, next: NextFunction) => {
   agentController.getVenueZones(req as any, res).catch(next);
 });
