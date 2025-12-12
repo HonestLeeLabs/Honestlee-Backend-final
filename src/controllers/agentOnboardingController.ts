@@ -1800,35 +1800,40 @@ export const parseQrCode = async (req: AgentRequest, res: Response): Promise<Res
   }
 };
 
-// CREATE ZONE - UPDATED WITH VIEW
-export const createZone = async (
-  req: AgentRequest,
-  res: Response
- ): Promise<Response> => {
+// ✅ CREATE ZONE - WITH PHOTO REQUIREMENT
+export const createZone = async (req: AgentRequest, res: Response): Promise<Response> => {
   try {
     if (!req.user || !["AGENT", "ADMIN"].includes(req.user.role)) {
       return res.status(403).json({ message: "Insufficient permissions" });
     }
 
     const { venueId } = req.params;
-    const { 
-      name, 
-      capacityMin, 
-      capacityMax, 
-      numTables, 
-      numSeats, 
+    const {
+      name,
+      capacityMin,
+      capacityMax,
+      numTables,
+      numSeats,
       numChargingPorts,
-      // Existing new fields
       isIndoor,
       isOutdoor,
       climateControl,
       noiseLevel,
-      // ✅ NEW: View field
       view,
-      description
+      description,
+      zonePhotoUrl, // ✅ NEW: Required photo
+      zonePhotoS3Key, // ✅ NEW: S3 key
     } = req.body;
 
-    console.log(`🔍 Creating zone "${name}" for venue: ${venueId}`);
+    console.log(`🆕 Creating zone "${name}" for venue ${venueId}`);
+
+    // ✅ VALIDATE PHOTO IS PROVIDED
+    if (!zonePhotoUrl || !zonePhotoS3Key) {
+      return res.status(400).json({
+        success: false,
+        message: "Zone photo is required. Please capture a photo of the zone.",
+      });
+    }
 
     // Validate zone name length
     if (name.length > 18) {
@@ -1847,14 +1852,16 @@ export const createZone = async (
       numTables,
       numSeats,
       numChargingPorts,
-      // Existing new fields
       isIndoor: isIndoor || false,
       isOutdoor: isOutdoor || false,
-      climateControl: climateControl || 'none',
+      climateControl: climateControl || "none",
       noiseLevel,
-      // ✅ NEW: View field
       view,
       description: description?.trim(),
+      // ✅ NEW: Store photo data
+      zonePhotoUrl,
+      zonePhotoS3Key,
+      zonePhotoUploadedAt: new Date(),
       colorToken: generateColorToken(),
       createdBy: req.user.userId,
       isActive: true,
@@ -1872,11 +1879,7 @@ export const createZone = async (
     if (isTempVenue) {
       await AgentVenueTemp.findOneAndUpdate(
         { tempVenueId: venueId },
-        { 
-          $set: { 
-            zonesCreated: true 
-          } 
-        }
+        { $set: { zonesCreated: true } }
       );
       console.log(`✅ Updated venue ${venueId} - zonesCreated: true`);
     }
@@ -1885,32 +1888,23 @@ export const createZone = async (
       req.user.userId,
       req.user.role,
       "agent.zone.defined",
-      { 
-        zoneId: zone.zoneId, 
-        name, 
-        venueId, 
+      {
+        zoneId: zone.zoneId,
+        name,
+        venueId,
         isTempVenue,
-        numTables,
-        numSeats,
-        numChargingPorts,
-        isIndoor,
-        isOutdoor,
-        climateControl,
-        noiseLevel,
-        // ✅ NEW: Include view in audit log
-        view,
-        hasDescription: !!description
+        hasPhoto: true,
       },
       isTempVenue ? undefined : venueId,
       req
     );
 
-    console.log(`✅ Zone created: ${zone.zoneId} with all attributes including view`);
+    console.log(`✅ Zone created: ${zone.zoneId} with photo`);
 
     return res.status(201).json({
       success: true,
       data: zone,
-      message: "Zone created successfully",
+      message: "Zone created successfully with photo",
     });
   } catch (error: any) {
     console.error("❌ Error creating zone:", error);
@@ -1922,7 +1916,7 @@ export const createZone = async (
   }
 };
 
-// UPDATE ZONE - PUT /api/agent/venues/:venueId/zones/:zoneId
+// ✅ UPDATE ZONE - WITH OPTIONAL PHOTO UPDATE
 export const updateZone = async (req: AgentRequest, res: Response): Promise<Response> => {
   try {
     if (!req.user || !["AGENT", "ADMIN"].includes(req.user.role)) {
@@ -1943,6 +1937,8 @@ export const updateZone = async (req: AgentRequest, res: Response): Promise<Resp
       noiseLevel,
       view,
       description,
+      zonePhotoUrl, // ✅ NEW: Optional photo update
+      zonePhotoS3Key,
     } = req.body;
 
     console.log(`🔄 Updating zone ${zoneId} for venue ${venueId}`);
@@ -1985,6 +1981,19 @@ export const updateZone = async (req: AgentRequest, res: Response): Promise<Resp
     if (view !== undefined) updateData.view = view;
     if (description !== undefined) updateData.description = description?.trim();
 
+    // ✅ NEW: Update photo if provided
+    if (zonePhotoUrl && zonePhotoS3Key) {
+      // Delete old photo from S3 if exists
+      if (existingZone.zonePhotoS3Key) {
+        await deleteFileFromS3(existingZone.zonePhotoS3Key);
+        console.log(`🗑️ Deleted old zone photo: ${existingZone.zonePhotoS3Key}`);
+      }
+      
+      updateData.zonePhotoUrl = zonePhotoUrl;
+      updateData.zonePhotoS3Key = zonePhotoS3Key;
+      updateData.zonePhotoUploadedAt = new Date();
+    }
+
     // Update zone
     const updatedZone = await Zone.findOneAndUpdate(
       query,
@@ -2002,6 +2011,7 @@ export const updateZone = async (req: AgentRequest, res: Response): Promise<Resp
         isTempVenue,
         updatedFields: Object.keys(updateData),
         name: updatedZone?.name,
+        photoUpdated: !!(zonePhotoUrl && zonePhotoS3Key),
       },
       isTempVenue ? undefined : venueId,
       req
@@ -2023,6 +2033,92 @@ export const updateZone = async (req: AgentRequest, res: Response): Promise<Resp
     });
   }
 };
+
+// ✅ DELETE ZONE - CLEANUP PHOTO FROM S3
+export const deleteZone = async (req: AgentRequest, res: Response): Promise<Response> => {
+  try {
+    if (!req.user || !["AGENT", "ADMIN"].includes(req.user.role)) {
+      return res.status(403).json({ message: "Insufficient permissions" });
+    }
+
+    const { venueId, zoneId } = req.params;
+
+    console.log(`🗑️ Deleting zone ${zoneId} from venue ${venueId}`);
+
+    const isTempVenue = venueId.startsWith("TEMP-");
+
+    const query: any = { zoneId, isActive: true };
+    if (isTempVenue) {
+      query.tempVenueId = venueId;
+    } else {
+      query.venueId = venueId;
+    }
+
+    // Find zone first to get photo S3 key
+    const zone = await Zone.findOne(query);
+    if (!zone) {
+      return res.status(404).json({ message: "Zone not found" });
+    }
+
+    // ✅ Delete photo from S3 if exists
+    if (zone.zonePhotoS3Key) {
+      await deleteFileFromS3(zone.zonePhotoS3Key);
+      console.log(`🗑️ Deleted zone photo from S3: ${zone.zonePhotoS3Key}`);
+    }
+
+    // Soft delete zone
+    await Zone.findOneAndUpdate(
+      query,
+      { $set: { isActive: false } },
+      { new: true }
+    );
+
+    // Check if there are any remaining active zones
+    if (isTempVenue) {
+      const remainingZonesCount = await Zone.countDocuments({
+        tempVenueId: venueId,
+        isActive: true,
+      });
+
+      if (remainingZonesCount === 0) {
+        await AgentVenueTemp.findOneAndUpdate(
+          { tempVenueId: venueId },
+          { $set: { zonesCreated: false } }
+        );
+        console.log(`✅ Updated venue ${venueId} - zonesCreated: false (no zones remaining)`);
+      }
+    }
+
+    await createAuditLog(
+      req.user.userId,
+      req.user.role,
+      "agent.zone.deleted",
+      {
+        zoneId,
+        venueId,
+        isTempVenue,
+        photoDeleted: !!zone.zonePhotoS3Key,
+      },
+      isTempVenue ? undefined : venueId,
+      req
+    );
+
+    console.log(`✅ Zone deleted: ${zoneId}`);
+
+    return res.json({
+      success: true,
+      message: "Zone deleted successfully",
+    });
+  } catch (error: any) {
+    console.error("❌ Error deleting zone:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Error deleting zone",
+      error: error.message,
+    });
+  }
+};
+
 
 // GET VENUE ZONES
 export const getVenueZones = async (
@@ -2062,86 +2158,6 @@ export const getVenueZones = async (
     return res.status(500).json({
       success: false,
       message: "Error fetching zones",
-      error: error.message,
-    });
-  }
-};
-
-// DELETE ZONE - UPDATED
-export const deleteZone = async (
-  req: AgentRequest,
-  res: Response
-): Promise<Response> => {
-  try {
-    if (!req.user || !["AGENT", "ADMIN"].includes(req.user.role)) {
-      return res.status(403).json({ message: "Insufficient permissions" });
-    }
-
-    const { venueId, zoneId } = req.params;
-
-    console.log(`🗑️ Deleting zone ${zoneId} from venue ${venueId}`);
-
-    // ✅ Determine if it's a temp venue or real venue
-    const isTempVenue = venueId.startsWith("TEMP-");
-
-    const query: any = { zoneId, isActive: true };
-    if (isTempVenue) {
-      query.tempVenueId = venueId;
-    } else {
-      query.venueId = venueId;
-    }
-
-    const zone = await Zone.findOneAndUpdate(
-      query,
-      { isActive: false },
-      { new: true }
-    );
-
-    if (!zone) {
-      return res.status(404).json({ message: "Zone not found" });
-    }
-
-    // ✅ NEW: Check if there are any remaining active zones
-    if (isTempVenue) {
-      const remainingZonesCount = await Zone.countDocuments({
-        tempVenueId: venueId,
-        isActive: true,
-      });
-
-      // If no zones left, update venue's zonesCreated flag
-      if (remainingZonesCount === 0) {
-        await AgentVenueTemp.findOneAndUpdate(
-          { tempVenueId: venueId },
-          { 
-            $set: { 
-              zonesCreated: false 
-            } 
-          }
-        );
-        console.log(`✅ Updated venue ${venueId} - zonesCreated: false (no zones remaining)`);
-      }
-    }
-
-    await createAuditLog(
-      req.user.userId,
-      req.user.role,
-      "agent.zone.deleted",
-      { zoneId, venueId, isTempVenue },
-      isTempVenue ? undefined : venueId,
-      req
-    );
-
-    console.log(`✅ Zone deleted: ${zoneId}`);
-
-    return res.json({
-      success: true,
-      message: "Zone deleted successfully",
-    });
-  } catch (error: any) {
-    console.error("❌ Error deleting zone:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Error deleting zone",
       error: error.message,
     });
   }

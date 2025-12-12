@@ -10,17 +10,18 @@ export interface IZone extends Document {
   numTables?: number;
   numSeats?: number;
   numChargingPorts?: number;
-  // Existing fields
   isIndoor?: boolean;
   isOutdoor?: boolean;
   climateControl?: 'ac' | 'fan' | 'none';
-  // ✅ FIXED: Changed from snake_case to camelCase
   noiseLevel?: 'quiet' | 'lowmusic' | 'moderatemusic' | 'loudmusic' | 'streetnoise' | 'hightraffic';
-  // ✅ FIXED: Changed from snake_case to camelCase
   view?: 'mountainview' | 'riverview' | 'seaview' | 'oceanview' | 'lakeview' | 
         'gardenview' | 'poolview' | 'streetview' | 'cityview' | 'skylineview' | 
         'courtyardview' | 'parkview' | 'beachview' | 'forestview' | 'noview' | 'interiorfacing';
   description?: string;
+  // ✅ NEW: Zone photo
+  zonePhotoUrl?: string;
+  zonePhotoS3Key?: string;
+  zonePhotoUploadedAt?: Date;
   colorToken: string;
   createdBy: mongoose.Types.ObjectId;
   isActive: boolean;
@@ -72,7 +73,6 @@ const ZoneSchema = new Schema<IZone>(
       type: Number,
       min: 0,
     },
-    // Existing fields
     isIndoor: {
       type: Boolean,
       default: false,
@@ -86,12 +86,10 @@ const ZoneSchema = new Schema<IZone>(
       enum: ['ac', 'fan', 'none'],
       default: 'none',
     },
-    // ✅ FIXED: Changed from snake_case to camelCase (no underscores)
     noiseLevel: {
       type: String,
       enum: ['quiet', 'lowmusic', 'moderatemusic', 'loudmusic', 'streetnoise', 'hightraffic'],
     },
-    // ✅ FIXED: Changed from snake_case to camelCase (no underscores)
     view: {
       type: String,
       enum: [
@@ -116,6 +114,16 @@ const ZoneSchema = new Schema<IZone>(
     description: {
       type: String,
       maxlength: 500,
+    },
+    // ✅ NEW: Zone photo fields
+    zonePhotoUrl: {
+      type: String,
+    },
+    zonePhotoS3Key: {
+      type: String,
+    },
+    zonePhotoUploadedAt: {
+      type: Date,
     },
     colorToken: {
       type: String,
