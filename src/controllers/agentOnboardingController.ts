@@ -1804,7 +1804,7 @@ export const parseQrCode = async (req: AgentRequest, res: Response): Promise<Res
 export const createZone = async (
   req: AgentRequest,
   res: Response
-): Promise<Response> => {
+ ): Promise<Response> => {
   try {
     if (!req.user || !["AGENT", "ADMIN"].includes(req.user.role)) {
       return res.status(403).json({ message: "Insufficient permissions" });
@@ -1917,6 +1917,108 @@ export const createZone = async (
     return res.status(500).json({
       success: false,
       message: "Error creating zone",
+      error: error.message,
+    });
+  }
+};
+
+// UPDATE ZONE - PUT /api/agent/venues/:venueId/zones/:zoneId
+export const updateZone = async (req: AgentRequest, res: Response): Promise<Response> => {
+  try {
+    if (!req.user || !["AGENT", "ADMIN"].includes(req.user.role)) {
+      return res.status(403).json({ message: "Insufficient permissions" });
+    }
+
+    const { venueId, zoneId } = req.params;
+    const {
+      name,
+      capacityMin,
+      capacityMax,
+      numTables,
+      numSeats,
+      numChargingPorts,
+      isIndoor,
+      isOutdoor,
+      climateControl,
+      noiseLevel,
+      view,
+      description,
+    } = req.body;
+
+    console.log(`🔄 Updating zone ${zoneId} for venue ${venueId}`);
+
+    // Validate zone name length if provided
+    if (name && name.length > 18) {
+      return res
+        .status(400)
+        .json({ message: "Zone name must be 18 characters or less" });
+    }
+
+    const isTempVenue = venueId.startsWith("TEMP-");
+
+    // Build query
+    const query: any = { zoneId, isActive: true };
+    if (isTempVenue) {
+      query.tempVenueId = venueId;
+    } else {
+      query.venueId = venueId;
+    }
+
+    // Find existing zone
+    const existingZone = await Zone.findOne(query);
+    if (!existingZone) {
+      return res.status(404).json({ message: "Zone not found" });
+    }
+
+    // Build update data
+    const updateData: any = {};
+    if (name !== undefined) updateData.name = name;
+    if (capacityMin !== undefined) updateData.capacityMin = capacityMin;
+    if (capacityMax !== undefined) updateData.capacityMax = capacityMax;
+    if (numTables !== undefined) updateData.numTables = numTables;
+    if (numSeats !== undefined) updateData.numSeats = numSeats;
+    if (numChargingPorts !== undefined) updateData.numChargingPorts = numChargingPorts;
+    if (isIndoor !== undefined) updateData.isIndoor = isIndoor;
+    if (isOutdoor !== undefined) updateData.isOutdoor = isOutdoor;
+    if (climateControl !== undefined) updateData.climateControl = climateControl;
+    if (noiseLevel !== undefined) updateData.noiseLevel = noiseLevel;
+    if (view !== undefined) updateData.view = view;
+    if (description !== undefined) updateData.description = description?.trim();
+
+    // Update zone
+    const updatedZone = await Zone.findOneAndUpdate(
+      query,
+      { $set: updateData },
+      { new: true }
+    );
+
+    await createAuditLog(
+      req.user.userId,
+      req.user.role,
+      "agent.zone.updated",
+      {
+        zoneId,
+        venueId,
+        isTempVenue,
+        updatedFields: Object.keys(updateData),
+        name: updatedZone?.name,
+      },
+      isTempVenue ? undefined : venueId,
+      req
+    );
+
+    console.log(`✅ Zone updated: ${zoneId}`);
+
+    return res.json({
+      success: true,
+      data: updatedZone,
+      message: "Zone updated successfully",
+    });
+  } catch (error: any) {
+    console.error("❌ Error updating zone:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Error updating zone",
       error: error.message,
     });
   }

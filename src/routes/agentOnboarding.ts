@@ -133,6 +133,10 @@ router.get('/venues/:venueId/zones', (req: Request, res: Response, next: NextFun
   agentController.getVenueZones(req as any, res).catch(next);
 });
 
+router.put("/venues/:venueId/zones/:zoneId", (req: Request, res: Response, next: NextFunction) =>
+  agentController.updateZone(req as any, res).catch(next)
+);
+
 router.delete('/venues/:venueId/zones/:zoneId', (req: Request, res: Response, next: NextFunction) => {
   agentController.deleteZone(req as any, res).catch(next);
 });
