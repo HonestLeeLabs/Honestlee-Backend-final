@@ -44,6 +44,10 @@ export interface IPaymentData extends Document {
   cashOnly: boolean;
   contactlessSurchargePercent: number | null;
   primaryMdrLocalCardsPercent: number | null;
+  // ✅ NEW: Sales tax and service charge fields
+  salesTaxPercent: number | null;
+  serviceChargePercent: number | null;
+  taxIncludedInMenu: boolean;
   confirmed: boolean;
   confirmedAt: Date | null;
   createdAt: Date;
@@ -60,6 +64,10 @@ const paymentDataSchema = new Schema<IPaymentData>({
   cashOnly: { type: Boolean, default: false },
   contactlessSurchargePercent: { type: Number, default: null },
   primaryMdrLocalCardsPercent: { type: Number, default: null },
+  // ✅ NEW: Tax fields
+  salesTaxPercent: { type: Number, default: null, min: 0, max: 100 },
+  serviceChargePercent: { type: Number, default: null, min: 0, max: 100 },
+  taxIncludedInMenu: { type: Boolean, default: false },
   confirmed: { type: Boolean, default: false },
   confirmedAt: { type: Date, default: null }
 }, {
