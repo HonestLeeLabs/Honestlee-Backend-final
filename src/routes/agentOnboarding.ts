@@ -12,6 +12,49 @@ const router = Router();
 router.use(authenticateToken);
 router.use(detectRegion);
 
+// ===== ZONE PHOTO UPLOAD (MUST BE FIRST - before parameterized routes) =====
+router.post(
+  "/zones/upload-photo",
+  uploadVenueMedia.single("zonePhoto"),
+  (req: Request, res: Response) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({
+          success: false,
+          message: "No photo uploaded",
+        });
+      }
+
+      const file = req.file as any;
+      
+      console.log("✅ Zone photo uploaded successfully:", {
+        url: file.location,
+        key: file.key,
+        size: `${(file.size / 1024).toFixed(2)} KB`,
+        mimetype: file.mimetype,
+      });
+      
+      return res.json({
+        success: true,
+        data: {
+          url: file.location,
+          s3Key: file.key,
+          size: file.size,
+          mimetype: file.mimetype,
+        },
+        message: "Zone photo uploaded successfully",
+      });
+    } catch (error: any) {
+      console.error("❌ Error in zone photo upload:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to upload zone photo",
+        error: error.message,
+      });
+    }
+  }
+);
+
 // ===== VENUE OPERATIONS =====
 router.post('/venues/quick-add', (req: Request, res: Response, next: NextFunction) => {
   agentController.quickAddVenue(req as any, res).catch(next);
@@ -125,48 +168,33 @@ router.post('/qr/:bindingId/test-token', (req: Request, res: Response, next: Nex
 });
 
 // ===== ZONE OPERATIONS =====
-router.post('/venues/:venueId/zones', (req: Request, res: Response, next: NextFunction) => {
-  agentController.createZone(req as any, res).catch(next);
-});
-
-// ✅ ZONE PHOTO UPLOAD
+// ✅ CREATE ZONE
 router.post(
-  "/zones/upload-photo",
-  uploadVenueMedia.single("zonePhoto"),
-  (req: Request, res: Response, next: NextFunction) => {
-    if (!req.file) {
-      return res.status(400).json({
-        success: false,
-        message: "No photo uploaded",
-      });
-    }
-
-    const file = req.file as any;
-    
-    return res.json({
-      success: true,
-      data: {
-        url: file.location,
-        s3Key: file.key,
-        size: file.size,
-        mimetype: file.mimetype,
-      },
-      message: "Zone photo uploaded successfully",
-    });
-  }
+  "/venues/:venueId/zones",
+  (req: Request, res: Response, next: NextFunction) =>
+    agentController.createZone(req as any, res).catch(next)
 );
 
-router.get('/venues/:venueId/zones', (req: Request, res: Response, next: NextFunction) => {
-  agentController.getVenueZones(req as any, res).catch(next);
-});
-
-router.put("/venues/:venueId/zones/:zoneId", (req: Request, res: Response, next: NextFunction) =>
-  agentController.updateZone(req as any, res).catch(next)
+// ✅ GET ZONES
+router.get(
+  "/venues/:venueId/zones",
+  (req: Request, res: Response, next: NextFunction) =>
+    agentController.getVenueZones(req as any, res).catch(next)
 );
 
-router.delete('/venues/:venueId/zones/:zoneId', (req: Request, res: Response, next: NextFunction) => {
-  agentController.deleteZone(req as any, res).catch(next);
-});
+// ✅ UPDATE ZONE
+router.put(
+  "/venues/:venueId/zones/:zoneId",
+  (req: Request, res: Response, next: NextFunction) =>
+    agentController.updateZone(req as any, res).catch(next)
+);
+
+// ✅ DELETE ZONE
+router.delete(
+  "/venues/:venueId/zones/:zoneId",
+  (req: Request, res: Response, next: NextFunction) =>
+    agentController.deleteZone(req as any, res).catch(next)
+);
 
 // ===== ASSIGNMENT & VISIT ROUTES =====
 router.get('/my-assignments', (req: Request, res: Response, next: NextFunction) => {
