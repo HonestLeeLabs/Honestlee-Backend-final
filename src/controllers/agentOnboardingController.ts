@@ -3780,3 +3780,284 @@ export const getVenueCategoryType = async (req: AuthRequest, res: Response): Pro
     });
   }
 };
+
+/**
+ * PUT /api/agent/venues/:tempVenueId/geofence
+ * Save property boundary geofence
+ */
+export const updateVenueGeofence = async (req: AuthRequest, res: Response): Promise<Response> => {
+  try {
+    if (!req.user || !['AGENT', 'ADMIN'].includes(req.user.role)) {
+      return res.status(403).json({ message: 'Agent or Admin access required' });
+    }
+
+    const { tempVenueId } = req.params;
+    const { 
+      geofenceCoordinates, 
+      geofenceType = 'property_boundary',
+      notes 
+    } = req.body;
+
+    if (!geofenceCoordinates || !Array.isArray(geofenceCoordinates)) {
+      return res.status(400).json({
+        success: false,
+        message: 'geofenceCoordinates array is required'
+      });
+    }
+
+    // Validate coordinates format
+    if (geofenceCoordinates.length < 3) {
+      return res.status(400).json({
+        success: false,
+        message: 'At least 3 points required to create a geofence'
+      });
+    }
+
+    // Validate each coordinate
+    for (const coord of geofenceCoordinates) {
+      if (!coord.lat || !coord.lng) {
+        return res.status(400).json({
+          success: false,
+          message: 'Each coordinate must have lat and lng'
+        });
+      }
+    }
+
+    console.log(`📍 Updating geofence for venue ${tempVenueId}`);
+
+    const venue = await AgentVenueTemp.findOne({ tempVenueId });
+
+    if (!venue) {
+      return res.status(404).json({
+        success: false,
+        message: 'Venue not found'
+      });
+    }
+
+    // Check permission
+    if (req.user.role === 'AGENT' && venue.assignedTo?.toString() !== req.user.userId) {
+      return res.status(403).json({
+        success: false,
+        message: 'You can only update venues assigned to you'
+      });
+    }
+
+    // Calculate geofence area (approximate)
+    const area = calculatePolygonArea(geofenceCoordinates);
+
+    // Create GeoJSON polygon
+    const geofenceGeoJSON = {
+      type: 'Feature',
+      geometry: {
+        type: 'Polygon',
+        coordinates: [
+          [
+            ...geofenceCoordinates.map(coord => [coord.lng, coord.lat]),
+            [geofenceCoordinates[0].lng, geofenceCoordinates[0].lat] // Close polygon
+          ]
+        ]
+      },
+      properties: {
+        type: geofenceType,
+        area: area,
+        createdAt: new Date(),
+        createdBy: req.user.userId,
+        notes: notes || ''
+      }
+    };
+
+    // Update venue with geofence data
+    const updateData: any = {
+      'gpsData.geofence': geofenceGeoJSON,
+      'gpsData.geofenceCoordinates': geofenceCoordinates,
+      'gpsData.geofenceArea': area,
+      'gpsData.geofenceType': geofenceType,
+      'gpsData.geofenceCreatedAt': new Date(),
+      'gpsData.geofenceCreatedBy': req.user.userId,
+      geofenceVerified: true,
+      geofenceVerifiedAt: new Date()
+    };
+
+    const updatedVenue = await AgentVenueTemp.findOneAndUpdate(
+      { tempVenueId },
+      { $set: updateData },
+      { new: true }
+    );
+
+    // Audit log
+    await AuditLog.create({
+      auditId: uuidv4(),
+      actorId: req.user.userId,
+      actorRole: req.user.role,
+      venueId: venue.venueId?.toString(),
+      action: 'VENUE_GEOFENCE_UPDATED',
+      meta: {
+        tempVenueId,
+        geofenceType,
+        area: area.toFixed(2),
+        pointCount: geofenceCoordinates.length
+      }
+    });
+
+    console.log(`✅ Geofence updated for venue ${tempVenueId}, area: ${area.toFixed(2)} sq meters`);
+
+    return res.json({
+      success: true,
+      message: 'Geofence saved successfully',
+      data: updatedVenue
+    });
+
+  } catch (error: any) {
+    console.error('❌ Error updating geofence:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to update geofence',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * GET /api/agent/venues/:tempVenueId/geofence
+ * Get property boundary geofence
+ */
+// GET /api/agent/venues/:tempVenueId/geofence - Get property boundary geofence
+export const getVenueGeofence = async (req: AuthRequest, res: Response): Promise<Response> => {
+  try {
+    if (!req.user || !["AGENT", "ADMIN"].includes(req.user.role)) {
+      return res.status(403).json({ message: "Agent or Admin access required" });
+    }
+
+    const { tempVenueId } = req.params;
+
+    const venue = await AgentVenueTemp.findOne({ tempVenueId })
+      .select("tempVenueId name gpsData geofenceVerified geofenceVerifiedAt");
+
+    if (!venue) {
+      return res.status(404).json({
+        success: false,
+        message: "Venue not found",
+      });
+    }
+
+    // Cast venue to any to access geofence properties
+    const venueData = venue as any;
+    const gpsData = venueData.gpsData as any;
+
+    return res.json({
+      success: true,
+      data: {
+        tempVenueId: venueData.tempVenueId,
+        name: venueData.name,
+        geofence: gpsData?.geofence,
+        geofenceCoordinates: gpsData?.geofenceCoordinates,
+        geofenceArea: gpsData?.geofenceArea,
+        geofenceType: gpsData?.geofenceType,
+        verified: venueData.geofenceVerified || false,
+        verifiedAt: venueData.geofenceVerifiedAt,
+      },
+    });
+  } catch (error: any) {
+    console.error("Error fetching geofence:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch geofence",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * DELETE /api/agent/venues/:tempVenueId/geofence
+ * Delete property boundary geofence
+ */
+export const deleteVenueGeofence = async (req: AuthRequest, res: Response): Promise<Response> => {
+  try {
+    if (!req.user || !['AGENT', 'ADMIN'].includes(req.user.role)) {
+      return res.status(403).json({ message: 'Agent or Admin access required' });
+    }
+
+    const { tempVenueId } = req.params;
+
+    const venue = await AgentVenueTemp.findOne({ tempVenueId });
+
+    if (!venue) {
+      return res.status(404).json({
+        success: false,
+        message: 'Venue not found'
+      });
+    }
+
+    // Check permission
+    if (req.user.role === 'AGENT' && venue.assignedTo?.toString() !== req.user.userId) {
+      return res.status(403).json({
+        success: false,
+        message: 'You can only update venues assigned to you'
+      });
+    }
+
+    // Remove geofence data
+    const updateData: any = {
+      'gpsData.geofence': null,
+      'gpsData.geofenceCoordinates': [],
+      'gpsData.geofenceArea': null,
+      'gpsData.geofenceType': null,
+      'gpsData.geofenceCreatedAt': null,
+      'gpsData.geofenceCreatedBy': null,
+      geofenceVerified: false,
+      geofenceVerifiedAt: null
+    };
+
+    await AgentVenueTemp.findOneAndUpdate(
+      { tempVenueId },
+      { $set: updateData }
+    );
+
+    // Audit log
+    await AuditLog.create({
+      auditId: uuidv4(),
+      actorId: req.user.userId,
+      actorRole: req.user.role,
+      venueId: venue.venueId?.toString(),
+      action: 'VENUE_GEOFENCE_DELETED',
+      meta: { tempVenueId }
+    });
+
+    console.log(`✅ Geofence deleted for venue ${tempVenueId}`);
+
+    return res.json({
+      success: true,
+      message: 'Geofence deleted successfully'
+    });
+
+  } catch (error: any) {
+    console.error('❌ Error deleting geofence:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to delete geofence',
+      error: error.message
+    });
+  }
+};
+
+// Helper function to calculate polygon area using Shoelace formula
+function calculatePolygonArea(coordinates: Array<{ lat: number; lng: number }>): number {
+  if (coordinates.length < 3) return 0;
+
+  // Convert to meters using Haversine approximation
+  const R = 6371000; // Earth's radius in meters
+  
+  let area = 0;
+  for (let i = 0; i < coordinates.length; i++) {
+    const j = (i + 1) % coordinates.length;
+    const lat1 = coordinates[i].lat * Math.PI / 180;
+    const lat2 = coordinates[j].lat * Math.PI / 180;
+    const lng1 = coordinates[i].lng * Math.PI / 180;
+    const lng2 = coordinates[j].lng * Math.PI / 180;
+    
+    area += (lng2 - lng1) * (2 + Math.sin(lat1) + Math.sin(lat2));
+  }
+  
+  area = Math.abs(area * R * R / 2);
+  return area;
+}
