@@ -114,6 +114,19 @@ router.post('/venues/:tempVenueId/finalize', (req: Request, res: Response, next:
   agentController.finalizeOnboarding(req as any, res).catch(next);
 });
 
+// ===== GEOFENCING OPERATIONS =====
+router.put('/venues/:tempVenueId/geofence', (req: Request, res: Response, next: NextFunction) => {
+  agentController.updateVenueGeofence(req as any, res).catch(next);
+});
+
+router.get('/venues/:tempVenueId/geofence', (req: Request, res: Response, next: NextFunction) => {
+  agentController.getVenueGeofence(req as any, res).catch(next);
+});
+
+router.delete('/venues/:tempVenueId/geofence', (req: Request, res: Response, next: NextFunction) => {
+  agentController.deleteVenueGeofence(req as any, res).catch(next);
+});
+
 // ===== CATEGORY & TYPE OPERATIONS =====
 router.put('/venues/:tempVenueId/category-type', (req: Request, res: Response, next: NextFunction) => {
   agentController.updateVenueCategoryType(req as any, res).catch(next);

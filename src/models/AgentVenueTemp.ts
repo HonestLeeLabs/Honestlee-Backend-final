@@ -181,6 +181,17 @@ paymentTypes?: {
       by_agent?: mongoose.Types.ObjectId;
       accuracy_m?: number;
     }>;
+    
+    // ✅ NEW: Geofence fields
+    geofence?: any; // GeoJSON Feature
+    geofenceCoordinates?: Array<{
+      lat: number;
+      lng: number;
+    }>;
+    geofenceArea?: number; // in square meters
+    geofenceType?: string; // 'property_boundary', 'parking', 'entrance', etc.
+    geofenceCreatedAt?: Date;
+    geofenceCreatedBy?: mongoose.Types.ObjectId;
   };
 
   wifiData?: {
@@ -337,6 +348,10 @@ paymentTypes?: {
   leadCapturedBy?: mongoose.Types.ObjectId;
   
   notes?: IAgentNote[];
+
+  // ✅ NEW: Top-level geofence flags
+  geofenceVerified?: boolean;
+  geofenceVerifiedAt?: Date;
 
   createdAt: Date;
   updatedAt: Date;
@@ -511,7 +526,25 @@ paymentTypes: {
         accuracy_m: Number,
       },
     ],
+    
+    // ✅ NEW: Geofence fields
+    geofence: { type: Schema.Types.Mixed }, // GeoJSON
+    geofenceCoordinates: [
+      {
+        lat: { type: Number },
+        lng: { type: Number }
+      }
+    ],
+    geofenceArea: Number,
+    geofenceType: String,
+    geofenceCreatedAt: Date,
+    geofenceCreatedBy: { type: Schema.Types.ObjectId, ref: 'User' }
   },
+
+  // ✅ NEW: Top-level geofence flags
+  geofenceVerified: { type: Boolean, default: false },
+  geofenceVerifiedAt: Date,
+
   wifiData: {
     hasSpeedTest: { type: Boolean, default: false },
     latestSpeedTest: {
@@ -741,6 +774,10 @@ AgentVenueTempSchema.index({ 'gpsData.hl_confirmed_lat': 1, 'gpsData.hl_confirme
 AgentVenueTempSchema.index({ 'wifiData.hasSpeedTest': 1 });
 AgentVenueTempSchema.index({ 'wifiData.latestSpeedTest.qualityScore': 1 });
 AgentVenueTempSchema.index({ categoryTypeConfirmed: 1 });
-AgentVenueTempSchema.index({ paymentMethodsConfirmed: 1 }); // ✅ NEW
+AgentVenueTempSchema.index({ paymentMethodsConfirmed: 1 });
+
+// ✅ NEW: Indexes for geofence queries
+AgentVenueTempSchema.index({ geofenceVerified: 1 });
+AgentVenueTempSchema.index({ 'gpsData.geofenceType': 1 });
 
 export default mongoose.model<IAgentVenueTemp>('AgentVenueTemp', AgentVenueTempSchema);
