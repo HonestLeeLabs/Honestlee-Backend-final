@@ -11,8 +11,10 @@ export interface IVenueMedia extends Document {
   submittedBy: mongoose.Types.ObjectId;
   fileUrl: string;
   thumbnailUrl?: string; // ✅ Thumbnail URL (optimized WebP)
+  mediumUrl?: string; // ✅ NEW: Medium size URL (optimized WebP)
   s3Key: string;
   thumbnailS3Key?: string; // ✅ Thumbnail S3 key for deletion
+  mediumS3Key?: string; // ✅ NEW: Medium size S3 key for deletion
   fileFormat: string;
   fileSize: number;
   fileHash?: string;
@@ -166,6 +168,13 @@ const VenueMediaSchema = new Schema<IVenueMedia>(
       index: true 
     },
     
+    // ✅ Medium size URL (optimized WebP)
+    mediumUrl: { 
+      type: String, 
+      default: null,
+      index: true 
+    },
+    
     s3Key: { 
       type: String, 
       required: true, 
@@ -174,6 +183,13 @@ const VenueMediaSchema = new Schema<IVenueMedia>(
     
     // ✅ Thumbnail S3 key (for easy deletion)
     thumbnailS3Key: { 
+      type: String, 
+      default: null,
+      index: true 
+    },
+    
+    // ✅ Medium size S3 key (for easy deletion)
+    mediumS3Key: { 
       type: String, 
       default: null,
       index: true 
@@ -347,6 +363,18 @@ VenueMediaSchema.virtual('cloudfrontThumbnailUrl').get(function() {
   return url;
 });
 
+// ✅ NEW: Virtual for medium size URL with CloudFront
+VenueMediaSchema.virtual('cloudfrontMediumUrl').get(function() {
+  const url = this.mediumUrl || this.fileUrl;
+  if (url && url.includes('s3.ap-south-1.amazonaws.com')) {
+    return url.replace(
+      /https?:\/\/[^/]+\.s3\.ap-south-1\.amazonaws\.com\//,
+      'https://d2j8mu1uew5u3d.cloudfront.net/'
+    );
+  }
+  return url;
+});
+
 // ✅ Indexes for performance
 VenueMediaSchema.index({ tempVenueId: 1, mediaType: 1 });
 VenueMediaSchema.index({ tempVenueId: 1, fileHash: 1 });
@@ -359,6 +387,8 @@ VenueMediaSchema.index({ createdAt: -1 });
 VenueMediaSchema.index({ reviewStatus: 1, createdAt: -1 });
 VenueMediaSchema.index({ fileFormat: 1 });
 VenueMediaSchema.index({ thumbnailUrl: 1 }); // For thumbnail lookups
+VenueMediaSchema.index({ mediumUrl: 1 }); // ✅ NEW: For medium URL lookups
+VenueMediaSchema.index({ mediumS3Key: 1 }); // ✅ NEW: For medium S3 key lookups
 
 // ✅ Compound indexes for common queries
 VenueMediaSchema.index({ 
@@ -426,7 +456,7 @@ VenueMediaSchema.statics.findByVenue = function(venueId: string | mongoose.Types
   return this.find(query);
 };
 
-// ✅ Static method to get media stats
+// ✅ Static method to get media stats (updated to include medium URLs)
 VenueMediaSchema.statics.getStats = async function(venueId: string | mongoose.Types.ObjectId) {
   const matchStage: any = {
     $or: [{ tempVenueId: venueId.toString() }]
@@ -449,6 +479,7 @@ VenueMediaSchema.statics.getStats = async function(venueId: string | mongoose.Ty
         videoCount: { $sum: { $cond: ['$isVideo', 1, 0] } },
         imageCount: { $sum: { $cond: ['$isVideo', 0, 1] } },
         hasThumbnailCount: { $sum: { $cond: [{ $and: ['$thumbnailUrl', { $ne: ['$thumbnailUrl', null] }] }, 1, 0] } },
+        hasMediumCount: { $sum: { $cond: [{ $and: ['$mediumUrl', { $ne: ['$mediumUrl', null] }] }, 1, 0] } }, // ✅ NEW
         byMediaType: { $push: '$mediaType' },
         byFrontendGroup: { $push: '$frontendGroup' }
       }
@@ -460,6 +491,7 @@ VenueMediaSchema.statics.getStats = async function(venueId: string | mongoose.Ty
         videoCount: 1,
         imageCount: 1,
         hasThumbnailCount: 1,
+        hasMediumCount: 1, // ✅ NEW
         totalSizeMB: { $divide: ['$totalSize', 1024 * 1024] },
         mediaTypeCount: {
           $arrayToObject: {
@@ -512,29 +544,60 @@ VenueMediaSchema.statics.getStats = async function(venueId: string | mongoose.Ty
     videoCount: 0,
     imageCount: 0,
     hasThumbnailCount: 0,
+    hasMediumCount: 0, // ✅ NEW
     mediaTypeCount: {},
     frontendGroupCount: {}
   };
 };
 
-// ✅ Instance method to get thumbnail info
+// ✅ Instance method to get thumbnail info (updated to include medium)
 VenueMediaSchema.methods.getThumbnailInfo = function() {
   return {
     hasThumbnail: !!this.thumbnailUrl,
     thumbnailUrl: this.thumbnailUrl,
     thumbnailS3Key: this.thumbnailS3Key,
+    hasMedium: !!this.mediumUrl, // ✅ NEW
+    mediumUrl: this.mediumUrl, // ✅ NEW
+    mediumS3Key: this.mediumS3Key, // ✅ NEW
     usesOriginalAsThumbnail: this.isVideo || !this.thumbnailUrl,
     recommendedSize: this.isVideo ? 'Original' : '300x300 WebP'
   };
 };
 
-// ✅ Instance method to get public-safe data
+// ✅ NEW: Instance method to get all media sizes info
+VenueMediaSchema.methods.getMediaSizesInfo = function() {
+  return {
+    original: {
+      url: this.fileUrl,
+      s3Key: this.s3Key,
+      size: this.fileSize,
+      format: this.fileFormat
+    },
+    thumbnail: {
+      has: !!this.thumbnailUrl,
+      url: this.thumbnailUrl,
+      s3Key: this.thumbnailS3Key,
+      size: '200x200 WebP'
+    },
+    medium: {
+      has: !!this.mediumUrl,
+      url: this.mediumUrl,
+      s3Key: this.mediumS3Key,
+      size: '800px max WebP'
+    },
+    isVideo: this.isVideo,
+    usesFallback: this.isVideo || !this.thumbnailUrl
+  };
+};
+
+// ✅ Instance method to get public-safe data (updated to include mediumUrl)
 VenueMediaSchema.methods.toPublicJSON = function() {
   const obj = this.toObject();
   
   // Remove sensitive/internal fields
   delete obj.s3Key;
   delete obj.thumbnailS3Key;
+  delete obj.mediumS3Key; // ✅ NEW
   delete obj.fileHash;
   delete obj.reviewNotes;
   delete obj.captureGpsAccuracy;
@@ -557,7 +620,30 @@ VenueMediaSchema.methods.toPublicJSON = function() {
     obj.thumbnailUrl = obj.fileUrl; // Fallback
   }
   
+  // ✅ NEW: Convert medium URL to CloudFront
+  if (obj.mediumUrl && obj.mediumUrl.includes('s3.ap-south-1.amazonaws.com')) {
+    obj.mediumUrl = obj.mediumUrl.replace(
+      /https?:\/\/[^/]+\.s3\.ap-south-1\.amazonaws\.com\//,
+      'https://d2j8mu1uew5u3d.cloudfront.net/'
+    );
+  } else if (!obj.mediumUrl) {
+    obj.mediumUrl = obj.fileUrl; // Fallback
+  }
+  
   return obj;
+};
+
+// ✅ NEW: Instance method to get optimized URL based on use case
+VenueMediaSchema.methods.getOptimizedUrl = function(useCase: 'grid' | 'modal' | 'full') {
+  switch (useCase) {
+    case 'grid':
+      return this.thumbnailUrl || this.fileUrl;
+    case 'modal':
+      return this.mediumUrl || this.fileUrl;
+    case 'full':
+    default:
+      return this.fileUrl;
+  }
 };
 
 // Add TypeScript declarations for static methods
