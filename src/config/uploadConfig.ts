@@ -25,82 +25,120 @@ console.log('✅ S3 Client initialized:', {
   bucket: process.env.S3_BUCKET_NAME || 'honestlee-user-upload'
 });
 
-// ===== THUMBNAIL GENERATION HELPER =====
-const generateThumbnail = async (
+// ===== IMAGE SIZE GENERATION (3 VERSIONS) =====
+const generateImageSizes = async (
   fileBuffer: Buffer,
   isVideo: boolean
-): Promise<Buffer | null> => {
-  if (isVideo) return null; // Skip thumbnails for videos
+): Promise<{
+  thumbnail: Buffer | null;
+  medium: Buffer | null;
+}> => {
+  if (isVideo) return { thumbnail: null, medium: null };
   
   try {
-    // Generate 300x300 thumbnail with WebP format for optimal size/quality
+    // 1. THUMBNAIL: 200x200, WebP 70% (~10-20KB for grid)
     const thumbnail = await sharp(fileBuffer)
-      .resize(300, 300, {
+      .resize(200, 200, {
         fit: 'cover',
         position: 'center'
       })
-      .webp({ quality: 80 })
+      .webp({ quality: 70, effort: 6 })
       .toBuffer();
     
-    console.log(`✅ Thumbnail generated: ${thumbnail.length} bytes`);
-    return thumbnail;
+    console.log(`✅ Thumbnail: ${(thumbnail.length / 1024).toFixed(2)} KB`);
+    
+    // 2. MEDIUM: 800px max, WebP 75% (~50KB for modal)
+    const medium = await sharp(fileBuffer)
+      .resize(800, 800, {
+        fit: 'inside',
+        withoutEnlargement: true
+      })
+      .webp({ quality: 75, effort: 6 })
+      .toBuffer();
+    
+    console.log(`✅ Medium: ${(medium.length / 1024).toFixed(2)} KB`);
+    
+    return { thumbnail, medium };
   } catch (error) {
-    console.error('❌ Thumbnail generation failed:', error);
-    return null;
+    console.error('❌ Size generation failed:', error);
+    return { thumbnail: null, medium: null };
   }
 };
 
-// ===== UPLOAD TO S3 WITH THUMBNAIL =====
-export const uploadToS3WithThumbnail = async (
+// ===== UPLOAD TO S3 WITH ALL SIZES =====
+export const uploadToS3WithSizes = async (
   file: Express.Multer.File,
   s3Key: string,
   contentType: string
-): Promise<{ originalUrl: string; thumbnailUrl: string | null }> => {
+): Promise<{ 
+  originalUrl: string; 
+  thumbnailUrl: string | null; 
+  mediumUrl: string | null;
+  thumbnailKey: string | null;
+  mediumKey: string | null;
+}> => {
   const bucketName = process.env.S3_BUCKET_NAME || 'honestlee-user-upload';
+  const cloudFrontDomain = process.env.CLOUDFRONT_DOMAIN;
   
-  // Determine if it's a video
   const fileExtension = path.extname(file.originalname).toLowerCase();
   const isVideo = ['.mp4', '.mov', '.avi', '.webm', '.mkv', '.3gp', '.3gpp', '.m4v'].includes(fileExtension);
   
-  // Upload original file
-  const uploadParams = {
+  // Upload original
+  await s3.send(new PutObjectCommand({
     Bucket: bucketName,
     Key: s3Key,
     Body: file.buffer,
     ContentType: contentType,
-  };
+  }));
   
-  await s3.send(new PutObjectCommand(uploadParams));
-  const originalUrl = `https://${bucketName}.s3.${process.env.AWS_REGION || 'ap-south-1'}.amazonaws.com/${s3Key}`;
+  const originalUrl = cloudFrontDomain 
+    ? `https://${cloudFrontDomain}/${s3Key}`
+    : `https://${bucketName}.s3.${process.env.AWS_REGION || 'ap-south-1'}.amazonaws.com/${s3Key}`;
   
   console.log(`✅ Original uploaded: ${originalUrl}`);
   
-  // Generate and upload thumbnail for images only
   let thumbnailUrl: string | null = null;
+  let mediumUrl: string | null = null;
+  let thumbnailKey: string | null = null;
+  let mediumKey: string | null = null;
   
+  // Generate sizes for images only
   if (!isVideo && file.buffer) {
-    const thumbnail = await generateThumbnail(file.buffer, isVideo);
+    const { thumbnail, medium } = await generateImageSizes(file.buffer, isVideo);
+    const parsedPath = path.parse(s3Key);
     
+    // Upload thumbnail
     if (thumbnail) {
-      // Create thumbnail S3 key (same path, append -thumb before extension)
-      const parsedPath = path.parse(s3Key);
-      const thumbnailKey = `${parsedPath.dir}/${parsedPath.name}-thumb.webp`;
-      
-      const thumbnailParams = {
+      thumbnailKey = `${parsedPath.dir}/${parsedPath.name}-thumb.webp`;
+      await s3.send(new PutObjectCommand({
         Bucket: bucketName,
         Key: thumbnailKey,
         Body: thumbnail,
         ContentType: 'image/webp',
-      };
-      
-      await s3.send(new PutObjectCommand(thumbnailParams));
-      thumbnailUrl = `https://${bucketName}.s3.${process.env.AWS_REGION || 'ap-south-1'}.amazonaws.com/${thumbnailKey}`;
-      
+      }));
+      thumbnailUrl = cloudFrontDomain
+        ? `https://${cloudFrontDomain}/${thumbnailKey}`
+        : `https://${bucketName}.s3.${process.env.AWS_REGION || 'ap-south-1'}.amazonaws.com/${thumbnailKey}`;
       console.log(`✅ Thumbnail uploaded: ${thumbnailUrl}`);
+    }
+    
+    // Upload medium
+    if (medium) {
+      mediumKey = `${parsedPath.dir}/${parsedPath.name}-medium.webp`;
+      await s3.send(new PutObjectCommand({
+        Bucket: bucketName,
+        Key: mediumKey,
+        Body: medium,
+        ContentType: 'image/webp',
+      }));
+      mediumUrl = cloudFrontDomain
+        ? `https://${cloudFrontDomain}/${mediumKey}`
+        : `https://${bucketName}.s3.${process.env.AWS_REGION || 'ap-south-1'}.amazonaws.com/${mediumKey}`;
+      console.log(`✅ Medium uploaded: ${mediumUrl}`);
     }
   }
   
-  return { originalUrl, thumbnailUrl };
+  return { originalUrl, thumbnailUrl, mediumUrl, thumbnailKey, mediumKey };
 };
 
 // ===== FIXED MOBILE FILE FILTER =====
@@ -241,7 +279,14 @@ const getContentType = (file: any, fileExtension: string): string => {
 export const processVenueMediaUpload = async (
   file: Express.Multer.File,
   req: any
-): Promise<{ originalUrl: string; thumbnailUrl: string | null; s3Key: string; thumbnailKey: string | null }> => {
+): Promise<{ 
+  originalUrl: string; 
+  thumbnailUrl: string | null; 
+  mediumUrl: string | null;
+  s3Key: string; 
+  thumbnailKey: string | null;
+  mediumKey: string | null;
+}> => {
   const agentId = req.user?.userId || 'anonymous';
   const tempVenueId = req.params?.tempVenueId || 'unknown';
   
@@ -252,23 +297,27 @@ export const processVenueMediaUpload = async (
   const timestamp = Date.now();
   const s3Key = `venue-media/${tempVenueId}/${agentId}-${timestamp}-${uniqueId}${fileExtension}`;
   
-  console.log(`✅ Processing upload with thumbnail: ${file.originalname} → ${s3Key}`);
+  console.log(`✅ Processing upload with sizes: ${file.originalname} → ${s3Key}`);
   
-  const { originalUrl, thumbnailUrl } = await uploadToS3WithThumbnail(file, s3Key, contentType);
+  const { originalUrl, thumbnailUrl, mediumUrl, thumbnailKey, mediumKey } = 
+    await uploadToS3WithSizes(file, s3Key, contentType);
   
-  // Generate thumbnail key for reference
-  const parsedPath = path.parse(s3Key);
-  const thumbnailKey = thumbnailUrl ? `${parsedPath.dir}/${parsedPath.name}-thumb.webp` : null;
-  
-  return { originalUrl, thumbnailUrl, s3Key, thumbnailKey };
+  return { originalUrl, thumbnailUrl, mediumUrl, s3Key, thumbnailKey, mediumKey };
 };
 
-// ===== HELPER: PROCESS OTHER UPLOADS WITH THUMBNAIL =====
-export const processUploadWithThumbnail = async (
+// ===== HELPER: PROCESS OTHER UPLOADS WITH SIZES =====
+export const processUploadWithSizes = async (
   file: Express.Multer.File,
   req: any,
   folder: 'review-images' | 'profile-images' | 'event-images'
-): Promise<{ originalUrl: string; thumbnailUrl: string | null; s3Key: string; thumbnailKey: string | null }> => {
+): Promise<{ 
+  originalUrl: string; 
+  thumbnailUrl: string | null; 
+  mediumUrl: string | null;
+  s3Key: string; 
+  thumbnailKey: string | null;
+  mediumKey: string | null;
+}> => {
   const userId = req.user?.userId || 'anonymous';
   
   const fileExtension = getFileExtension(file);
@@ -278,18 +327,49 @@ export const processUploadWithThumbnail = async (
   const timestamp = Date.now();
   const s3Key = `${folder}/${userId}-${timestamp}-${uniqueId}${fileExtension}`;
   
-  console.log(`✅ Processing ${folder} upload with thumbnail: ${file.originalname} → ${s3Key}`);
+  console.log(`✅ Processing ${folder} upload with sizes: ${file.originalname} → ${s3Key}`);
   
-  const { originalUrl, thumbnailUrl } = await uploadToS3WithThumbnail(file, s3Key, contentType);
+  const { originalUrl, thumbnailUrl, mediumUrl, thumbnailKey, mediumKey } = 
+    await uploadToS3WithSizes(file, s3Key, contentType);
   
-  // Generate thumbnail key for reference
-  const parsedPath = path.parse(s3Key);
-  const thumbnailKey = thumbnailUrl ? `${parsedPath.dir}/${parsedPath.name}-thumb.webp` : null;
-  
-  return { originalUrl, thumbnailUrl, s3Key, thumbnailKey };
+  return { originalUrl, thumbnailUrl, mediumUrl, s3Key, thumbnailKey, mediumKey };
 };
 
-// ===== DELETE THUMBNAIL HELPER =====
+// ===== DELETE ALL SIZES =====
+export const deleteAllSizesFromS3 = async (originalKey: string): Promise<boolean> => {
+  try {
+    const parsedPath = path.parse(originalKey);
+    const bucketName = process.env.S3_BUCKET_NAME || 'honestlee-user-upload';
+    
+    // Delete all 3 versions
+    const deletePromises = [
+      // Delete original
+      s3.send(new DeleteObjectCommand({
+        Bucket: bucketName,
+        Key: originalKey
+      })),
+      // Delete thumbnail (if exists)
+      s3.send(new DeleteObjectCommand({
+        Bucket: bucketName,
+        Key: `${parsedPath.dir}/${parsedPath.name}-thumb.webp`
+      })).catch(() => {}),
+      // Delete medium (if exists)
+      s3.send(new DeleteObjectCommand({
+        Bucket: bucketName,
+        Key: `${parsedPath.dir}/${parsedPath.name}-medium.webp`
+      })).catch(() => {})
+    ];
+    
+    await Promise.all(deletePromises);
+    console.log(`✅ All sizes deleted from S3: ${originalKey}`);
+    return true;
+  } catch (error) {
+    console.error('❌ Error deleting sizes:', error);
+    return false;
+  }
+};
+
+// ===== DELETE THUMBNAIL HELPER (backward compatibility) =====
 export const deleteThumbnailFromS3 = async (originalKey: string): Promise<boolean> => {
   try {
     const parsedPath = path.parse(originalKey);
@@ -451,7 +531,7 @@ export const uploadEventImages = multer({
   }
 });
 
-// ===== MEMORY STORAGE UPLOADS (for manual processing with thumbnails) =====
+// ===== MEMORY STORAGE UPLOADS (for manual processing with sizes) =====
 export const uploadVenueMediaMemory = multer({
   storage: multer.memoryStorage(), // Use memory storage to access buffer
   fileFilter: venueMediaFileFilter,
