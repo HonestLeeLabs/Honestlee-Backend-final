@@ -34,6 +34,7 @@
     "nodemailer": "^6.10.1",
     "passport": "^0.7.0",
     "passport-google-oauth20": "^2.0.0",
+    "sharp": "^0.34.5",
     "socket.io": "^4.8.1",
     "speed-test": "^3.0.0",
     "uuid": "^13.0.0",

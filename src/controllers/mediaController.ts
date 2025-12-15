@@ -1,75 +1,49 @@
 // controllers/mediaController.ts
-
 import { Response } from 'express';
 import { AuthRequest } from '../middlewares/authMiddleware';
 import VenueMedia from '../models/VenueMedia';
 import AgentVenueTemp from '../models/AgentVenueTemp';
-import User from '../models/User'; 
 import AuditLog from '../models/AuditLog';
 import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
-import { deleteFileFromS3, getS3KeyFromUrl } from '../config/uploadConfig';
+import { 
+  deleteFileFromS3, 
+  getS3KeyFromUrl, 
+  processVenueMediaUpload,
+  processUploadWithThumbnail
+} from '../config/uploadConfig'; // Removed deleteThumbnailFromS3 since we don't use it
 import crypto from 'crypto';
 import mongoose from 'mongoose';
 
-/**
- * ✅ CloudFront domain (PRIMARY CDN)
- */
-const CLOUDFRONT_DOMAIN = process.env.CLOUDFRONT_DOMAIN || 'https://dedllwce1iasg.cloudfront.net';
+// ✅ CloudFront domain
+const CLOUDFRONT_DOMAIN = process.env.CLOUDFRONT_DOMAIN || 'https://d2j8mu1uew5u3d.cloudfront.net';
 
-/**
- * ✅ Cloudinary Configuration (OPTIONAL image optimization)
- */
-const CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME || 'dqftjs96p';
-const USE_CLOUDINARY = process.env.USE_CLOUDINARY === 'true';
-
-/**
- * ✅ CRITICAL: Convert S3 → CloudFront (FIXES 403 FORBIDDEN)
- */
+// ✅ Convert S3 → CloudFront
 function convertToCloudFrontUrl(s3Url: string): string {
+  if (!s3Url) return s3Url;
+  
   try {
-    const url = new URL(s3Url);
-    const path = url.pathname.startsWith('/') ? url.pathname.substring(1) : url.pathname;
-    return `${CLOUDFRONT_DOMAIN}/${path}`;
+    // If already CloudFront URL, return as-is
+    if (s3Url.includes('cloudfront.net')) {
+      return s3Url;
+    }
+    
+    // If it's an S3 URL, convert to CloudFront
+    if (s3Url.includes('s3.ap-south-1.amazonaws.com')) {
+      const url = new URL(s3Url);
+      const s3Path = url.pathname.startsWith('/') ? url.pathname.substring(1) : url.pathname;
+      return `${CLOUDFRONT_DOMAIN}/${s3Path}`;
+    }
+    
+    // If it's a relative or other URL, assume it's already correct
+    return s3Url;
   } catch (error) {
     console.error('❌ S3→CloudFront conversion failed:', error, s3Url);
-    throw new Error(`Invalid S3 URL: ${s3Url}`);
+    return s3Url; // Return original on error
   }
 }
 
-/**
- * ✅ OPTIONAL: CloudFront → Cloudinary (image optimization)
- */
-function convertToCloudinaryUrl(
-  cdnUrl: string,
-  width?: number,
-  height?: number,
-  quality = 80,
-  format: string = 'auto'
-): string {
-  if (!USE_CLOUDINARY || !CLOUDINARY_CLOUD_NAME) {
-    return cdnUrl;
-  }
-
-  if (cdnUrl.includes('s3.ap-south-1.amazonaws.com')) {
-    console.warn('🚫 Cloudinary blocked: S3 URL detected', cdnUrl);
-    return cdnUrl;
-  }
-
-  const transformations: string[] = [];
-  if (width) transformations.push(`w_${width}`);
-  if (height) transformations.push(`h_${height}`);
-  if (width || height) transformations.push('c_fill');
-  transformations.push(`q_${quality}`);
-  transformations.push(`f_${format}`);
-
-  const transformString = transformations.join(',');
-  return `https://res.cloudinary.com/${CLOUDINARY_CLOUD_NAME}/image/fetch/${transformString}/${encodeURI(cdnUrl)}`;
-}
-
-/**
- * COMPLETE FRONTEND GROUP MAPPING
- */
+// COMPLETE FRONTEND GROUP MAPPING
 const frontendGroupMap: { [key: string]: string } = {
   OUTSIDE_VIEW: 'Vibe',
   MENU_BOARD: 'Menu',
@@ -141,23 +115,18 @@ const frontendGroupMap: { [key: string]: string } = {
   'COFFEE_MENU': 'Menu',
   'BARISTA_STATION': 'Food & Drink',
   'ICE_CREAM_FREEZERS': 'Food & Drink',
-  // ✅ NEW: AMENITIES & PROMOTIONS
   'FREE_WATER_REFILLS': 'Amenities',
   'PROMOTIONAL_FLYERS': 'Latest',
   'OFFERS': 'Latest',
 };
 
-/**
- * ✅ Generate file hash for duplicate detection
- */
+// ✅ Generate file hash for duplicate detection
 const generateFileHashFromMetadata = (file: any): string => {
   const identifier = `${file.originalname}_${file.size}_${file.mimetype}`;
   return crypto.createHash('sha256').update(identifier).digest('hex');
 };
 
-/**
- * ✅ Check if duplicate file exists in venue
- */
+// ✅ Check if duplicate file exists in venue
 const checkGlobalDuplicate = async (
   tempVenueId: string,
   fileHash: string,
@@ -168,7 +137,7 @@ const checkGlobalDuplicate = async (
     let existingMedia = await VenueMedia.findOne({
       tempVenueId,
       fileHash,
-    }).select('mediaType fileUrl createdAt');
+    }).select('mediaType fileUrl thumbnailUrl createdAt');
 
     if (existingMedia) {
       console.log(
@@ -180,7 +149,7 @@ const checkGlobalDuplicate = async (
     const existingBySize = await VenueMedia.find({
       tempVenueId,
       fileSize,
-    }).select('mediaType fileUrl createdAt s3Key');
+    }).select('mediaType fileUrl thumbnailUrl createdAt s3Key thumbnailS3Key');
 
     for (const media of existingBySize) {
       const existingFileName = media.s3Key.split('/').pop() || '';
@@ -200,8 +169,8 @@ const checkGlobalDuplicate = async (
 };
 
 /**
- * POST /api/agent/venues/:tempVenueId/media - Upload media with duplicate detection
- * ✅ Stores CloudFront URL, generates Cloudinary thumbnail URLs
+ * ✅ POST /api/agent/venues/:tempVenueId/media - Upload media WITH THUMBNAIL
+ * Uses memory storage + Sharp for thumbnail generation
  */
 export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
   try {
@@ -217,19 +186,10 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
     const { mediaType, captureContext, submittedByRole } = req.body;
     const file = (req as any).file;
 
-    if ((req as any).fileValidationError) {
-      console.error('File validation error:', (req as any).fileValidationError);
-      return res.status(400).json({
-        success: false,
-        message: (req as any).fileValidationError,
-      });
-    }
-
     if (!file) {
-      console.error('No file received in upload');
       return res.status(400).json({
         success: false,
-        message: 'No file uploaded. Please select a valid image or video file.',
+        message: 'No file uploaded',
       });
     }
 
@@ -239,13 +199,6 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
     });
 
     if (!venue) {
-      console.error('Venue not found or not assigned:', { tempVenueId, agentId: currentUser.userId });
-
-      if (file.key) {
-        await deleteFileFromS3(file.key);
-        console.log(`🗑️ Deleted S3 file due to venue check failure: ${file.key}`);
-      }
-
       return res.status(404).json({
         success: false,
         message: 'Venue not found or not assigned to you',
@@ -253,7 +206,6 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
     }
 
     const fileHash = generateFileHashFromMetadata(file);
-
     const duplicateCheck = await checkGlobalDuplicate(
       tempVenueId,
       fileHash,
@@ -262,13 +214,6 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
     );
 
     if (duplicateCheck.isDuplicate && duplicateCheck.existingMedia) {
-      console.log(`🚫 DUPLICATE DETECTED: ${file.originalname} already exists`);
-
-      if (file.key) {
-        await deleteFileFromS3(file.key);
-        console.log(`🗑️ Deleted duplicate S3 file: ${file.key}`);
-      }
-
       return res.status(409).json({
         success: false,
         message: 'Duplicate file detected',
@@ -276,23 +221,20 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
           fileName: file.originalname,
           existingCategory: duplicateCheck.existingMedia.mediaType,
           existingUrl: duplicateCheck.existingMedia.fileUrl,
+          thumbnailUrl: duplicateCheck.existingMedia.thumbnailUrl,
           uploadedAt: duplicateCheck.existingMedia.createdAt,
         },
       });
     }
 
-    console.log('🔍 S3 UPLOAD COMPLETE:', {
-      key: file.key,
-      s3Url: file.location,
-      size: file.size,
-      originalName: file.originalname,
-      hash: fileHash,
-    });
+    // ✅ PROCESS UPLOAD WITH THUMBNAIL GENERATION
+    console.log('📤 Uploading file with thumbnail generation...');
+    const { originalUrl, thumbnailUrl, s3Key, thumbnailKey } = await processVenueMediaUpload(file, req);
 
     const fileExtension = path.extname(file.originalname).toLowerCase();
     const isVideo =
-      file.contentType?.startsWith('video') ||
-      ['.mp4', '.mov', '.avi', '.webm', '.mkv', '.3gp', '.3gpp'].includes(fileExtension);
+      file.mimetype?.startsWith('video') ||
+      ['.mp4', '.mov', '.avi', '.webm', '.mkv', '.3gp', '.3gpp', '.m4v'].includes(fileExtension);
 
     const is360 =
       file.originalname.toLowerCase().includes('360') ||
@@ -311,23 +253,163 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
       publicVisibility = 'Internal only';
     }
 
+    // ✅ Convert to CloudFront URLs
+    const cloudFrontUrl = convertToCloudFrontUrl(originalUrl);
+    const cloudFrontThumbnailUrl = thumbnailUrl ? convertToCloudFrontUrl(thumbnailUrl) : cloudFrontUrl;
+
+    console.log('✅ URLS Generated:', {
+      original: cloudFrontUrl,
+      thumbnail: cloudFrontThumbnailUrl,
+      thumbnailSize: thumbnailUrl ? 'Generated' : 'Using original'
+    });
+
+    // ✅ CREATE MEDIA RECORD WITH THUMBNAIL
+    const media = await VenueMedia.create({
+      mediaId: `M-${uuidv4().slice(0, 8)}`,
+      tempVenueId,
+      venueId: venue.venueId,
+      mediaType,
+      captureContext: captureContext || 'Agent onboarding',
+      submittedByRole: submittedByRole || 'Agent',
+      submittedBy: currentUser.userId,
+      fileUrl: cloudFrontUrl,
+      thumbnailUrl: cloudFrontThumbnailUrl,
+      s3Key: s3Key,
+      thumbnailS3Key: thumbnailKey,
+      fileFormat,
+      fileSize: file.size,
+      fileHash,
+      isVideo,
+      is360,
+      publicVisibility,
+      frontendGroup,
+      capturedAt: new Date(),
+      // EXIF data if provided
+      ...(req.body.exifDateTaken && { exifDateTaken: new Date(req.body.exifDateTaken) }),
+      ...(req.body.exifLatitude && { exifLatitude: parseFloat(req.body.exifLatitude) }),
+      ...(req.body.exifLongitude && { exifLongitude: parseFloat(req.body.exifLongitude) }),
+      ...(req.body.exifCamera && { exifCamera: req.body.exifCamera }),
+      ...(req.body.captureGpsLat && { captureGpsLat: parseFloat(req.body.captureGpsLat) }),
+      ...(req.body.captureGpsLng && { captureGpsLng: parseFloat(req.body.captureGpsLng) }),
+      ...(req.body.captureGpsAccuracy && { captureGpsAccuracy: parseFloat(req.body.captureGpsAccuracy) }),
+    });
+
+    await AuditLog.create({
+      auditId: uuidv4(),
+      actorId: currentUser.userId,
+      actorRole: currentUser.role,
+      venueId: venue.venueId?.toString(),
+      action: 'VENUE_MEDIA_UPLOADED',
+      meta: {
+        tempVenueId,
+        mediaId: media.mediaId,
+        mediaType,
+        fileSize: file.size,
+        fileHash,
+        isVideo,
+        is360,
+        hasThumbnail: !!thumbnailUrl,
+        cloudFrontUrl,
+        thumbnailUrl: cloudFrontThumbnailUrl,
+        originalName: file.originalname,
+      },
+    });
+
+    console.log('✅ Media record created with thumbnail:', media.mediaId);
+
+    res.status(201).json({
+      success: true,
+      message: 'Media uploaded successfully',
+      data: {
+        ...media.toObject(),
+        fileUrl: cloudFrontUrl,
+        thumbnailUrl: cloudFrontThumbnailUrl,
+      },
+    });
+  } catch (error: any) {
+    console.error('❌ Error uploading media:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to upload media',
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * ✅ POST /api/agent/venues/:tempVenueId/media/quick - Quick upload without thumbnail
+ * Uses direct S3 upload for faster processing
+ */
+export const uploadVenueMediaQuick = async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user || req.user.role !== 'AGENT') {
+      return res.status(403).json({ success: false, message: 'Agent access required' });
+    }
+
+    const currentUser = req.user;
+    const { tempVenueId } = req.params;
+    const { mediaType, captureContext, submittedByRole } = req.body;
+    const file = (req as any).file;
+
+    if (!file) {
+      return res.status(400).json({
+        success: false,
+        message: 'No file uploaded',
+      });
+    }
+
+    const venue = await AgentVenueTemp.findOne({
+      tempVenueId,
+      assignedTo: currentUser.userId,
+    });
+
+    if (!venue) {
+      return res.status(404).json({
+        success: false,
+        message: 'Venue not found or not assigned to you',
+      });
+    }
+
+    const fileHash = generateFileHashFromMetadata(file);
+    const duplicateCheck = await checkGlobalDuplicate(
+      tempVenueId,
+      fileHash,
+      file.size,
+      file.originalname
+    );
+
+    if (duplicateCheck.isDuplicate && duplicateCheck.existingMedia) {
+      return res.status(409).json({
+        success: false,
+        message: 'Duplicate file detected',
+        duplicate: {
+          fileName: file.originalname,
+          existingCategory: duplicateCheck.existingMedia.mediaType,
+          existingUrl: duplicateCheck.existingMedia.fileUrl,
+          uploadedAt: duplicateCheck.existingMedia.createdAt,
+        },
+      });
+    }
+
     const s3Url = file.location;
     const cloudFrontUrl = convertToCloudFrontUrl(s3Url);
 
-    console.log('✅ URL CONVERSION:', { s3Url, cloudFrontUrl });
+    const fileExtension = path.extname(file.originalname).toLowerCase();
+    const isVideo = file.mimetype?.startsWith('video') || 
+                   ['.mp4', '.mov', '.avi', '.webm', '.mkv', '.3gp', '.3gpp'].includes(fileExtension);
+    const is360 = file.originalname.toLowerCase().includes('360') || 
+                  file.originalname.toLowerCase().includes('insp') || 
+                  fileExtension === '.insp';
+    const fileFormat = fileExtension.slice(1).toLowerCase();
+    const frontendGroup = frontendGroupMap[mediaType] || 'Latest';
 
-    const thumbnailUrl = isVideo
-      ? cloudFrontUrl
-      : USE_CLOUDINARY 
-        ? convertToCloudinaryUrl(cloudFrontUrl, 300, 300, 80, 'webp')
-        : cloudFrontUrl;
+    let publicVisibility = 'Public (frontend)';
+    if (['DOC_LICENSE', 'SELFIE_OWNER_AGENT', 'SCREENSHOT_GPS_CHANGE', 'QR_INSTALL_SPOT'].includes(mediaType)) {
+      publicVisibility = 'Internal only';
+    }
 
-    console.log('✅ FINAL URLS:', { 
-      fileUrl: cloudFrontUrl, 
-      thumbnailUrl, 
-      isVideo,
-      usingCloudinary: USE_CLOUDINARY 
-    });
+    // For quick upload, use original as thumbnail for images
+    const thumbnailUrl = isVideo ? cloudFrontUrl : cloudFrontUrl;
 
     const media = await VenueMedia.create({
       mediaId: `M-${uuidv4().slice(0, 8)}`,
@@ -355,7 +437,7 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
       actorId: currentUser.userId,
       actorRole: currentUser.role,
       venueId: venue.venueId?.toString(),
-      action: 'VENUE_MEDIA_UPLOADED',
+      action: 'VENUE_MEDIA_UPLOADED_QUICK',
       meta: {
         tempVenueId,
         mediaId: media.mediaId,
@@ -364,17 +446,14 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
         fileHash,
         isVideo,
         is360,
+        hasThumbnail: false,
         cloudFrontUrl,
-        thumbnailUrl,
-        originalName: file.originalname,
       },
     });
 
-    console.log('✅ Media record created:', media.mediaId);
-
     res.status(201).json({
       success: true,
-      message: 'Media uploaded successfully',
+      message: 'Media uploaded quickly (no thumbnail)',
       data: {
         ...media.toObject(),
         fileUrl: cloudFrontUrl,
@@ -382,17 +461,53 @@ export const uploadVenueMedia = async (req: AuthRequest, res: Response) => {
       },
     });
   } catch (error: any) {
-    console.error('❌ Error uploading media:', error);
-
-    const file = (req as any).file;
-    if (file?.key) {
-      await deleteFileFromS3(file.key);
-      console.log(`🗑️ Deleted S3 file due to error: ${file.key}`);
-    }
-
+    console.error('❌ Error in quick upload:', error);
     res.status(500).json({
       success: false,
       message: 'Failed to upload media',
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * ✅ POST /api/upload/profile - Upload profile image with thumbnail
+ */
+export const uploadProfileImageWithThumbnail = async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ success: false, message: 'Authentication required' });
+    }
+
+    const file = (req as any).file;
+    if (!file) {
+      return res.status(400).json({ success: false, message: 'No file uploaded' });
+    }
+
+    const { originalUrl, thumbnailUrl, s3Key, thumbnailKey } = await processUploadWithThumbnail(
+      file,
+      req,
+      'profile-images'
+    );
+
+    const cloudFrontUrl = convertToCloudFrontUrl(originalUrl);
+    const cloudFrontThumbnailUrl = thumbnailUrl ? convertToCloudFrontUrl(thumbnailUrl) : cloudFrontUrl;
+
+    res.status(201).json({
+      success: true,
+      message: 'Profile image uploaded with thumbnail',
+      data: {
+        fileUrl: cloudFrontUrl,
+        thumbnailUrl: cloudFrontThumbnailUrl,
+        s3Key,
+        thumbnailKey,
+      },
+    });
+  } catch (error: any) {
+    console.error('❌ Error uploading profile image:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to upload profile image',
       error: error.message,
     });
   }
@@ -408,38 +523,27 @@ export const getVenueMedia = async (req: AuthRequest, res: Response) => {
     }
 
     const { tempVenueId } = req.params;
-    const { mediaType, frontendGroup } = req.query;
+    const { mediaType, frontendGroup, includeInternal } = req.query;
 
     const filter: any = { tempVenueId };
     if (mediaType) filter.mediaType = mediaType;
     if (frontendGroup) filter.frontendGroup = frontendGroup;
+    if (includeInternal !== 'true') {
+      filter.publicVisibility = 'Public (frontend)';
+    }
 
     const media = await VenueMedia.find(filter)
       .populate('submittedBy', 'name email')
       .sort({ createdAt: -1 })
       .lean();
 
-    const mediaWithThumbnails = media.map((item: any) => {
+    const mediaWithUrls = media.map((item: any) => {
       let fileUrl = item.fileUrl;
       let thumbnailUrl = item.thumbnailUrl;
 
-      if (fileUrl && fileUrl.includes('s3.ap-south-1.amazonaws.com')) {
-        console.warn('🔧 Converting legacy S3 fileUrl:', fileUrl);
-        fileUrl = convertToCloudFrontUrl(fileUrl);
-      }
-
-      if (thumbnailUrl && thumbnailUrl.includes('s3.ap-south-1.amazonaws.com')) {
-        console.warn('🔧 Converting legacy S3 thumbnailUrl:', thumbnailUrl);
-        thumbnailUrl = convertToCloudFrontUrl(thumbnailUrl);
-      }
-
-      if (!thumbnailUrl || thumbnailUrl === fileUrl) {
-        thumbnailUrl = item.isVideo 
-          ? fileUrl 
-          : USE_CLOUDINARY 
-            ? convertToCloudinaryUrl(fileUrl, 300, 300, 80, 'webp')
-            : fileUrl;
-      }
+      // Ensure all URLs use CloudFront
+      fileUrl = convertToCloudFrontUrl(fileUrl);
+      thumbnailUrl = thumbnailUrl ? convertToCloudFrontUrl(thumbnailUrl) : fileUrl;
 
       return {
         ...item,
@@ -448,12 +552,12 @@ export const getVenueMedia = async (req: AuthRequest, res: Response) => {
       };
     });
 
-    console.log(`✅ Found ${mediaWithThumbnails.length} media items for ${tempVenueId}`);
+    console.log(`✅ Found ${mediaWithUrls.length} media items for ${tempVenueId}`);
 
     res.json({
       success: true,
-      count: mediaWithThumbnails.length,
-      data: mediaWithThumbnails,
+      count: mediaWithUrls.length,
+      data: mediaWithUrls,
     });
   } catch (error: any) {
     console.error('Error fetching media:', error);
@@ -466,88 +570,51 @@ export const getVenueMedia = async (req: AuthRequest, res: Response) => {
 };
 
 /**
- * ✅ NEW: GET /api/venues/:id/media - Get public media for venue (PUBLIC/USER)
- * This is what VenueGallery component calls
+ * ✅ GET /api/venues/:id/media - Get public media for venue (PUBLIC/USER)
  */
-
 export const getPublicVenueMedia = async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
     const { mediaType, frontendGroup, publicOnly = 'true' } = req.query;
 
     console.log('🔍 Fetching public media for venue:', id);
-    console.log('📋 Query params:', { mediaType, frontendGroup, publicOnly });
 
-    // Validate ID format
     if (!id || id === 'undefined' || id === 'null') {
-      console.error('❌ Invalid venue ID:', id);
       return res.status(400).json({
         success: false,
         message: 'Invalid venue ID provided',
-        venueId: id
       });
     }
 
-    // ✅ Build filter to match BOTH tempVenueId (string) AND venueId (ObjectId)
     const filter: any = {
       $or: [
-        { tempVenueId: id }, // Match as string (TEMP-xxx format)
+        { tempVenueId: id },
         ...(mongoose.Types.ObjectId.isValid(id) 
-          ? [{ venueId: new mongoose.Types.ObjectId(id) }] // Match as ObjectId
+          ? [{ venueId: new mongoose.Types.ObjectId(id) }]
           : [])
       ]
     };
 
-    // Only show public media by default
     if (publicOnly === 'true') {
       filter.publicVisibility = 'Public (frontend)';
     }
-
-    if (mediaType) {
-      filter.mediaType = mediaType;
-    }
-
-    if (frontendGroup) {
-      filter.frontendGroup = frontendGroup;
-    }
-
-    console.log('🔍 MongoDB filter:', JSON.stringify(filter, null, 2));
+    if (mediaType) filter.mediaType = mediaType;
+    if (frontendGroup) filter.frontendGroup = frontendGroup;
 
     const media = await VenueMedia.find(filter)
-      .select('-fileHash -s3Key') // Exclude sensitive fields
+      .select('-fileHash -s3Key -thumbnailS3Key')
       .sort({ createdAt: -1 })
       .lean();
 
     console.log(`✅ Found ${media.length} media items for venue ${id}`);
 
-    // Convert URLs to use CloudFront
-    const mediaWithThumbnails = media.map((item: any) => {
-      let fileUrl = item.fileUrl;
-      let thumbnailUrl = item.thumbnailUrl;
-
-      // Convert S3 URLs to CloudFront
-      if (fileUrl && fileUrl.includes('s3.ap-south-1.amazonaws.com')) {
-        fileUrl = fileUrl.replace(
-          /https?:\/\/[^/]+\.s3\.ap-south-1\.amazonaws\.com/,
-          'https://d2j8mu1uew5u3d.cloudfront.net'
-        );
-      }
-
-      if (thumbnailUrl && thumbnailUrl.includes('s3.ap-south-1.amazonaws.com')) {
-        thumbnailUrl = thumbnailUrl.replace(
-          /https?:\/\/[^/]+\.s3\.ap-south-1\.amazonaws\.com/,
-          'https://d2j8mu1uew5u3d.cloudfront.net'
-        );
-      }
-
-      // Use fileUrl as thumbnail if not set
-      if (!thumbnailUrl) {
-        thumbnailUrl = fileUrl;
-      }
+    const mediaWithUrls = media.map((item: any) => {
+      const fileUrl = convertToCloudFrontUrl(item.fileUrl);
+      const thumbnailUrl = item.thumbnailUrl ? convertToCloudFrontUrl(item.thumbnailUrl) : fileUrl;
 
       return {
         _id: item._id,
-        id: item._id, // ✅ Include BOTH _id and id for frontend compatibility
+        id: item._id,
         mediaId: item.mediaId,
         mediaType: item.mediaType,
         fileUrl,
@@ -556,7 +623,6 @@ export const getPublicVenueMedia = async (req: AuthRequest, res: Response) => {
         is360: item.is360,
         frontendGroup: item.frontendGroup,
         createdAt: item.createdAt,
-        // EXIF data
         exifDateTaken: item.exifDateTaken,
         exifLatitude: item.exifLatitude,
         exifLongitude: item.exifLongitude,
@@ -568,37 +634,24 @@ export const getPublicVenueMedia = async (req: AuthRequest, res: Response) => {
       };
     });
 
-    // Log sample for debugging
-    if (mediaWithThumbnails.length > 0) {
-      console.log('📸 Sample media item:', {
-        _id: mediaWithThumbnails[0]._id,
-        id: mediaWithThumbnails[0].id,
-        mediaType: mediaWithThumbnails[0].mediaType,
-        fileUrl: mediaWithThumbnails[0].fileUrl.substring(0, 80) + '...',
-        thumbnailUrl: mediaWithThumbnails[0].thumbnailUrl.substring(0, 80) + '...'
-      });
-    }
-
     res.json({
       success: true,
-      count: mediaWithThumbnails.length,
-      data: mediaWithThumbnails,
+      count: mediaWithUrls.length,
+      data: mediaWithUrls,
       venueId: id
     });
   } catch (error: any) {
     console.error('❌ Error fetching public venue media:', error);
-    console.error('Error stack:', error.stack);
     res.status(500).json({
       success: false,
       message: 'Failed to fetch venue media',
       error: error.message,
-      venueId: req.params.id
     });
   }
 };
 
 /**
- * DELETE /api/agent/venues/:tempVenueId/media/:mediaId - Delete media
+ * DELETE /api/agent/venues/:tempVenueId/media/:mediaId
  */
 export const deleteVenueMedia = async (req: AuthRequest, res: Response) => {
   try {
@@ -615,14 +668,35 @@ export const deleteVenueMedia = async (req: AuthRequest, res: Response) => {
       return res.status(404).json({ success: false, message: 'Media not found' });
     }
 
-    const s3Key = media.s3Key || getS3KeyFromUrl(media.fileUrl);
-    if (s3Key) {
-      const deleted = await deleteFileFromS3(s3Key);
-      if (!deleted) {
-        console.warn(`Failed to delete S3 file: ${s3Key}`);
+    let deleteSuccess = true;
+    
+    // Delete original file from S3
+    if (media.s3Key) {
+      const originalDeleted = await deleteFileFromS3(media.s3Key);
+      if (!originalDeleted) {
+        console.warn(`Failed to delete S3 file: ${media.s3Key}`);
+        deleteSuccess = false;
       } else {
-        console.log(`✅ S3 file deleted: ${s3Key}`);
+        console.log(`✅ Original deleted: ${media.s3Key}`);
       }
+    }
+
+    // ✅ Delete thumbnail if exists
+    if (media.thumbnailS3Key) {
+      const thumbnailDeleted = await deleteFileFromS3(media.thumbnailS3Key);
+      if (!thumbnailDeleted) {
+        console.warn(`Failed to delete thumbnail: ${media.thumbnailS3Key}`);
+        deleteSuccess = false;
+      } else {
+        console.log(`✅ Thumbnail deleted: ${media.thumbnailS3Key}`);
+      }
+    } else if (media.s3Key) {
+      // Try to delete thumbnail based on pattern
+      const parsedPath = path.parse(media.s3Key);
+      const thumbnailKey = `${parsedPath.dir}/${parsedPath.name}-thumb.webp`;
+      await deleteFileFromS3(thumbnailKey).catch(() => {
+        // Ignore if thumbnail doesn't exist
+      });
     }
 
     await media.deleteOne();
@@ -635,7 +709,8 @@ export const deleteVenueMedia = async (req: AuthRequest, res: Response) => {
       meta: {
         tempVenueId,
         mediaId: media.mediaId,
-        s3Key,
+        s3Key: media.s3Key,
+        thumbnailS3Key: media.thumbnailS3Key,
         fileHash: media.fileHash,
       },
     });
@@ -643,8 +718,10 @@ export const deleteVenueMedia = async (req: AuthRequest, res: Response) => {
     console.log(`✅ Media deleted: ${media.mediaId}`);
 
     res.json({
-      success: true,
-      message: 'Media deleted successfully',
+      success: deleteSuccess,
+      message: deleteSuccess 
+        ? 'Media and thumbnail deleted successfully' 
+        : 'Media deleted, but some cleanup may have failed',
     });
   } catch (error: any) {
     console.error('Error deleting media:', error);
@@ -657,7 +734,7 @@ export const deleteVenueMedia = async (req: AuthRequest, res: Response) => {
 };
 
 /**
- * GET /api/agent/venues/:tempVenueId/media/stats - Get upload stats
+ * GET /api/agent/venues/:tempVenueId/media/stats
  */
 export const getMediaStats = async (req: AuthRequest, res: Response) => {
   try {
@@ -674,6 +751,9 @@ export const getMediaStats = async (req: AuthRequest, res: Response) => {
           _id: '$mediaType',
           count: { $sum: 1 },
           totalSize: { $sum: '$fileSize' },
+          hasThumbnailCount: {
+            $sum: { $cond: [{ $ne: ['$thumbnailS3Key', null] }, 1, 0] }
+          }
         },
       },
     ]);
@@ -681,10 +761,12 @@ export const getMediaStats = async (req: AuthRequest, res: Response) => {
     const stats = {
       totalMedia: await VenueMedia.countDocuments({ tempVenueId }),
       totalSize: mediaByType.reduce((sum: number, item: any) => sum + item.totalSize, 0),
+      mediaWithThumbnails: mediaByType.reduce((sum: number, item: any) => sum + item.hasThumbnailCount, 0),
       byType: mediaByType.reduce((acc: any, item: any) => {
         acc[item._id] = {
           count: item.count,
           totalSize: item.totalSize,
+          hasThumbnails: item.hasThumbnailCount,
         };
         return acc;
       }, {}),
@@ -704,10 +786,57 @@ export const getMediaStats = async (req: AuthRequest, res: Response) => {
   }
 };
 
+/**
+ * ✅ POST /api/agent/venues/:tempVenueId/media/:mediaId/regenerate-thumbnail
+ * Regenerate thumbnail for existing media
+ */
+export const regenerateThumbnail = async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user || req.user.role !== 'AGENT') {
+      return res.status(403).json({ success: false, message: 'Agent access required' });
+    }
+
+    const { tempVenueId, mediaId } = req.params;
+    const media = await VenueMedia.findOne({ _id: mediaId, tempVenueId });
+
+    if (!media) {
+      return res.status(404).json({ success: false, message: 'Media not found' });
+    }
+
+    // Check if it's a video (can't generate thumbnail from video without processing)
+    if (media.isVideo) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot generate thumbnail for videos automatically',
+      });
+    }
+
+    // TODO: Implement thumbnail regeneration logic
+    // This would require downloading the original from S3,
+    // generating a new thumbnail with Sharp, and uploading it
+    
+    res.json({
+      success: true,
+      message: 'Thumbnail regeneration endpoint',
+      note: 'Implementation pending',
+    });
+  } catch (error: any) {
+    console.error('Error regenerating thumbnail:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to regenerate thumbnail',
+      error: error.message,
+    });
+  }
+};
+
 export default {
   uploadVenueMedia,
+  uploadVenueMediaQuick,
+  uploadProfileImageWithThumbnail,
   getVenueMedia,
-  getPublicVenueMedia, // ✅ NEW: Export public endpoint
+  getPublicVenueMedia,
   deleteVenueMedia,
   getMediaStats,
+  regenerateThumbnail,
 };
