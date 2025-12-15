@@ -1,8 +1,10 @@
-import { S3Client, DeleteObjectCommand } from '@aws-sdk/client-s3';
+// config/uploadConfig.ts
+import { S3Client, DeleteObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import multer from 'multer';
 import multerS3 from 'multer-s3';
 import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
+import sharp from 'sharp';
 
 // ===== AWS S3 CLIENT CONFIGURATION =====
 const s3 = new S3Client({
@@ -23,7 +25,85 @@ console.log('✅ S3 Client initialized:', {
   bucket: process.env.S3_BUCKET_NAME || 'honestlee-user-upload'
 });
 
-// ===== FIXED MOBILE FILE FILTER (ALL ORIGINAL LOGIC + MOBILE FIX) =====
+// ===== THUMBNAIL GENERATION HELPER =====
+const generateThumbnail = async (
+  fileBuffer: Buffer,
+  isVideo: boolean
+): Promise<Buffer | null> => {
+  if (isVideo) return null; // Skip thumbnails for videos
+  
+  try {
+    // Generate 300x300 thumbnail with WebP format for optimal size/quality
+    const thumbnail = await sharp(fileBuffer)
+      .resize(300, 300, {
+        fit: 'cover',
+        position: 'center'
+      })
+      .webp({ quality: 80 })
+      .toBuffer();
+    
+    console.log(`✅ Thumbnail generated: ${thumbnail.length} bytes`);
+    return thumbnail;
+  } catch (error) {
+    console.error('❌ Thumbnail generation failed:', error);
+    return null;
+  }
+};
+
+// ===== UPLOAD TO S3 WITH THUMBNAIL =====
+export const uploadToS3WithThumbnail = async (
+  file: Express.Multer.File,
+  s3Key: string,
+  contentType: string
+): Promise<{ originalUrl: string; thumbnailUrl: string | null }> => {
+  const bucketName = process.env.S3_BUCKET_NAME || 'honestlee-user-upload';
+  
+  // Determine if it's a video
+  const fileExtension = path.extname(file.originalname).toLowerCase();
+  const isVideo = ['.mp4', '.mov', '.avi', '.webm', '.mkv', '.3gp', '.3gpp', '.m4v'].includes(fileExtension);
+  
+  // Upload original file
+  const uploadParams = {
+    Bucket: bucketName,
+    Key: s3Key,
+    Body: file.buffer,
+    ContentType: contentType,
+  };
+  
+  await s3.send(new PutObjectCommand(uploadParams));
+  const originalUrl = `https://${bucketName}.s3.${process.env.AWS_REGION || 'ap-south-1'}.amazonaws.com/${s3Key}`;
+  
+  console.log(`✅ Original uploaded: ${originalUrl}`);
+  
+  // Generate and upload thumbnail for images only
+  let thumbnailUrl: string | null = null;
+  
+  if (!isVideo && file.buffer) {
+    const thumbnail = await generateThumbnail(file.buffer, isVideo);
+    
+    if (thumbnail) {
+      // Create thumbnail S3 key (same path, append -thumb before extension)
+      const parsedPath = path.parse(s3Key);
+      const thumbnailKey = `${parsedPath.dir}/${parsedPath.name}-thumb.webp`;
+      
+      const thumbnailParams = {
+        Bucket: bucketName,
+        Key: thumbnailKey,
+        Body: thumbnail,
+        ContentType: 'image/webp',
+      };
+      
+      await s3.send(new PutObjectCommand(thumbnailParams));
+      thumbnailUrl = `https://${bucketName}.s3.${process.env.AWS_REGION || 'ap-south-1'}.amazonaws.com/${thumbnailKey}`;
+      
+      console.log(`✅ Thumbnail uploaded: ${thumbnailUrl}`);
+    }
+  }
+  
+  return { originalUrl, thumbnailUrl };
+};
+
+// ===== FIXED MOBILE FILE FILTER =====
 const venueMediaFileFilter = (req: any, file: any, cb: any) => {
   const logId = `[MOBILE-FILTER-${Date.now()}]`;
   
@@ -39,23 +119,21 @@ const venueMediaFileFilter = (req: any, file: any, cb: any) => {
     origin: req.headers?.['origin'],
   });
 
-  // ✅ MOBILE SAFETY CHECK: Accept ANY file > 5KB (covers all images/videos)
+  // ✅ MOBILE SAFETY CHECK: Accept ANY file > 5KB
   if (file.size > 5 * 1024) {
-    console.log(`${logId} ✅ MOBILE ACCEPTED: Size > 5KB (all mobile formats)`);
+    console.log(`${logId} ✅ MOBILE ACCEPTED: Size > 5KB`);
     cb(null, true);
     return;
   }
 
-  // Check if file object is valid (original logic)
   if (!file || !file.originalname) {
-    console.error(`${logId} ❌ REJECTED: Invalid file object`, { file });
+    console.error(`${logId} ❌ REJECTED: Invalid file object`);
     const error: any = new Error('Invalid file object');
     error.code = 'INVALID_FILE';
     cb(error, false);
     return;
   }
 
-  // ✅ PRIORITY 1: Check file extension (original logic + mobile fix)
   const allowedExtensions = /\.(jpg|jpeg|png|gif|webp|heic|heif|bmp|tiff|tif|jpe|jfif|mp4|mov|avi|webm|mkv|3gp|3gpp|m4v|insp)$/i;
   
   if (file.originalname && allowedExtensions.test(file.originalname.toLowerCase())) {
@@ -65,7 +143,6 @@ const venueMediaFileFilter = (req: any, file: any, cb: any) => {
     return;
   }
 
-  // ✅ PRIORITY 2: Check MIME type (original logic + mobile empty MIME fix)
   const allowedMimeTypes = [
     'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp',
     'image/bmp', 'image/tiff', 'image/x-icon',
@@ -83,33 +160,13 @@ const venueMediaFileFilter = (req: any, file: any, cb: any) => {
     return;
   }
 
-  // ✅ PRIORITY 3: Fallback for valid filename patterns (original logic)
-  if (file.originalname) {
-    const ext = path.extname(file.originalname).toLowerCase();
-    const imageVideoExts = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic', '.heif', 
-                           '.bmp', '.tiff', '.mp4', '.mov', '.avi', '.webm', '.3gp'];
-    
-    if (imageVideoExts.includes(ext)) {
-      console.log(`${logId} ✅ ACCEPTED by filename pattern: ${file.originalname}`);
-      cb(null, true);
-      return;
-    }
-  }
-
-  // Final rejection (original logic)
-  console.error(`${logId} ❌ REJECTED: Invalid file type`, {
-    name: file.originalname,
-    mime: file.mimetype,
-    hasExtension: !!path.extname(file.originalname),
-    extension: path.extname(file.originalname)
-  });
-  
+  console.error(`${logId} ❌ REJECTED: Invalid file type`);
   const error: any = new Error('Only image and video files are allowed');
   error.code = 'FILE_TYPE_NOT_ALLOWED';
   cb(error, false);
 };
 
-// ===== ALL ORIGINAL HELPER FUNCTIONS (UNCHANGED) =====
+// ===== HELPER FUNCTIONS =====
 const getMimeToExtensionMap = (): { [key: string]: string } => ({
   'image/jpeg': '.jpg',
   'image/jpg': '.jpg',
@@ -118,70 +175,50 @@ const getMimeToExtensionMap = (): { [key: string]: string } => ({
   'image/webp': '.webp',
   'image/bmp': '.bmp',
   'image/tiff': '.tiff',
-  'image/tif': '.tiff',
   'image/heic': '.jpg',
   'image/heif': '.jpg',
-  'image/heic-sequence': '.jpg',
-  'image/heif-sequence': '.jpg',
   'video/mp4': '.mp4',
   'video/quicktime': '.mov',
   'video/webm': '.webm',
   'video/3gpp': '.3gp',
-  'video/3gpp2': '.3gp',
-  'video/x-m4v': '.mp4',
-  'application/octet-stream': '.jpg',
-  'binary/octet-stream': '.jpg',
 });
 
 const getContentTypeMap = (): { [key: string]: string } => ({
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
-  '.jpe': 'image/jpeg',
-  '.jfif': 'image/jpeg',
   '.png': 'image/png',
   '.gif': 'image/gif',
   '.webp': 'image/webp',
   '.bmp': 'image/bmp',
   '.tiff': 'image/tiff',
-  '.tif': 'image/tiff',
   '.heic': 'image/jpeg',
   '.heif': 'image/jpeg',
   '.mp4': 'video/mp4',
-  '.m4v': 'video/mp4',
   '.mov': 'video/quicktime',
-  '.qt': 'video/quicktime',
   '.avi': 'video/x-msvideo',
   '.webm': 'video/webm',
   '.mkv': 'video/x-matroska',
   '.3gp': 'video/3gpp',
-  '.3gpp': 'video/3gpp',
 });
 
 const getFileExtension = (file: any): string => {
-  const logId = `[EXT-${Date.now()}]`;
   let fileExtension = path.extname(file.originalname || '').toLowerCase();
-  
-  console.log(`${logId} Getting extension for: ${file.originalname}`);
   
   if (!fileExtension || fileExtension === '.') {
     const mimeToExtMap = getMimeToExtensionMap();
     const detectedMime = (file.mimetype || '').toLowerCase();
     fileExtension = mimeToExtMap[detectedMime] || '.jpg';
-    console.log(`${logId} 📝 Extension guessed from MIME '${detectedMime}': ${fileExtension}`);
   }
   
   if (['.heic', '.heif'].includes(fileExtension)) {
-    console.log(`${logId} 🔄 Converting ${fileExtension} to .jpg`);
     fileExtension = '.jpg';
   }
   
-  console.log(`${logId} ✅ Final extension: ${fileExtension}`);
   return fileExtension;
 };
 
 const getContentType = (file: any, fileExtension: string): string => {
   const contentTypeMap = getContentTypeMap();
-  
   let contentType = contentTypeMap[fileExtension];
   
   if (!contentType && file.mimetype && 
@@ -197,75 +234,138 @@ const getContentType = (file: any, fileExtension: string): string => {
       : 'image/jpeg';
   }
   
-  console.log(`📦 Content-Type determined: ${contentType} for ${file.originalname}`);
   return contentType;
 };
 
-// ===== VENUE MEDIA UPLOAD WITH COMPREHENSIVE LOGGING (ORIGINAL + MOBILE FIXED) =====
-export const uploadVenueMedia = multer({
+// ===== MANUAL UPLOAD HANDLER (for thumbnail generation) =====
+export const processVenueMediaUpload = async (
+  file: Express.Multer.File,
+  req: any
+): Promise<{ originalUrl: string; thumbnailUrl: string | null; s3Key: string; thumbnailKey: string | null }> => {
+  const agentId = req.user?.userId || 'anonymous';
+  const tempVenueId = req.params?.tempVenueId || 'unknown';
+  
+  const fileExtension = getFileExtension(file);
+  const contentType = getContentType(file, fileExtension);
+  
+  const uniqueId = uuidv4();
+  const timestamp = Date.now();
+  const s3Key = `venue-media/${tempVenueId}/${agentId}-${timestamp}-${uniqueId}${fileExtension}`;
+  
+  console.log(`✅ Processing upload with thumbnail: ${file.originalname} → ${s3Key}`);
+  
+  const { originalUrl, thumbnailUrl } = await uploadToS3WithThumbnail(file, s3Key, contentType);
+  
+  // Generate thumbnail key for reference
+  const parsedPath = path.parse(s3Key);
+  const thumbnailKey = thumbnailUrl ? `${parsedPath.dir}/${parsedPath.name}-thumb.webp` : null;
+  
+  return { originalUrl, thumbnailUrl, s3Key, thumbnailKey };
+};
+
+// ===== HELPER: PROCESS OTHER UPLOADS WITH THUMBNAIL =====
+export const processUploadWithThumbnail = async (
+  file: Express.Multer.File,
+  req: any,
+  folder: 'review-images' | 'profile-images' | 'event-images'
+): Promise<{ originalUrl: string; thumbnailUrl: string | null; s3Key: string; thumbnailKey: string | null }> => {
+  const userId = req.user?.userId || 'anonymous';
+  
+  const fileExtension = getFileExtension(file);
+  const contentType = getContentType(file, fileExtension);
+  
+  const uniqueId = uuidv4();
+  const timestamp = Date.now();
+  const s3Key = `${folder}/${userId}-${timestamp}-${uniqueId}${fileExtension}`;
+  
+  console.log(`✅ Processing ${folder} upload with thumbnail: ${file.originalname} → ${s3Key}`);
+  
+  const { originalUrl, thumbnailUrl } = await uploadToS3WithThumbnail(file, s3Key, contentType);
+  
+  // Generate thumbnail key for reference
+  const parsedPath = path.parse(s3Key);
+  const thumbnailKey = thumbnailUrl ? `${parsedPath.dir}/${parsedPath.name}-thumb.webp` : null;
+  
+  return { originalUrl, thumbnailUrl, s3Key, thumbnailKey };
+};
+
+// ===== DELETE THUMBNAIL HELPER =====
+export const deleteThumbnailFromS3 = async (originalKey: string): Promise<boolean> => {
+  try {
+    const parsedPath = path.parse(originalKey);
+    const thumbnailKey = `${parsedPath.dir}/${parsedPath.name}-thumb.webp`;
+    
+    const command = new DeleteObjectCommand({
+      Bucket: process.env.S3_BUCKET_NAME || 'honestlee-user-upload',
+      Key: thumbnailKey
+    });
+    
+    await s3.send(command);
+    console.log(`✅ Thumbnail deleted from S3: ${thumbnailKey}`);
+    return true;
+  } catch (error) {
+    // It's okay if thumbnail doesn't exist
+    if ((error as any).name === 'NoSuchKey') {
+      console.log(`ℹ️ Thumbnail not found, may already be deleted: ${originalKey}`);
+      return true;
+    }
+    console.error('❌ Error deleting thumbnail from S3:', error);
+    return false;
+  }
+};
+
+// ===== DIRECT S3 UPLOAD CONFIGURATIONS (for non-venue uploads without thumbnails) =====
+
+// ===== VENUE MEDIA UPLOAD TO S3 (10GB+ Support) =====
+export const uploadVenueMediaDirect = multer({
   storage: multerS3({
     s3: s3 as any,
     bucket: process.env.S3_BUCKET_NAME || 'honestlee-user-upload',
     metadata: function (req, file, cb) {
-      const logId = `[META-${Date.now()}]`;
-      const userAgent = (req as any).headers?.['user-agent'] || '';
-      const deviceType = userAgent.includes('iPhone') || userAgent.includes('iPad') ? 'iOS' : 
-                        userAgent.includes('Android') ? 'Android' : 'Desktop'; // ✅ Fixed device detection
-      
-      const metadata = { 
+      cb(null, {
         fieldName: file.fieldname,
-        originalName: file.originalname || 'mobile-file',
+        originalName: file.originalname,
         uploadedBy: (req as any).user?.userId || 'agent',
         mimeType: file.mimetype || 'unknown',
-        uploadTimestamp: new Date().toISOString(),
-        deviceType: deviceType,
-        fileSize: file.size
-      };
-      
-      console.log(`${logId} 📋 Metadata prepared:`, metadata);
-      cb(null, metadata);
+        uploadTimestamp: new Date().toISOString()
+      });
     },
     key: function (req: any, file, cb) {
-      const logId = `[KEY-${Date.now()}]`;
-      console.log(`${logId} 🔑 Generating S3 key for: ${file.originalname}`);
-      
       const agentId = (req as any).user?.userId || 'anonymous';
       const tempVenueId = req.params?.tempVenueId || 'unknown';
+
+      let fileExtension = getFileExtension(file);
       
-      const fileExtension = getFileExtension(file);
       const uniqueId = uuidv4();
       const timestamp = Date.now();
       const fileName = `venue-media/${tempVenueId}/${agentId}-${timestamp}-${uniqueId}${fileExtension}`;
-      
-      console.log(`${logId} ✅ S3 Key generated: ${fileName}`);
+
+      console.log(`✅ S3 Upload Key: ${fileName}`);
       cb(null, fileName);
     },
     contentType: function (req, file, cb) {
-      const logId = `[CTYPE-${Date.now()}]`;
-      console.log(`${logId} 🎭 Determining content type for: ${file.originalname}`);
-      
       const fileExtension = getFileExtension(file);
       const contentType = getContentType(file, fileExtension);
       
-      console.log(`${logId} ✅ Content-Type set: ${contentType}`);
+      console.log(`📦 Content-Type set to: ${contentType} for ${file.originalname}`);
       cb(null, contentType);
     }
   }),
   fileFilter: venueMediaFileFilter,
   limits: {
-    fileSize: Infinity, // ✅ Mobile unlimited
-    files: 100,
+    fileSize: Infinity,       // No size limit (up to 10GB+)
+    files: 100,              // Max 100 files per batch
     fieldSize: Infinity, // ✅ Fixed: was 100MB limit
   }
 });
 
-// ===== ALL OTHER UPLOAD FUNCTIONS (IDENTICAL TO ORIGINAL) =====
+// ===== REVIEW IMAGES UPLOAD (10GB Support) =====
 export const uploadReviewImages = multer({
   storage: multerS3({
     s3: s3 as any,
     bucket: process.env.S3_BUCKET_NAME || 'honestlee-user-upload',
     metadata: function (req, file, cb) {
-      cb(null, { 
+      cb(null, {
         fieldName: file.fieldname,
         originalName: file.originalname
       });
@@ -273,8 +373,10 @@ export const uploadReviewImages = multer({
     key: function (req: any, file, cb) {
       const userId = (req as any).user?.userId || 'anonymous';
       const fileExtension = getFileExtension(file);
+      
       const uniqueId = uuidv4();
-      const fileName = `review-images/${userId}-${uniqueId}${fileExtension}`;
+      const timestamp = Date.now();
+      const fileName = `review-images/${userId}-${timestamp}-${uniqueId}${fileExtension}`;
       cb(null, fileName);
     },
     contentType: function (req, file, cb) {
@@ -290,6 +392,7 @@ export const uploadReviewImages = multer({
   }
 });
 
+// ===== PROFILE IMAGE UPLOAD (10GB Support) =====
 export const uploadProfileImage = multer({
   storage: multerS3({
     s3: s3 as any,
@@ -300,8 +403,10 @@ export const uploadProfileImage = multer({
     key: function (req: any, file, cb) {
       const userId = (req as any).user?.userId || 'anonymous';
       const fileExtension = getFileExtension(file);
+      
       const uniqueId = uuidv4();
-      const fileName = `profile-images/${userId}-${uniqueId}${fileExtension}`;
+      const timestamp = Date.now();
+      const fileName = `profile-images/${userId}-${timestamp}-${uniqueId}${fileExtension}`;
       cb(null, fileName);
     },
     contentType: function (req, file, cb) {
@@ -316,6 +421,7 @@ export const uploadProfileImage = multer({
   }
 });
 
+// ===== EVENT IMAGES UPLOAD (10GB Support) =====
 export const uploadEventImages = multer({
   storage: multerS3({
     s3: s3 as any,
@@ -326,8 +432,10 @@ export const uploadEventImages = multer({
     key: function (req: any, file, cb) {
       const userId = (req as any).user?.userId || 'anonymous';
       const fileExtension = getFileExtension(file);
+      
       const uniqueId = uuidv4();
-      const fileName = `event-images/${userId}-${uniqueId}${fileExtension}`;
+      const timestamp = Date.now();
+      const fileName = `event-images/${userId}-${timestamp}-${uniqueId}${fileExtension}`;
       cb(null, fileName);
     },
     contentType: function (req, file, cb) {
@@ -343,7 +451,44 @@ export const uploadEventImages = multer({
   }
 });
 
-// ===== S3 FILE OPERATIONS (ORIGINAL) =====
+// ===== MEMORY STORAGE UPLOADS (for manual processing with thumbnails) =====
+export const uploadVenueMediaMemory = multer({
+  storage: multer.memoryStorage(), // Use memory storage to access buffer
+  fileFilter: venueMediaFileFilter,
+  limits: {
+    fileSize: Infinity,
+    files: 100,
+    fieldSize: Infinity,
+  }
+});
+
+export const uploadReviewImagesMemory = multer({
+  storage: multer.memoryStorage(),
+  fileFilter: venueMediaFileFilter,
+  limits: {
+    fileSize: Infinity,
+    files: 20
+  }
+});
+
+export const uploadProfileImageMemory = multer({
+  storage: multer.memoryStorage(),
+  fileFilter: venueMediaFileFilter,
+  limits: {
+    fileSize: Infinity
+  }
+});
+
+export const uploadEventImagesMemory = multer({
+  storage: multer.memoryStorage(),
+  fileFilter: venueMediaFileFilter,
+  limits: {
+    fileSize: Infinity,
+    files: 10
+  }
+});
+
+// ===== S3 FILE OPERATIONS =====
 export const deleteFileFromS3 = async (fileKey: string): Promise<boolean> => {
   try {
     const command = new DeleteObjectCommand({
@@ -367,5 +512,18 @@ export const getS3KeyFromUrl = (url: string): string | null => {
   } catch (error) {
     console.error('❌ Error parsing S3 URL:', error);
     return null;
+  }
+};
+
+// ===== BATCH DELETE =====
+export const deleteMultipleFilesFromS3 = async (fileKeys: string[]): Promise<boolean> => {
+  try {
+    const deletePromises = fileKeys.map(key => deleteFileFromS3(key));
+    await Promise.all(deletePromises);
+    console.log(`✅ ${fileKeys.length} files deleted from S3`);
+    return true;
+  } catch (error) {
+    console.error('❌ Error deleting multiple files from S3:', error);
+    return false;
   }
 };

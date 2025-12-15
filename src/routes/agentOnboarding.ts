@@ -2,7 +2,11 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { authenticateToken } from '../middlewares/authMiddleware';
 import { detectRegion } from '../middlewares/regionMiddleware';
-import { uploadEventImages, uploadVenueMedia } from '../config/uploadConfig';
+import { 
+  uploadEventImages, 
+  uploadVenueMediaDirect, 
+  uploadVenueMediaMemory 
+} from '../config/uploadConfig';
 import * as agentController from '../controllers/agentOnboardingController';
 import * as mediaController from '../controllers/mediaController';
 import * as paymentController from '../controllers/paymentMethodController';
@@ -16,7 +20,7 @@ router.use(detectRegion);
 const getCloudFrontUrl = (s3Url: string): string => {
   if (!s3Url) return '';
   
-  const cloudFrontDomain = process.env.CLOUDFRONT_DOMAIN || 'dedllwce1iasg.cloudfront.net';
+  const cloudFrontDomain = process.env.CLOUDFRONT_DOMAIN || 'd2j8mu1uew5u3d.cloudfront.net';
   const s3BucketDomain = process.env.S3_BUCKET_NAME || 'honestlee-user-upload';
   
   // Replace S3 URL with CloudFront URL
@@ -41,7 +45,7 @@ const getCloudFrontUrl = (s3Url: string): string => {
 // ===== ZONE PHOTO UPLOAD (MUST BE FIRST - before parameterized routes) =====
 router.post(
   "/zones/upload-photo",
-  uploadVenueMedia.single("zonePhoto"),
+  uploadVenueMediaDirect.single("zonePhoto"),
   (req: Request, res: Response) => {
     try {
       if (!req.file) {
@@ -317,43 +321,15 @@ router.put('/venues/:tempVenueId/gps', (req: Request, res: Response, next: NextF
   agentController.updateVenueGPS(req as any, res).catch(next);
 });
 
-// ===== MEDIA UPLOAD ROUTES (S3) =====
-// Wrapper for media upload to use CloudFront URLs
-const uploadVenueMediaWithCloudFront = async (req: any, res: Response) => {
-  try {
-    // Call the original controller
-    const originalSend = res.json;
-    let responseData: any;
+// ===== MEDIA UPLOAD ROUTES =====
 
-    res.json = function(data: any) {
-      responseData = data;
-      
-      if (responseData.success && responseData.data) {
-        // ✅ Transform media URLs to CloudFront
-        if (Array.isArray(responseData.data)) {
-          const mediaWithCloudFront = responseData.data.map((media: any) => {
-            if (media.url) {
-              return {
-                ...media,
-                url: getCloudFrontUrl(media.url),
-              };
-            }
-            return media;
-          });
-          
-          responseData.data = mediaWithCloudFront;
-        } else if (responseData.data.url) {
-          // Single media item
-          responseData.data.url = getCloudFrontUrl(responseData.data.url);
-        }
-      }
-      
-      return originalSend.call(this, responseData);
-    };
-    
+// ✅ Route for media upload WITH THUMBNAIL generation
+const uploadVenueMediaWithThumbnail = async (req: any, res: Response) => {
+  try {
+    // Call the media controller's uploadVenueMedia function (which uses memory storage)
     await mediaController.uploadVenueMedia(req, res);
   } catch (error: any) {
-    console.error("Error in media upload with CloudFront transformation:", error);
+    console.error("❌ Error in media upload with thumbnail:", error);
     return res.status(500).json({
       success: false,
       message: "Failed to upload media",
@@ -362,51 +338,48 @@ const uploadVenueMediaWithCloudFront = async (req: any, res: Response) => {
   }
 };
 
+// ✅ Route for QUICK media upload WITHOUT thumbnail generation
+const uploadVenueMediaQuick = async (req: any, res: Response) => {
+  try {
+    // Call the media controller's quick upload function
+    await mediaController.uploadVenueMediaQuick(req, res);
+  } catch (error: any) {
+    console.error("❌ Error in quick media upload:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to upload media",
+      error: error.message,
+    });
+  }
+};
+
+// ✅ Route for media upload WITH THUMBNAIL (uses memory storage)
 router.post(
   '/venues/:tempVenueId/media',
+  uploadVenueMediaMemory.single('file'), // Use memory storage for thumbnail generation
   (req: Request, res: Response, next: NextFunction) => {
-    uploadVenueMedia.single('file')(req, res, (err) => {
-      if (err) {
-        console.error('❌ Multer error during media upload:', err);
-        if (err.code === 'LIMIT_FILE_SIZE') {
-          return res.status(400).json({
-            success: false,
-            message: 'File too large. Max 500MB allowed'
-          });
-        }
-        if (err.code === 'FILE_TYPE_NOT_ALLOWED') {
-          return res.status(400).json({
-            success: false,
-            message: 'Invalid file type. Please upload an image or video file.',
-            details: 'Accepted formats: JPG, PNG, GIF, WEBP, HEIC, MP4, MOV, AVI, WEBM'
-          });
-        }
-        return res.status(400).json({
-          success: false,
-          message: err.message || 'Upload failed',
-          error: err.code || 'UPLOAD_ERROR'
-        });
-      }
-      if ((req as any).fileValidationError) {
-        return res.status(400).json({
-          success: false,
-          message: (req as any).fileValidationError
-        });
-      }
-      if (!req.file) {
-        return res.status(400).json({
-          success: false,
-          message: 'No file uploaded. Please select a valid image or video file.'
-        });
-      }
-      next();
-    });
-  },
-  (req: Request, res: Response, next: NextFunction) =>
-    uploadVenueMediaWithCloudFront(req as any, res).catch(next)
+    uploadVenueMediaWithThumbnail(req as any, res).catch(next);
+  }
 );
 
-// Wrapper for get media to use CloudFront URLs
+// ✅ Route for QUICK media upload WITHOUT thumbnail (uses direct S3 upload)
+router.post(
+  '/venues/:tempVenueId/media/quick',
+  uploadVenueMediaDirect.single('file'), // Use direct S3 upload for speed
+  (req: Request, res: Response, next: NextFunction) => {
+    uploadVenueMediaQuick(req as any, res).catch(next);
+  }
+);
+
+// ✅ Route for REGENERATING thumbnail for existing media
+router.post(
+  '/venues/:tempVenueId/media/:mediaId/regenerate-thumbnail',
+  (req: Request, res: Response, next: NextFunction) => {
+    mediaController.regenerateThumbnail(req as any, res).catch(next);
+  }
+);
+
+// ✅ Wrapper for get media to use CloudFront URLs
 const getVenueMediaWithCloudFront = async (req: any, res: Response) => {
   try {
     const originalSend = res.json;
@@ -419,13 +392,14 @@ const getVenueMediaWithCloudFront = async (req: any, res: Response) => {
         // ✅ Transform media URLs to CloudFront
         if (Array.isArray(responseData.data)) {
           const mediaWithCloudFront = responseData.data.map((media: any) => {
-            if (media.url) {
-              return {
-                ...media,
-                url: getCloudFrontUrl(media.url),
-              };
-            }
-            return media;
+            const fileUrl = media.fileUrl ? getCloudFrontUrl(media.fileUrl) : media.fileUrl;
+            const thumbnailUrl = media.thumbnailUrl ? getCloudFrontUrl(media.thumbnailUrl) : fileUrl;
+            
+            return {
+              ...media,
+              fileUrl,
+              thumbnailUrl,
+            };
           });
           
           responseData.data = mediaWithCloudFront;
@@ -458,6 +432,15 @@ router.delete('/venues/:tempVenueId/media/:mediaId', (req: Request, res: Respons
   mediaController.deleteVenueMedia(req as any, res).catch(next)
 );
 
+// ===== PROFILE IMAGE UPLOAD =====
+router.post(
+  '/upload/profile',
+  uploadVenueMediaMemory.single('file'), // Use memory storage for thumbnail generation
+  (req: Request, res: Response, next: NextFunction) => {
+    mediaController.uploadProfileImageWithThumbnail(req as any, res).catch(next);
+  }
+);
+
 router.put(
   '/venues/:tempVenueId/info',
   (req: Request, res: Response, next: NextFunction) =>
@@ -473,7 +456,7 @@ router.post(
   }
 );
 
-// Wrapper for get photos to use CloudFront URLs
+// ✅ Wrapper for get photos to use CloudFront URLs
 const getVenuePhotosWithCloudFront = async (req: any, res: Response) => {
   try {
     const originalSend = res.json;
@@ -545,6 +528,11 @@ router.put('/venues/:tempVenueId/notes/:noteId', (req: Request, res: Response, n
 
 router.delete('/venues/:tempVenueId/notes/:noteId', (req: Request, res: Response, next: NextFunction) => {
   agentController.deleteVenueNote(req as any, res).catch(next);
+});
+
+// ===== PUBLIC MEDIA ROUTE =====
+router.get('/venues/:id/media/public', (req: Request, res: Response, next: NextFunction) => {
+  mediaController.getPublicVenueMedia(req as any, res).catch(next);
 });
 
 export default router;
