@@ -18,7 +18,16 @@ export interface IZone extends Document {
         'gardenview' | 'poolview' | 'streetview' | 'cityview' | 'skylineview' | 
         'courtyardview' | 'parkview' | 'beachview' | 'forestview' | 'noview' | 'interiorfacing';
   description?: string;
-  // ✅ NEW: Zone photo
+  
+  // ✅ NEW: Seating fields
+  seatingType?: 'diningchairs' | 'longbenches' | 'lowseating' | 'plasticchairs' | 
+                'barstools' | 'sofas' | 'beanbags' | 'floorseating' | 'standingonly' | 'none';
+  seatingComfort?: 'excellent' | 'good' | 'fair' | 'poor' | 'notsuitable';
+  
+  // ✅ NEW: Lighting fields
+  lightingType?: 'natural' | 'indoor' | 'mixed';
+  lightingBrightness?: 'verybright' | 'bright' | 'moderate' | 'dim' | 'dark';
+  
   zonePhotoUrl?: string;
   zonePhotoS3Key?: string;
   zonePhotoUploadedAt?: Date;
@@ -115,7 +124,38 @@ const ZoneSchema = new Schema<IZone>(
       type: String,
       maxlength: 500,
     },
-    // ✅ NEW: Zone photo fields
+    
+    // ✅ NEW: Seating fields
+    seatingType: {
+      type: String,
+      enum: [
+        'diningchairs',
+        'longbenches',
+        'lowseating',
+        'plasticchairs',
+        'barstools',
+        'sofas',
+        'beanbags',
+        'floorseating',
+        'standingonly',
+        'none'
+      ],
+    },
+    seatingComfort: {
+      type: String,
+      enum: ['excellent', 'good', 'fair', 'poor', 'notsuitable'],
+    },
+    
+    // ✅ NEW: Lighting fields
+    lightingType: {
+      type: String,
+      enum: ['natural', 'indoor', 'mixed'],
+    },
+    lightingBrightness: {
+      type: String,
+      enum: ['verybright', 'bright', 'moderate', 'dim', 'dark'],
+    },
+    
     zonePhotoUrl: {
       type: String,
     },
