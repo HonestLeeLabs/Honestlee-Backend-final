@@ -1803,8 +1803,8 @@ export const parseQrCode = async (req: AgentRequest, res: Response): Promise<Res
 // ✅ CREATE ZONE - WITH PHOTO REQUIREMENT
 export const createZone = async (req: AgentRequest, res: Response): Promise<Response> => {
   try {
-    if (!req.user || !["AGENT", "ADMIN"].includes(req.user.role)) {
-      return res.status(403).json({ message: "Insufficient permissions" });
+    if (!req.user || !['AGENT', 'ADMIN'].includes(req.user.role)) {
+      return res.status(403).json({ message: 'Insufficient permissions' });
     }
 
     const { venueId } = req.params;
@@ -1821,17 +1821,22 @@ export const createZone = async (req: AgentRequest, res: Response): Promise<Resp
       noiseLevel,
       view,
       description,
-      zonePhotoUrl, // ✅ NEW: Required photo
-      zonePhotoS3Key, // ✅ NEW: S3 key
+      zonePhotoUrl,
+      zonePhotoS3Key,
+      // ✅ NEW: Seating and lighting fields
+      seatingType,
+      seatingComfort,
+      lightingType,
+      lightingBrightness,
     } = req.body;
 
-    console.log(`🆕 Creating zone "${name}" for venue ${venueId}`);
+    console.log(`🏗️ Creating zone "${name}" for venue ${venueId}`);
 
-    // ✅ VALIDATE PHOTO IS PROVIDED
+    // VALIDATE PHOTO IS PROVIDED
     if (!zonePhotoUrl || !zonePhotoS3Key) {
       return res.status(400).json({
         success: false,
-        message: "Zone photo is required. Please capture a photo of the zone.",
+        message: 'Zone photo is required. Please capture a photo of the zone.',
       });
     }
 
@@ -1839,10 +1844,10 @@ export const createZone = async (req: AgentRequest, res: Response): Promise<Resp
     if (name.length > 18) {
       return res
         .status(400)
-        .json({ message: "Zone name must be 18 characters or less" });
+        .json({ message: 'Zone name must be 18 characters or less' });
     }
 
-    const isTempVenue = venueId.startsWith("TEMP-");
+    const isTempVenue = venueId.startsWith('TEMP-');
 
     const zoneData: any = {
       zoneId: uuidv4(),
@@ -1854,11 +1859,15 @@ export const createZone = async (req: AgentRequest, res: Response): Promise<Resp
       numChargingPorts,
       isIndoor: isIndoor || false,
       isOutdoor: isOutdoor || false,
-      climateControl: climateControl || "none",
+      climateControl: climateControl || 'none',
       noiseLevel,
       view,
       description: description?.trim(),
-      // ✅ NEW: Store photo data
+      // ✅ NEW: Include seating and lighting data
+      seatingType,
+      seatingComfort,
+      lightingType,
+      lightingBrightness,
       zonePhotoUrl,
       zonePhotoS3Key,
       zonePhotoUploadedAt: new Date(),
@@ -1887,13 +1896,15 @@ export const createZone = async (req: AgentRequest, res: Response): Promise<Resp
     await createAuditLog(
       req.user.userId,
       req.user.role,
-      "agent.zone.defined",
-      {
-        zoneId: zone.zoneId,
-        name,
-        venueId,
-        isTempVenue,
+      'agent.zone.defined',
+      { 
+        zoneId: zone.zoneId, 
+        name, 
+        venueId, 
+        isTempVenue, 
         hasPhoto: true,
+        seatingType,
+        lightingType,
       },
       isTempVenue ? undefined : venueId,
       req
@@ -1904,23 +1915,22 @@ export const createZone = async (req: AgentRequest, res: Response): Promise<Resp
     return res.status(201).json({
       success: true,
       data: zone,
-      message: "Zone created successfully with photo",
+      message: 'Zone created successfully with photo',
     });
   } catch (error: any) {
-    console.error("❌ Error creating zone:", error);
+    console.error('❌ Error creating zone:', error);
     return res.status(500).json({
       success: false,
-      message: "Error creating zone",
+      message: 'Error creating zone',
       error: error.message,
     });
   }
 };
 
-// ✅ UPDATE ZONE - WITH OPTIONAL PHOTO UPDATE
 export const updateZone = async (req: AgentRequest, res: Response): Promise<Response> => {
   try {
-    if (!req.user || !["AGENT", "ADMIN"].includes(req.user.role)) {
-      return res.status(403).json({ message: "Insufficient permissions" });
+    if (!req.user || !['AGENT', 'ADMIN'].includes(req.user.role)) {
+      return res.status(403).json({ message: 'Insufficient permissions' });
     }
 
     const { venueId, zoneId } = req.params;
@@ -1937,20 +1947,25 @@ export const updateZone = async (req: AgentRequest, res: Response): Promise<Resp
       noiseLevel,
       view,
       description,
-      zonePhotoUrl, // ✅ NEW: Optional photo update
+      zonePhotoUrl,
       zonePhotoS3Key,
+      // ✅ NEW: Seating and lighting fields
+      seatingType,
+      seatingComfort,
+      lightingType,
+      lightingBrightness,
     } = req.body;
 
-    console.log(`🔄 Updating zone ${zoneId} for venue ${venueId}`);
+    console.log(`✏️ Updating zone ${zoneId} for venue ${venueId}`);
 
     // Validate zone name length if provided
     if (name && name.length > 18) {
       return res
         .status(400)
-        .json({ message: "Zone name must be 18 characters or less" });
+        .json({ message: 'Zone name must be 18 characters or less' });
     }
 
-    const isTempVenue = venueId.startsWith("TEMP-");
+    const isTempVenue = venueId.startsWith('TEMP-');
 
     // Build query
     const query: any = { zoneId, isActive: true };
@@ -1963,11 +1978,12 @@ export const updateZone = async (req: AgentRequest, res: Response): Promise<Resp
     // Find existing zone
     const existingZone = await Zone.findOne(query);
     if (!existingZone) {
-      return res.status(404).json({ message: "Zone not found" });
+      return res.status(404).json({ message: 'Zone not found' });
     }
 
     // Build update data
     const updateData: any = {};
+
     if (name !== undefined) updateData.name = name;
     if (capacityMin !== undefined) updateData.capacityMin = capacityMin;
     if (capacityMax !== undefined) updateData.capacityMax = capacityMax;
@@ -1980,15 +1996,20 @@ export const updateZone = async (req: AgentRequest, res: Response): Promise<Resp
     if (noiseLevel !== undefined) updateData.noiseLevel = noiseLevel;
     if (view !== undefined) updateData.view = view;
     if (description !== undefined) updateData.description = description?.trim();
+    
+    // ✅ NEW: Update seating and lighting fields
+    if (seatingType !== undefined) updateData.seatingType = seatingType;
+    if (seatingComfort !== undefined) updateData.seatingComfort = seatingComfort;
+    if (lightingType !== undefined) updateData.lightingType = lightingType;
+    if (lightingBrightness !== undefined) updateData.lightingBrightness = lightingBrightness;
 
-    // ✅ NEW: Update photo if provided
+    // Update photo if provided
     if (zonePhotoUrl && zonePhotoS3Key) {
       // Delete old photo from S3 if exists
       if (existingZone.zonePhotoS3Key) {
         await deleteFileFromS3(existingZone.zonePhotoS3Key);
         console.log(`🗑️ Deleted old zone photo: ${existingZone.zonePhotoS3Key}`);
       }
-      
       updateData.zonePhotoUrl = zonePhotoUrl;
       updateData.zonePhotoS3Key = zonePhotoS3Key;
       updateData.zonePhotoUploadedAt = new Date();
@@ -2004,7 +2025,7 @@ export const updateZone = async (req: AgentRequest, res: Response): Promise<Resp
     await createAuditLog(
       req.user.userId,
       req.user.role,
-      "agent.zone.updated",
+      'agent.zone.updated',
       {
         zoneId,
         venueId,
@@ -2022,13 +2043,13 @@ export const updateZone = async (req: AgentRequest, res: Response): Promise<Resp
     return res.json({
       success: true,
       data: updatedZone,
-      message: "Zone updated successfully",
+      message: 'Zone updated successfully',
     });
   } catch (error: any) {
-    console.error("❌ Error updating zone:", error);
+    console.error('❌ Error updating zone:', error);
     return res.status(500).json({
       success: false,
-      message: "Error updating zone",
+      message: 'Error updating zone',
       error: error.message,
     });
   }
