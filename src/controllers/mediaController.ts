@@ -119,6 +119,7 @@ const frontendGroupMap: { [key: string]: string } = {
   'FREE_WATER_REFILLS': 'Amenities',
   'PROMOTIONAL_FLYERS': 'Latest',
   'OFFERS': 'Latest',
+  TABLE_NUMBERS: 'Vibe',
 };
 
 // ✅ Generate file hash for duplicate detection
