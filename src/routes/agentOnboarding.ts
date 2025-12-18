@@ -2,15 +2,17 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { authenticateToken } from '../middlewares/authMiddleware';
 import { detectRegion } from '../middlewares/regionMiddleware';
-import { 
-  uploadEventImages, 
-  uploadVenueMediaDirect, 
-  uploadVenueMediaMemory 
-} from '../config/uploadConfig';
+import { uploadEventImages, uploadVenueMediaDirect, uploadVenueMediaMemory } from '../config/uploadConfig';
 import * as agentController from '../controllers/agentOnboardingController';
 import * as mediaController from '../controllers/mediaController';
 import * as paymentController from '../controllers/paymentMethodController';
-
+import AgentVenueTemp from '../models/AgentVenueTemp';
+import AuditLog from '../models/AuditLog';
+import { dbManager } from '../config/database';
+import mongoose from 'mongoose';
+import { v4 as uuidv4 } from 'uuid';
+import { AuthRequest } from '../middlewares/authMiddleware';
+import Venue from '../models/Venue';
 
 const router = Router();
 
@@ -127,10 +129,130 @@ router.put('/venues/:tempVenueId/status', (req: Request, res: Response, next: Ne
 });
 
 
-router.post('/venues/:tempVenueId/finalize', (req: Request, res: Response, next: NextFunction) => {
-  agentController.finalizeOnboarding(req as any, res).catch(next);
-});
+// POST /api/agent/venues/:tempVenueId/events - Create event for a venue
+router.post('/venues/:tempVenueId/events', async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user || req.user.role !== 'AGENT') {
+      return res.status(403).json({ message: 'Agent access required' });
+    }
 
+    const { tempVenueId } = req.params;
+    const eventData = req.body;
+
+    // Find the temp venue
+    const tempVenue = await AgentVenueTemp.findOne({ tempVenueId });
+    if (!tempVenue) {
+      return res.status(404).json({ success: false, message: 'Venue not found' });
+    }
+
+    // Get the actual venue ID
+    let venueId = tempVenue.venueId;
+
+    // If venue doesn't exist in main DB yet, create it
+    if (!venueId) {
+      const region = (tempVenue.region || 'th') as any;
+      const regionalConnection = dbManager.getConnection(region);
+      
+      // ✅ FIXED: Use the schema from the imported Venue model
+      const RegionalVenue = regionalConnection.models.Venue || 
+                            regionalConnection.model('Venue', Venue.schema);
+
+      // Create venue in regional DB
+      const newVenue = new RegionalVenue({
+        globalId: tempVenue.tempVenueId,
+        AccountName: tempVenue.name,
+        name: tempVenue.name,
+        geometry: {
+          type: 'Point',
+          coordinates: [
+            tempVenue.address?.lng || 0,
+            tempVenue.address?.lat || 0
+          ]
+        },
+        address: tempVenue.address,
+        Phone: tempVenue.phone,
+        Website: tempVenue.socials?.website,
+        category: tempVenue.category,
+        venuetype: tempVenue.category?.[0],
+        region: region,
+        isActive: true,
+        isVerified: false,
+        ownerId: req.user.userId ? new mongoose.Types.ObjectId(req.user.userId) : undefined
+      });
+
+      await newVenue.save();
+      venueId = newVenue._id as mongoose.Types.ObjectId;
+
+      // Update temp venue with venueId
+      tempVenue.venueId = venueId;
+      await tempVenue.save();
+
+      console.log(`Auto-created venue ${venueId} for tempVenueId ${tempVenueId}`);
+    }
+
+    const region = (tempVenue.region || 'th') as any;
+
+    // Connect to regional DB and create event
+    const regionalConnection = dbManager.getConnection(region);
+    
+    // ✅ FIXED: Use existing Event model or register with schema
+    const Event = regionalConnection.models.Event || 
+                  regionalConnection.model('Event', mongoose.model('Event').schema);
+
+    // Create the event
+    const newEvent = new Event({
+      venueId: venueId,
+      eventName: eventData.eventName,
+      description: eventData.description,
+      eventType: eventData.eventType || 'ENTERTAINMENT',
+      eventCategory: eventData.eventCategory,
+      eventStartsAt: new Date(eventData.eventStartsAt),
+      eventEndsAt: new Date(eventData.eventEndsAt),
+      eventDuration: eventData.eventDuration,
+      eventTimezone: eventData.eventTimezone || 'Asia/Dubai',
+      eventRecurrence: eventData.eventRecurrence || 'NONE',
+      eventPriceFrom: parseFloat(eventData.eventPriceFrom) || 0,
+      eventPriceMax: parseFloat(eventData.eventPriceMax) || 0,
+      eventCurrency: eventData.eventCurrency || 'AED',
+      eventAgeRestriction: eventData.eventAgeRestriction,
+      capacity: parseInt(eventData.capacity) || 0,
+      isActive: eventData.isActive !== undefined ? eventData.isActive : true,
+      region: region,
+      createdBy: req.user.userId
+    });
+
+    await newEvent.save();
+
+    console.log(`Event created: ${newEvent._id} for venue ${venueId}`);
+
+    // Audit log
+    await AuditLog.create({
+      auditId: uuidv4(),
+      actorId: req.user.userId,
+      actorRole: req.user.role,
+      venueId: venueId.toString(),
+      action: 'VENUE_EVENT_CREATED',
+      meta: {
+        tempVenueId,
+        eventId: newEvent._id.toString(),
+        eventName: eventData.eventName
+      }
+    });
+
+    res.status(201).json({
+      success: true,
+      data: newEvent,
+      message: 'Event created successfully'
+    });
+  } catch (error: any) {
+    console.error('Error creating event:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to create event',
+      error: error.message
+    });
+  }
+});
 
 // ===== GEOFENCING OPERATIONS =====
 router.put('/venues/:tempVenueId/geofence', (req: Request, res: Response, next: NextFunction) => {
@@ -370,6 +492,377 @@ router.put('/venues/:tempVenueId/gps', (req: Request, res: Response, next: NextF
   agentController.updateVenueGPS(req as any, res).catch(next);
 });
 
+// ====== Events Operations ======
+// ===== NEW: EVENTS OPERATIONS =====
+
+// GET /api/agent/venues/:tempVenueId/events - Get all events for a venue
+router.get('/venues/:tempVenueId/events', async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user || req.user.role !== 'AGENT') {
+      return res.status(403).json({ message: 'Agent access required' });
+    }
+
+    const { tempVenueId } = req.params;
+
+    // Find the temp venue
+    const tempVenue = await AgentVenueTemp.findOne({ tempVenueId });
+    if (!tempVenue) {
+      return res.status(404).json({ success: false, message: 'Venue not found' });
+    }
+
+    // Get the actual venue ID
+    const venueId = tempVenue.venueId;
+    if (!venueId) {
+      // No events if venue not yet created in main DB
+      return res.json({ success: true, data: { events: [] } });
+    }
+
+    // Get region from tempVenue or default
+    const region = (tempVenue.region || 'th') as any;
+
+    // Connect to regional DB
+    const regionalConnection = dbManager.getConnection(region);
+
+    // Get Event model from regional DB (assuming you have EventSchema exported)
+    const Event = regionalConnection.model('Event');
+
+    // Fetch events for this venue
+    const events = await Event.find({ venueId: venueId })
+      .sort({ eventStartsAt: 1 })
+      .lean();
+
+    console.log(`Found ${events.length} events for venue ${venueId}`);
+
+    res.json({
+      success: true,
+      data: {
+        events: events || []
+      }
+    });
+  } catch (error: any) {
+    console.error('Error fetching venue events:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch events',
+      error: error.message
+    });
+  }
+});
+
+// POST /api/agent/venues/:tempVenueId/events - Create event for a venue
+// POST /api/agent/venues/:tempVenueId/events - Create event for a venue
+router.post('/venues/:tempVenueId/events', async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user || req.user.role !== 'AGENT') {
+      return res.status(403).json({ message: 'Agent access required' });
+    }
+
+    const { tempVenueId } = req.params;
+    const eventData = req.body;
+
+    console.log('📥 Received event data:', eventData); // ✅ Debug log
+
+    // Find the temp venue
+    const tempVenue = await AgentVenueTemp.findOne({ tempVenueId });
+    if (!tempVenue) {
+      return res.status(404).json({ success: false, message: 'Venue not found' });
+    }
+
+    // Get the actual venue ID
+    let venueId = tempVenue.venueId;
+
+    // If venue doesn't exist in main DB yet, create it
+    if (!venueId) {
+      const region = (tempVenue.region || 'th') as any;
+      const regionalConnection = dbManager.getConnection(region);
+      
+      const RegionalVenue = regionalConnection.models.Venue || 
+                            regionalConnection.model('Venue', Venue.schema);
+
+      const newVenue = new RegionalVenue({
+        globalId: tempVenue.tempVenueId,
+        AccountName: tempVenue.name,
+        name: tempVenue.name,
+        geometry: {
+          type: 'Point',
+          coordinates: [
+            tempVenue.address?.lng || 0,
+            tempVenue.address?.lat || 0
+          ]
+        },
+        address: tempVenue.address,
+        Phone: tempVenue.phone,
+        Website: tempVenue.socials?.website,
+        category: tempVenue.category,
+        venuetype: tempVenue.category?.[0],
+        region: region,
+        isActive: true,
+        isVerified: false,
+        ownerId: req.user.userId ? new mongoose.Types.ObjectId(req.user.userId) : undefined
+      });
+
+      await newVenue.save();
+      venueId = newVenue._id as mongoose.Types.ObjectId;
+
+      tempVenue.venueId = venueId;
+      await tempVenue.save();
+
+      console.log(`Auto-created venue ${venueId} for tempVenueId ${tempVenueId}`);
+    }
+
+    const region = (tempVenue.region || 'th') as any;
+
+    // Connect to regional DB and create event
+    const regionalConnection = dbManager.getConnection(region);
+    const Event = regionalConnection.models.Event || 
+                  regionalConnection.model('Event', mongoose.model('Event').schema);
+
+    // ✅ FIXED: Use values from eventData, not hardcoded defaults
+    const newEvent = new Event({
+      venueId: venueId,
+      eventName: eventData.eventName,
+      description: eventData.description,
+      eventType: eventData.eventType || 'ENTERTAINMENT',
+      eventCategory: eventData.eventCategory,
+      eventStartsAt: new Date(eventData.eventStartsAt),
+      eventEndsAt: new Date(eventData.eventEndsAt),
+      eventDuration: eventData.eventDuration,
+      
+      // ✅ FIXED: Use timezone from frontend, not hardcoded 'Asia/Dubai'
+      eventTimezone: eventData.eventTimezone || 'Asia/Kolkata',
+      
+      eventRecurrence: eventData.eventRecurrence || 'NONE',
+      
+      // ✅ FIXED: Parse prices correctly
+      eventPriceFrom: eventData.eventPriceFrom ? parseFloat(eventData.eventPriceFrom) : 0,
+      eventPriceMax: eventData.eventPriceMax ? parseFloat(eventData.eventPriceMax) : 0,
+      
+      // ✅ FIXED: Use currency from frontend, not hardcoded 'AED'
+      eventCurrency: eventData.eventCurrency || 'INR',
+      
+      eventAgeRestriction: eventData.eventAgeRestriction,
+      capacity: eventData.capacity ? parseInt(eventData.capacity) : 0,
+      
+      // ✅ FIXED: Respect isActive from frontend
+      isActive: eventData.isActive !== undefined ? eventData.isActive : true,
+      
+      region: region,
+      createdBy: req.user.userId,
+      
+      // ✅ Add these optional fields if present
+      daysOfWeek: eventData.daysOfWeek || [],
+      timeSlots: eventData.timeSlots || [],
+      conditions: eventData.conditions || [],
+      imageUrl: eventData.imageUrl,
+      images: eventData.images || []
+    });
+
+    await newEvent.save();
+
+    console.log(`✅ Event created: ${newEvent._id} for venue ${venueId}`);
+    console.log('💾 Saved event data:', {
+      eventName: newEvent.eventName,
+      currency: newEvent.eventCurrency,
+      timezone: newEvent.eventTimezone,
+      priceFrom: newEvent.eventPriceFrom,
+      priceMax: newEvent.eventPriceMax,
+      startDate: newEvent.eventStartsAt,
+      endDate: newEvent.eventEndsAt
+    });
+
+    // Audit log
+    await AuditLog.create({
+      auditId: uuidv4(),
+      actorId: req.user.userId,
+      actorRole: req.user.role,
+      venueId: venueId.toString(),
+      action: 'VENUE_EVENT_CREATED',
+      meta: {
+        tempVenueId,
+        eventId: newEvent._id.toString(),
+        eventName: eventData.eventName
+      }
+    });
+
+    res.status(201).json({
+      success: true,
+      data: newEvent,
+      message: 'Event created successfully'
+    });
+  } catch (error: any) {
+    console.error('❌ Error creating event:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to create event',
+      error: error.message
+    });
+  }
+});
+
+// PUT /api/agent/venues/:tempVenueId/events/:eventId - Update event
+// PUT /api/agent/venues/:tempVenueId/events/:eventId - Update event
+router.put('/venues/:tempVenueId/events/:eventId', async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user || req.user.role !== 'AGENT') {
+      return res.status(403).json({ message: 'Agent access required' });
+    }
+
+    const { tempVenueId, eventId } = req.params;
+    const eventData = req.body;
+
+    // Find the temp venue
+    const tempVenue = await AgentVenueTemp.findOne({ tempVenueId });
+    if (!tempVenue || !tempVenue.venueId) {
+      return res.status(404).json({ success: false, message: 'Venue not found' });
+    }
+
+    const region = (tempVenue.region || 'th') as any;
+
+    // Connect to regional DB
+    const regionalConnection = dbManager.getConnection(region);
+    const Event = regionalConnection.models.Event || 
+                  regionalConnection.model('Event', mongoose.model('Event').schema);
+
+    // ✅ FIXED: Build update data with proper values
+    const updateData: any = {
+      eventName: eventData.eventName,
+      description: eventData.description,
+      eventType: eventData.eventType,
+      eventCategory: eventData.eventCategory,
+      eventStartsAt: new Date(eventData.eventStartsAt),
+      eventEndsAt: new Date(eventData.eventEndsAt),
+      eventDuration: eventData.eventDuration,
+      
+      // ✅ FIXED: Use timezone from frontend
+      eventTimezone: eventData.eventTimezone,
+      
+      eventRecurrence: eventData.eventRecurrence,
+      
+      // ✅ FIXED: Parse prices correctly
+      eventPriceFrom: eventData.eventPriceFrom ? parseFloat(eventData.eventPriceFrom) : 0,
+      eventPriceMax: eventData.eventPriceMax ? parseFloat(eventData.eventPriceMax) : 0,
+      
+      // ✅ FIXED: Use currency from frontend
+      eventCurrency: eventData.eventCurrency,
+      
+      eventAgeRestriction: eventData.eventAgeRestriction,
+      capacity: eventData.capacity ? parseInt(eventData.capacity) : 0,
+      isActive: eventData.isActive,
+      
+      // ✅ Add optional fields
+      daysOfWeek: eventData.daysOfWeek || [],
+      timeSlots: eventData.timeSlots || [],
+      conditions: eventData.conditions || [],
+      
+      updatedAt: new Date()
+    };
+
+    // ✅ Only update image fields if provided
+    if (eventData.imageUrl) {
+      updateData.imageUrl = eventData.imageUrl;
+    }
+    if (eventData.images) {
+      updateData.images = eventData.images;
+    }
+
+    const updatedEvent = await Event.findByIdAndUpdate(
+      eventId,
+      { $set: updateData },
+      { new: true }
+    );
+
+    if (!updatedEvent) {
+      return res.status(404).json({ success: false, message: 'Event not found' });
+    }
+
+    console.log(`✅ Event updated: ${eventId}`);
+
+    // Audit log
+    await AuditLog.create({
+      auditId: uuidv4(),
+      actorId: req.user.userId,
+      actorRole: req.user.role,
+      venueId: tempVenue.venueId.toString(),
+      action: 'VENUE_EVENT_UPDATED',
+      meta: {
+        tempVenueId,
+        eventId,
+        eventName: eventData.eventName
+      }
+    });
+
+    res.json({
+      success: true,
+      data: updatedEvent,
+      message: 'Event updated successfully'
+    });
+  } catch (error: any) {
+    console.error('❌ Error updating event:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update event',
+      error: error.message
+    });
+  }
+});
+
+// DELETE /api/agent/venues/:tempVenueId/events/:eventId - Delete event
+router.delete('/venues/:tempVenueId/events/:eventId', async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user || req.user.role !== 'AGENT') {
+      return res.status(403).json({ message: 'Agent access required' });
+    }
+
+    const { tempVenueId, eventId } = req.params;
+
+    // Find the temp venue
+    const tempVenue = await AgentVenueTemp.findOne({ tempVenueId });
+    if (!tempVenue || !tempVenue.venueId) {
+      return res.status(404).json({ success: false, message: 'Venue not found' });
+    }
+
+    const region = (tempVenue.region || 'th') as any;
+
+    // Connect to regional DB
+    const regionalConnection = dbManager.getConnection(region);
+    const Event = regionalConnection.model('Event');
+
+    // Delete the event
+    const deletedEvent = await Event.findByIdAndDelete(eventId);
+
+    if (!deletedEvent) {
+      return res.status(404).json({ success: false, message: 'Event not found' });
+    }
+
+    console.log(`Event deleted: ${eventId}`);
+
+    // Audit log
+    await AuditLog.create({
+      auditId: uuidv4(),
+      actorId: req.user.userId,
+      actorRole: req.user.role,
+      venueId: tempVenue.venueId.toString(),
+      action: 'VENUE_EVENT_DELETED',
+      meta: {
+        tempVenueId,
+        eventId,
+        eventName: (deletedEvent as any).eventName
+      }
+    });
+
+    res.json({
+      success: true,
+      message: 'Event deleted successfully'
+    });
+  } catch (error: any) {
+    console.error('Error deleting event:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete event',
+      error: error.message
+    });
+  }
+});
 
 // ===== MEDIA UPLOAD ROUTES =====
 
