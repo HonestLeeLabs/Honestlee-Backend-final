@@ -550,6 +550,7 @@ router.get('/venues/:tempVenueId/events', async (req: AuthRequest, res: Response
 });
 
 // POST /api/agent/venues/:tempVenueId/events - Create event for a venue
+// POST /api/agent/venues/:tempVenueId/events - Create event for a venue
 router.post('/venues/:tempVenueId/events', async (req: AuthRequest, res: Response) => {
   try {
     if (!req.user || req.user.role !== 'AGENT') {
@@ -558,6 +559,8 @@ router.post('/venues/:tempVenueId/events', async (req: AuthRequest, res: Respons
 
     const { tempVenueId } = req.params;
     const eventData = req.body;
+
+    console.log('📥 Received event data:', eventData); // ✅ Debug log
 
     // Find the temp venue
     const tempVenue = await AgentVenueTemp.findOne({ tempVenueId });
@@ -572,10 +575,11 @@ router.post('/venues/:tempVenueId/events', async (req: AuthRequest, res: Respons
     if (!venueId) {
       const region = (tempVenue.region || 'th') as any;
       const regionalConnection = dbManager.getConnection(region);
-      const Venue = regionalConnection.model('Venue');
+      
+      const RegionalVenue = regionalConnection.models.Venue || 
+                            regionalConnection.model('Venue', Venue.schema);
 
-      // Create venue in regional DB
-      const newVenue = new Venue({
+      const newVenue = new RegionalVenue({
         globalId: tempVenue.tempVenueId,
         AccountName: tempVenue.name,
         name: tempVenue.name,
@@ -600,7 +604,6 @@ router.post('/venues/:tempVenueId/events', async (req: AuthRequest, res: Respons
       await newVenue.save();
       venueId = newVenue._id as mongoose.Types.ObjectId;
 
-      // Update temp venue with venueId
       tempVenue.venueId = venueId;
       await tempVenue.save();
 
@@ -611,9 +614,10 @@ router.post('/venues/:tempVenueId/events', async (req: AuthRequest, res: Respons
 
     // Connect to regional DB and create event
     const regionalConnection = dbManager.getConnection(region);
-    const Event = regionalConnection.model('Event');
+    const Event = regionalConnection.models.Event || 
+                  regionalConnection.model('Event', mongoose.model('Event').schema);
 
-    // Create the event
+    // ✅ FIXED: Use values from eventData, not hardcoded defaults
     const newEvent = new Event({
       venueId: venueId,
       eventName: eventData.eventName,
@@ -623,21 +627,48 @@ router.post('/venues/:tempVenueId/events', async (req: AuthRequest, res: Respons
       eventStartsAt: new Date(eventData.eventStartsAt),
       eventEndsAt: new Date(eventData.eventEndsAt),
       eventDuration: eventData.eventDuration,
-      eventTimezone: eventData.eventTimezone || 'Asia/Dubai',
+      
+      // ✅ FIXED: Use timezone from frontend, not hardcoded 'Asia/Dubai'
+      eventTimezone: eventData.eventTimezone || 'Asia/Kolkata',
+      
       eventRecurrence: eventData.eventRecurrence || 'NONE',
-      eventPriceFrom: parseFloat(eventData.eventPriceFrom) || 0,
-      eventPriceMax: parseFloat(eventData.eventPriceMax) || 0,
-      eventCurrency: eventData.eventCurrency || 'AED',
+      
+      // ✅ FIXED: Parse prices correctly
+      eventPriceFrom: eventData.eventPriceFrom ? parseFloat(eventData.eventPriceFrom) : 0,
+      eventPriceMax: eventData.eventPriceMax ? parseFloat(eventData.eventPriceMax) : 0,
+      
+      // ✅ FIXED: Use currency from frontend, not hardcoded 'AED'
+      eventCurrency: eventData.eventCurrency || 'INR',
+      
       eventAgeRestriction: eventData.eventAgeRestriction,
-      capacity: parseInt(eventData.capacity) || 0,
+      capacity: eventData.capacity ? parseInt(eventData.capacity) : 0,
+      
+      // ✅ FIXED: Respect isActive from frontend
       isActive: eventData.isActive !== undefined ? eventData.isActive : true,
+      
       region: region,
-      createdBy: req.user.userId
+      createdBy: req.user.userId,
+      
+      // ✅ Add these optional fields if present
+      daysOfWeek: eventData.daysOfWeek || [],
+      timeSlots: eventData.timeSlots || [],
+      conditions: eventData.conditions || [],
+      imageUrl: eventData.imageUrl,
+      images: eventData.images || []
     });
 
     await newEvent.save();
 
-    console.log(`Event created: ${newEvent._id} for venue ${venueId}`);
+    console.log(`✅ Event created: ${newEvent._id} for venue ${venueId}`);
+    console.log('💾 Saved event data:', {
+      eventName: newEvent.eventName,
+      currency: newEvent.eventCurrency,
+      timezone: newEvent.eventTimezone,
+      priceFrom: newEvent.eventPriceFrom,
+      priceMax: newEvent.eventPriceMax,
+      startDate: newEvent.eventStartsAt,
+      endDate: newEvent.eventEndsAt
+    });
 
     // Audit log
     await AuditLog.create({
@@ -659,7 +690,7 @@ router.post('/venues/:tempVenueId/events', async (req: AuthRequest, res: Respons
       message: 'Event created successfully'
     });
   } catch (error: any) {
-    console.error('Error creating event:', error);
+    console.error('❌ Error creating event:', error);
     res.status(500).json({
       success: false,
       message: 'Failed to create event',
@@ -668,6 +699,7 @@ router.post('/venues/:tempVenueId/events', async (req: AuthRequest, res: Respons
   }
 });
 
+// PUT /api/agent/venues/:tempVenueId/events/:eventId - Update event
 // PUT /api/agent/venues/:tempVenueId/events/:eventId - Update event
 router.put('/venues/:tempVenueId/events/:eventId', async (req: AuthRequest, res: Response) => {
   try {
@@ -688,9 +720,10 @@ router.put('/venues/:tempVenueId/events/:eventId', async (req: AuthRequest, res:
 
     // Connect to regional DB
     const regionalConnection = dbManager.getConnection(region);
-    const Event = regionalConnection.model('Event');
+    const Event = regionalConnection.models.Event || 
+                  regionalConnection.model('Event', mongoose.model('Event').schema);
 
-    // Update the event
+    // ✅ FIXED: Build update data with proper values
     const updateData: any = {
       eventName: eventData.eventName,
       description: eventData.description,
@@ -699,16 +732,38 @@ router.put('/venues/:tempVenueId/events/:eventId', async (req: AuthRequest, res:
       eventStartsAt: new Date(eventData.eventStartsAt),
       eventEndsAt: new Date(eventData.eventEndsAt),
       eventDuration: eventData.eventDuration,
+      
+      // ✅ FIXED: Use timezone from frontend
       eventTimezone: eventData.eventTimezone,
+      
       eventRecurrence: eventData.eventRecurrence,
-      eventPriceFrom: parseFloat(eventData.eventPriceFrom) || 0,
-      eventPriceMax: parseFloat(eventData.eventPriceMax) || 0,
+      
+      // ✅ FIXED: Parse prices correctly
+      eventPriceFrom: eventData.eventPriceFrom ? parseFloat(eventData.eventPriceFrom) : 0,
+      eventPriceMax: eventData.eventPriceMax ? parseFloat(eventData.eventPriceMax) : 0,
+      
+      // ✅ FIXED: Use currency from frontend
       eventCurrency: eventData.eventCurrency,
+      
       eventAgeRestriction: eventData.eventAgeRestriction,
-      capacity: parseInt(eventData.capacity) || 0,
+      capacity: eventData.capacity ? parseInt(eventData.capacity) : 0,
       isActive: eventData.isActive,
+      
+      // ✅ Add optional fields
+      daysOfWeek: eventData.daysOfWeek || [],
+      timeSlots: eventData.timeSlots || [],
+      conditions: eventData.conditions || [],
+      
       updatedAt: new Date()
     };
+
+    // ✅ Only update image fields if provided
+    if (eventData.imageUrl) {
+      updateData.imageUrl = eventData.imageUrl;
+    }
+    if (eventData.images) {
+      updateData.images = eventData.images;
+    }
 
     const updatedEvent = await Event.findByIdAndUpdate(
       eventId,
@@ -720,7 +775,7 @@ router.put('/venues/:tempVenueId/events/:eventId', async (req: AuthRequest, res:
       return res.status(404).json({ success: false, message: 'Event not found' });
     }
 
-    console.log(`Event updated: ${eventId}`);
+    console.log(`✅ Event updated: ${eventId}`);
 
     // Audit log
     await AuditLog.create({
@@ -742,7 +797,7 @@ router.put('/venues/:tempVenueId/events/:eventId', async (req: AuthRequest, res:
       message: 'Event updated successfully'
     });
   } catch (error: any) {
-    console.error('Error updating event:', error);
+    console.error('❌ Error updating event:', error);
     res.status(500).json({
       success: false,
       message: 'Failed to update event',
