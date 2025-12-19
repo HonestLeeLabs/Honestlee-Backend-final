@@ -47,6 +47,61 @@ const getCloudFrontUrl = (s3Url: string): string => {
   return s3Url;
 };
 
+// ===== EVENT PHOTO UPLOAD (MUST BE BEFORE parameterized routes) =====
+// EVENT PHOTO UPLOAD - Add this route to routes/agentOnboarding.ts
+router.post('/events/upload-photo', uploadVenueMediaDirect.single('eventPhoto'), async (req: Request, res: Response) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: 'No photo uploaded' });
+    }
+
+    const file = req.file as any;
+
+    // ✅ FIX: Remove duplicate https:// prefix
+    let cloudFrontUrl = file.location;
+    
+    // If it's an S3 URL, transform it to CloudFront
+    if (cloudFrontUrl && cloudFrontUrl.includes('.s3.')) {
+      const cloudFrontDomain = process.env.CLOUDFRONT_DOMAIN || 'dedllwce1iasg.cloudfront.net';
+      const s3BucketDomain = process.env.S3_BUCKET_NAME || 'honestlee-user-upload';
+      
+      // Extract the S3 key (path after bucket name)
+      const s3Key = cloudFrontUrl.split('.com/')[1] || cloudFrontUrl.split(`${s3BucketDomain}/`)[1];
+      
+      if (s3Key) {
+        cloudFrontUrl = `https://${cloudFrontDomain}/${s3Key}`;
+      }
+    }
+
+    // ✅ CRITICAL: Ensure no double https://
+    cloudFrontUrl = cloudFrontUrl.replace('https://https://', 'https://');
+
+    console.log('✅ Event photo uploaded successfully:', {
+      originalUrl: file.location,
+      cloudFrontUrl: cloudFrontUrl,
+      key: file.key,
+      size: (file.size / 1024).toFixed(2) + ' KB'
+    });
+
+    return res.json({
+      success: true,
+      data: {
+        url: cloudFrontUrl, // ✅ Clean URL
+        s3Key: file.key,
+        size: file.size,
+        mimetype: file.mimetype
+      },
+      message: 'Event photo uploaded successfully'
+    });
+  } catch (error: any) {
+    console.error('❌ Error in event photo upload:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to upload event photo',
+      error: error.message
+    });
+  }
+});
 
 // ===== ZONE PHOTO UPLOAD (MUST BE FIRST - before parameterized routes) =====
 router.post(
@@ -126,132 +181,6 @@ router.put('/venues/:tempVenueId/link-crm', (req: Request, res: Response, next: 
 
 router.put('/venues/:tempVenueId/status', (req: Request, res: Response, next: NextFunction) => {
   agentController.updateVenueStatus(req as any, res).catch(next);
-});
-
-
-// POST /api/agent/venues/:tempVenueId/events - Create event for a venue
-router.post('/venues/:tempVenueId/events', async (req: AuthRequest, res: Response) => {
-  try {
-    if (!req.user || req.user.role !== 'AGENT') {
-      return res.status(403).json({ message: 'Agent access required' });
-    }
-
-    const { tempVenueId } = req.params;
-    const eventData = req.body;
-
-    // Find the temp venue
-    const tempVenue = await AgentVenueTemp.findOne({ tempVenueId });
-    if (!tempVenue) {
-      return res.status(404).json({ success: false, message: 'Venue not found' });
-    }
-
-    // Get the actual venue ID
-    let venueId = tempVenue.venueId;
-
-    // If venue doesn't exist in main DB yet, create it
-    if (!venueId) {
-      const region = (tempVenue.region || 'th') as any;
-      const regionalConnection = dbManager.getConnection(region);
-      
-      // ✅ FIXED: Use the schema from the imported Venue model
-      const RegionalVenue = regionalConnection.models.Venue || 
-                            regionalConnection.model('Venue', Venue.schema);
-
-      // Create venue in regional DB
-      const newVenue = new RegionalVenue({
-        globalId: tempVenue.tempVenueId,
-        AccountName: tempVenue.name,
-        name: tempVenue.name,
-        geometry: {
-          type: 'Point',
-          coordinates: [
-            tempVenue.address?.lng || 0,
-            tempVenue.address?.lat || 0
-          ]
-        },
-        address: tempVenue.address,
-        Phone: tempVenue.phone,
-        Website: tempVenue.socials?.website,
-        category: tempVenue.category,
-        venuetype: tempVenue.category?.[0],
-        region: region,
-        isActive: true,
-        isVerified: false,
-        ownerId: req.user.userId ? new mongoose.Types.ObjectId(req.user.userId) : undefined
-      });
-
-      await newVenue.save();
-      venueId = newVenue._id as mongoose.Types.ObjectId;
-
-      // Update temp venue with venueId
-      tempVenue.venueId = venueId;
-      await tempVenue.save();
-
-      console.log(`Auto-created venue ${venueId} for tempVenueId ${tempVenueId}`);
-    }
-
-    const region = (tempVenue.region || 'th') as any;
-
-    // Connect to regional DB and create event
-    const regionalConnection = dbManager.getConnection(region);
-    
-    // ✅ FIXED: Use existing Event model or register with schema
-    const Event = regionalConnection.models.Event || 
-                  regionalConnection.model('Event', mongoose.model('Event').schema);
-
-    // Create the event
-    const newEvent = new Event({
-      venueId: venueId,
-      eventName: eventData.eventName,
-      description: eventData.description,
-      eventType: eventData.eventType || 'ENTERTAINMENT',
-      eventCategory: eventData.eventCategory,
-      eventStartsAt: new Date(eventData.eventStartsAt),
-      eventEndsAt: new Date(eventData.eventEndsAt),
-      eventDuration: eventData.eventDuration,
-      eventTimezone: eventData.eventTimezone || 'Asia/Dubai',
-      eventRecurrence: eventData.eventRecurrence || 'NONE',
-      eventPriceFrom: parseFloat(eventData.eventPriceFrom) || 0,
-      eventPriceMax: parseFloat(eventData.eventPriceMax) || 0,
-      eventCurrency: eventData.eventCurrency || 'AED',
-      eventAgeRestriction: eventData.eventAgeRestriction,
-      capacity: parseInt(eventData.capacity) || 0,
-      isActive: eventData.isActive !== undefined ? eventData.isActive : true,
-      region: region,
-      createdBy: req.user.userId
-    });
-
-    await newEvent.save();
-
-    console.log(`Event created: ${newEvent._id} for venue ${venueId}`);
-
-    // Audit log
-    await AuditLog.create({
-      auditId: uuidv4(),
-      actorId: req.user.userId,
-      actorRole: req.user.role,
-      venueId: venueId.toString(),
-      action: 'VENUE_EVENT_CREATED',
-      meta: {
-        tempVenueId,
-        eventId: newEvent._id.toString(),
-        eventName: eventData.eventName
-      }
-    });
-
-    res.status(201).json({
-      success: true,
-      data: newEvent,
-      message: 'Event created successfully'
-    });
-  } catch (error: any) {
-    console.error('Error creating event:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to create event',
-      error: error.message
-    });
-  }
 });
 
 // ===== GEOFENCING OPERATIONS =====
@@ -549,8 +478,8 @@ router.get('/venues/:tempVenueId/events', async (req: AuthRequest, res: Response
   }
 });
 
-// POST /api/agent/venues/:tempVenueId/events - Create event for a venue
-// POST /api/agent/venues/:tempVenueId/events - Create event for a venue
+// POST /api/agent/venues/:tempVenueId/events - Create event
+// POST /api/agent/venues/:tempVenueId/events - Create event
 router.post('/venues/:tempVenueId/events', async (req: AuthRequest, res: Response) => {
   try {
     if (!req.user || req.user.role !== 'AGENT') {
@@ -560,35 +489,25 @@ router.post('/venues/:tempVenueId/events', async (req: AuthRequest, res: Respons
     const { tempVenueId } = req.params;
     const eventData = req.body;
 
-    console.log('📥 Received event data:', eventData); // ✅ Debug log
-
-    // Find the temp venue
     const tempVenue = await AgentVenueTemp.findOne({ tempVenueId });
     if (!tempVenue) {
       return res.status(404).json({ success: false, message: 'Venue not found' });
     }
 
-    // Get the actual venue ID
     let venueId = tempVenue.venueId;
-
-    // If venue doesn't exist in main DB yet, create it
     if (!venueId) {
+      // Auto-create venue logic (same as before)
       const region = (tempVenue.region || 'th') as any;
       const regionalConnection = dbManager.getConnection(region);
+      const RegionalVenue = regionalConnection.models.Venue || regionalConnection.model('Venue', Venue.schema);
       
-      const RegionalVenue = regionalConnection.models.Venue || 
-                            regionalConnection.model('Venue', Venue.schema);
-
       const newVenue = new RegionalVenue({
         globalId: tempVenue.tempVenueId,
         AccountName: tempVenue.name,
         name: tempVenue.name,
         geometry: {
           type: 'Point',
-          coordinates: [
-            tempVenue.address?.lng || 0,
-            tempVenue.address?.lat || 0
-          ]
+          coordinates: [tempVenue.address?.lng || 0, tempVenue.address?.lat || 0]
         },
         address: tempVenue.address,
         Phone: tempVenue.phone,
@@ -600,75 +519,175 @@ router.post('/venues/:tempVenueId/events', async (req: AuthRequest, res: Respons
         isVerified: false,
         ownerId: req.user.userId ? new mongoose.Types.ObjectId(req.user.userId) : undefined
       });
-
+      
       await newVenue.save();
       venueId = newVenue._id as mongoose.Types.ObjectId;
-
       tempVenue.venueId = venueId;
       await tempVenue.save();
-
-      console.log(`Auto-created venue ${venueId} for tempVenueId ${tempVenueId}`);
+      console.log(`✅ Auto-created venue ${venueId} for tempVenueId ${tempVenueId}`);
     }
 
     const region = (tempVenue.region || 'th') as any;
-
-    // Connect to regional DB and create event
     const regionalConnection = dbManager.getConnection(region);
-    const Event = regionalConnection.models.Event || 
-                  regionalConnection.model('Event', mongoose.model('Event').schema);
+    const Event = regionalConnection.models.Event || regionalConnection.model('Event', mongoose.model('Event').schema);
 
-    // ✅ FIXED: Use values from eventData, not hardcoded defaults
+    // Parse arrays/objects
+    let daysOfWeek = eventData.daysOfWeek;
+    if (typeof daysOfWeek === 'string') {
+      daysOfWeek = daysOfWeek.split(',').map((d: string) => parseInt(d.trim())).filter((d: number) => !isNaN(d));
+    }
+
+    let timeSlots = eventData.timeSlots;
+    if (typeof timeSlots === 'string') {
+      try { timeSlots = JSON.parse(timeSlots); } catch { timeSlots = undefined; }
+    }
+
+    let participationModesSecondary = eventData.participationModesSecondary;
+    if (typeof participationModesSecondary === 'string') {
+      participationModesSecondary = participationModesSecondary.split(',').map((m: string) => m.trim());
+    }
+
+    // ✅ Create event with ALL fields including new ones
     const newEvent = new Event({
+      // Core
       venueId: venueId,
       eventName: eventData.eventName,
+      eventSubtitle: eventData.eventSubtitle, // ✅ NEW
       description: eventData.description,
       eventType: eventData.eventType || 'ENTERTAINMENT',
+      eventTypeSlug: eventData.eventTypeSlug,
       eventCategory: eventData.eventCategory,
+      
+      // Source & Origin ✅ NEW
+      sourceEventId: eventData.sourceEventId,
+      sourceName: eventData.sourceName,
+      sourceUrl: eventData.sourceUrl,
+      venueSourceId: eventData.venueSourceId,
+      eventOriginType: eventData.eventOriginType,
+      eventExclusivity: eventData.eventExclusivity,
+      
+      // DateTime
       eventStartsAt: new Date(eventData.eventStartsAt),
       eventEndsAt: new Date(eventData.eventEndsAt),
       eventDuration: eventData.eventDuration,
+      eventTimezone: eventData.eventTimezone || 'Asia/Dubai',
+      allDay: eventData.allDay || false,
+      doorsOpenAt: eventData.doorsOpenAt ? new Date(eventData.doorsOpenAt) : undefined, // ✅ NEW
       
-      // ✅ FIXED: Use timezone from frontend, not hardcoded 'Asia/Dubai'
-      eventTimezone: eventData.eventTimezone || 'Asia/Kolkata',
-      
+      // Recurrence
       eventRecurrence: eventData.eventRecurrence || 'NONE',
+      recurrenceText: eventData.recurrenceText,
+      seriesId: eventData.seriesId,
+      occurrenceId: eventData.occurrenceId, // ✅ NEW
+      isException: eventData.isException || false, // ✅ NEW
+      daysOfWeek: daysOfWeek,
+      timeSlots: timeSlots,
       
-      // ✅ FIXED: Parse prices correctly
-      eventPriceFrom: eventData.eventPriceFrom ? parseFloat(eventData.eventPriceFrom) : 0,
-      eventPriceMax: eventData.eventPriceMax ? parseFloat(eventData.eventPriceMax) : 0,
+      // Participation
+      participationModePrimary: eventData.participationModePrimary,
+      participationModesSecondary: participationModesSecondary,
       
-      // ✅ FIXED: Use currency from frontend, not hardcoded 'AED'
-      eventCurrency: eventData.eventCurrency || 'INR',
-      
+      // Audience
+      eventGender: eventData.eventGender,
+      ageMin: eventData.ageMin ? parseInt(eventData.ageMin) : undefined,
+      ageMax: eventData.ageMax ? parseInt(eventData.ageMax) : undefined,
+      eventFamilyFriendly: eventData.eventFamilyFriendly,
       eventAgeRestriction: eventData.eventAgeRestriction,
-      capacity: eventData.capacity ? parseInt(eventData.capacity) : 0,
       
-      // ✅ FIXED: Respect isActive from frontend
+      // Skill & Intensity
+      eventSkillLevel: eventData.eventSkillLevel,
+      eventIntensity: eventData.eventIntensity,
+      
+      // Location ✅ NEW ALL
+      eventIndoorOutdoor: eventData.eventIndoorOutdoor,
+      accessibilityNotes: eventData.accessibilityNotes,
+      locationName: eventData.locationName,
+      address: eventData.address,
+      neighborhood: eventData.neighborhood,
+      city: eventData.city,
+      country: eventData.country,
+      geoOverride: eventData.geoOverride || false,
+      lat: eventData.lat ? parseFloat(eventData.lat) : undefined,
+      lng: eventData.lng ? parseFloat(eventData.lng) : undefined,
+      eventLocationDirections: eventData.eventLocationDirections,
+      
+      // Pricing
+      priceType: eventData.priceType || 'FREE',
+      eventPriceFrom: eventData.eventPriceFrom ? parseFloat(eventData.eventPriceFrom) : 0,
+      eventPriceMax: eventData.eventPriceMax ? parseFloat(eventData.eventPriceMax) : undefined,
+      eventCurrency: eventData.eventCurrency || 'AED',
+      priceNotes: eventData.priceNotes,
+      
+      // Capacity
+      capacity: eventData.capacity ? parseInt(eventData.capacity) : undefined,
+      ticketsAvailable: eventData.ticketsAvailable ? parseInt(eventData.ticketsAvailable) : 0, // ✅ NEW
+      currentAttendees: 0,
+      
+      // RSVP/Booking
+      rsvpRequired: eventData.rsvpRequired || false,
+      rsvpMethod: eventData.rsvpMethod,
+      rsvpDeadline: eventData.rsvpDeadline ? new Date(eventData.rsvpDeadline) : undefined,
+      bookingUrl: eventData.bookingUrl,
+      ticketUrl: eventData.ticketUrl,
+      ticketProvider: eventData.ticketProvider,
+      
+      // Team/Players ✅ NEW ALL
+      playersPerSide: eventData.playersPerSide ? parseInt(eventData.playersPerSide) : undefined,
+      teamSizeTotal: eventData.teamSizeTotal ? parseInt(eventData.teamSizeTotal) : undefined,
+      minPlayers: eventData.minPlayers ? parseInt(eventData.minPlayers) : undefined,
+      maxPlayers: eventData.maxPlayers ? parseInt(eventData.maxPlayers) : undefined,
+      formatNotes: eventData.formatNotes,
+      
+      // Status
+      status: eventData.status || 'SCHEDULED',
+      visibility: eventData.visibility || 'PUBLIC',
       isActive: eventData.isActive !== undefined ? eventData.isActive : true,
+      cancellationReason: eventData.cancellationReason, // ✅ NEW
+      cancelledAt: eventData.cancelledAt ? new Date(eventData.cancelledAt) : undefined, // ✅ NEW
       
-      region: region,
-      createdBy: req.user.userId,
+      // Weather
+      weatherSensitive: eventData.weatherSensitive || false,
+      badWeatherPolicy: eventData.badWeatherPolicy,
       
-      // ✅ Add these optional fields if present
-      daysOfWeek: eventData.daysOfWeek || [],
-      timeSlots: eventData.timeSlots || [],
-      conditions: eventData.conditions || [],
+      // Organizer
+      organizerName: eventData.organizerName,
+      organizerType: eventData.organizerType,
+      organizerContact: eventData.organizerContact,
+      organizerWhatsapp: eventData.organizerWhatsapp,
+      organizerLine: eventData.organizerLine,
+      organizerInstagram: eventData.organizerInstagram,
+      organizerEmail: eventData.organizerEmail,
+      
+      // Media
       imageUrl: eventData.imageUrl,
-      images: eventData.images || []
+      images: eventData.images || [],
+      coverPhotoUrl: eventData.coverPhotoUrl,
+      eventPhotoUrl: eventData.eventPhotoUrl, // ✅ NEW
+      eventPhotoS3Key: eventData.eventPhotoS3Key, // ✅ NEW
+      
+      // Gear
+      eventsGear: eventData.eventsGear,
+      
+      // Check-in ✅ NEW
+      checkInMethod: eventData.checkInMethod,
+      onPremiseRequired: eventData.onPremiseRequired || false,
+      
+      // Verification ✅ NEW ALL
+      lastVerifiedAt: eventData.lastVerifiedAt ? new Date(eventData.lastVerifiedAt) : undefined,
+      verifiedBy: eventData.verifiedBy,
+      confidenceScore: eventData.confidenceScore ? parseFloat(eventData.confidenceScore) : 0,
+      notesInternal: eventData.notesInternal,
+      
+      // Meta
+      tags: eventData.tags || [],
+      language: eventData.language || 'en',
+      conditions: eventData.conditions,
+      region: region,
+      createdBy: req.user.userId
     });
 
     await newEvent.save();
-
-    console.log(`✅ Event created: ${newEvent._id} for venue ${venueId}`);
-    console.log('💾 Saved event data:', {
-      eventName: newEvent.eventName,
-      currency: newEvent.eventCurrency,
-      timezone: newEvent.eventTimezone,
-      priceFrom: newEvent.eventPriceFrom,
-      priceMax: newEvent.eventPriceMax,
-      startDate: newEvent.eventStartsAt,
-      endDate: newEvent.eventEndsAt
-    });
+    console.log(`✅ Event created ${newEvent._id} for venue ${venueId}`);
 
     // Audit log
     await AuditLog.create({
@@ -677,29 +696,15 @@ router.post('/venues/:tempVenueId/events', async (req: AuthRequest, res: Respons
       actorRole: req.user.role,
       venueId: venueId.toString(),
       action: 'VENUE_EVENT_CREATED',
-      meta: {
-        tempVenueId,
-        eventId: newEvent._id.toString(),
-        eventName: eventData.eventName
-      }
+      meta: { tempVenueId, eventId: newEvent._id.toString(), eventName: eventData.eventName }
     });
 
-    res.status(201).json({
-      success: true,
-      data: newEvent,
-      message: 'Event created successfully'
-    });
+    res.status(201).json({ success: true, data: newEvent, message: 'Event created successfully' });
   } catch (error: any) {
-    console.error('❌ Error creating event:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to create event',
-      error: error.message
-    });
+    console.error('Error creating event:', error);
+    res.status(500).json({ success: false, message: 'Failed to create event', error: error.message });
   }
 });
-
-// PUT /api/agent/venues/:tempVenueId/events/:eventId - Update event
 // PUT /api/agent/venues/:tempVenueId/events/:eventId - Update event
 router.put('/venues/:tempVenueId/events/:eventId', async (req: AuthRequest, res: Response) => {
   try {
@@ -710,60 +715,172 @@ router.put('/venues/:tempVenueId/events/:eventId', async (req: AuthRequest, res:
     const { tempVenueId, eventId } = req.params;
     const eventData = req.body;
 
-    // Find the temp venue
     const tempVenue = await AgentVenueTemp.findOne({ tempVenueId });
     if (!tempVenue || !tempVenue.venueId) {
       return res.status(404).json({ success: false, message: 'Venue not found' });
     }
 
     const region = (tempVenue.region || 'th') as any;
-
-    // Connect to regional DB
     const regionalConnection = dbManager.getConnection(region);
-    const Event = regionalConnection.models.Event || 
-                  regionalConnection.model('Event', mongoose.model('Event').schema);
+    const Event = regionalConnection.models.Event || regionalConnection.model('Event', mongoose.model('Event').schema);
 
-    // ✅ FIXED: Build update data with proper values
+    // Parse arrays/objects
+    let daysOfWeek = eventData.daysOfWeek;
+    if (typeof daysOfWeek === 'string') {
+      daysOfWeek = daysOfWeek.split(',').map((d: string) => parseInt(d.trim())).filter((d: number) => !isNaN(d));
+    }
+
+    let timeSlots = eventData.timeSlots;
+    if (typeof timeSlots === 'string') {
+      try {
+        timeSlots = JSON.parse(timeSlots);
+      } catch {
+        timeSlots = undefined;
+      }
+    }
+
+    let participationModesSecondary = eventData.participationModesSecondary;
+    if (typeof participationModesSecondary === 'string') {
+      participationModesSecondary = participationModesSecondary.split(',').map((m: string) => m.trim());
+    }
+
+    // ✅ Build update object with ALL fields (including 33 new ones)
     const updateData: any = {
+      // Core
       eventName: eventData.eventName,
+      eventSubtitle: eventData.eventSubtitle, // ✅ NEW
       description: eventData.description,
       eventType: eventData.eventType,
+      eventTypeSlug: eventData.eventTypeSlug,
       eventCategory: eventData.eventCategory,
+      
+      // Source & Origin ✅ NEW
+      sourceEventId: eventData.sourceEventId,
+      sourceName: eventData.sourceName,
+      sourceUrl: eventData.sourceUrl,
+      venueSourceId: eventData.venueSourceId,
+      eventOriginType: eventData.eventOriginType,
+      eventExclusivity: eventData.eventExclusivity,
+      
+      // DateTime
       eventStartsAt: new Date(eventData.eventStartsAt),
       eventEndsAt: new Date(eventData.eventEndsAt),
       eventDuration: eventData.eventDuration,
-      
-      // ✅ FIXED: Use timezone from frontend
       eventTimezone: eventData.eventTimezone,
+      allDay: eventData.allDay,
+      doorsOpenAt: eventData.doorsOpenAt ? new Date(eventData.doorsOpenAt) : undefined, // ✅ NEW
       
+      // Recurrence
       eventRecurrence: eventData.eventRecurrence,
+      recurrenceText: eventData.recurrenceText,
+      seriesId: eventData.seriesId,
+      occurrenceId: eventData.occurrenceId, // ✅ NEW
+      isException: eventData.isException, // ✅ NEW
+      daysOfWeek: daysOfWeek,
+      timeSlots: timeSlots,
       
-      // ✅ FIXED: Parse prices correctly
-      eventPriceFrom: eventData.eventPriceFrom ? parseFloat(eventData.eventPriceFrom) : 0,
-      eventPriceMax: eventData.eventPriceMax ? parseFloat(eventData.eventPriceMax) : 0,
+      // Participation
+      participationModePrimary: eventData.participationModePrimary,
+      participationModesSecondary: participationModesSecondary,
       
-      // ✅ FIXED: Use currency from frontend
-      eventCurrency: eventData.eventCurrency,
-      
+      // Audience
+      eventGender: eventData.eventGender,
+      ageMin: eventData.ageMin ? parseInt(eventData.ageMin) : undefined,
+      ageMax: eventData.ageMax ? parseInt(eventData.ageMax) : undefined,
+      eventFamilyFriendly: eventData.eventFamilyFriendly,
       eventAgeRestriction: eventData.eventAgeRestriction,
-      capacity: eventData.capacity ? parseInt(eventData.capacity) : 0,
+      
+      // Skill & Intensity
+      eventSkillLevel: eventData.eventSkillLevel,
+      eventIntensity: eventData.eventIntensity,
+      
+      // Location ✅ NEW ALL
+      eventIndoorOutdoor: eventData.eventIndoorOutdoor,
+      accessibilityNotes: eventData.accessibilityNotes,
+      locationName: eventData.locationName,
+      address: eventData.address,
+      neighborhood: eventData.neighborhood,
+      city: eventData.city,
+      country: eventData.country,
+      geoOverride: eventData.geoOverride,
+      lat: eventData.lat ? parseFloat(eventData.lat) : undefined,
+      lng: eventData.lng ? parseFloat(eventData.lng) : undefined,
+      eventLocationDirections: eventData.eventLocationDirections,
+      
+      // Pricing
+      priceType: eventData.priceType,
+      eventPriceFrom: eventData.eventPriceFrom ? parseFloat(eventData.eventPriceFrom) : 0,
+      eventPriceMax: eventData.eventPriceMax ? parseFloat(eventData.eventPriceMax) : undefined,
+      eventCurrency: eventData.eventCurrency,
+      priceNotes: eventData.priceNotes,
+      
+      // Capacity
+      capacity: eventData.capacity ? parseInt(eventData.capacity) : undefined,
+      ticketsAvailable: eventData.ticketsAvailable ? parseInt(eventData.ticketsAvailable) : undefined, // ✅ NEW
+      
+      // RSVP/Booking
+      rsvpRequired: eventData.rsvpRequired,
+      rsvpMethod: eventData.rsvpMethod,
+      rsvpDeadline: eventData.rsvpDeadline ? new Date(eventData.rsvpDeadline) : undefined,
+      bookingUrl: eventData.bookingUrl,
+      ticketUrl: eventData.ticketUrl,
+      ticketProvider: eventData.ticketProvider,
+      
+      // Team/Players ✅ NEW ALL
+      playersPerSide: eventData.playersPerSide ? parseInt(eventData.playersPerSide) : undefined,
+      teamSizeTotal: eventData.teamSizeTotal ? parseInt(eventData.teamSizeTotal) : undefined,
+      minPlayers: eventData.minPlayers ? parseInt(eventData.minPlayers) : undefined,
+      maxPlayers: eventData.maxPlayers ? parseInt(eventData.maxPlayers) : undefined,
+      formatNotes: eventData.formatNotes,
+      
+      // Status
+      status: eventData.status,
+      visibility: eventData.visibility,
       isActive: eventData.isActive,
+      cancellationReason: eventData.cancellationReason, // ✅ NEW
+      cancelledAt: eventData.cancelledAt ? new Date(eventData.cancelledAt) : undefined, // ✅ NEW
       
-      // ✅ Add optional fields
-      daysOfWeek: eventData.daysOfWeek || [],
-      timeSlots: eventData.timeSlots || [],
-      conditions: eventData.conditions || [],
+      // Weather
+      weatherSensitive: eventData.weatherSensitive,
+      badWeatherPolicy: eventData.badWeatherPolicy,
       
+      // Organizer
+      organizerName: eventData.organizerName,
+      organizerType: eventData.organizerType,
+      organizerContact: eventData.organizerContact,
+      organizerWhatsapp: eventData.organizerWhatsapp,
+      organizerLine: eventData.organizerLine,
+      organizerInstagram: eventData.organizerInstagram,
+      organizerEmail: eventData.organizerEmail,
+      
+      // Media
+      imageUrl: eventData.imageUrl,
+      images: eventData.images,
+      coverPhotoUrl: eventData.coverPhotoUrl,
+      eventPhotoUrl: eventData.eventPhotoUrl, // ✅ NEW
+      eventPhotoS3Key: eventData.eventPhotoS3Key, // ✅ NEW
+      
+      // Gear
+      eventsGear: eventData.eventsGear,
+      
+      // Check-in ✅ NEW
+      checkInMethod: eventData.checkInMethod,
+      onPremiseRequired: eventData.onPremiseRequired,
+      
+      // Verification ✅ NEW ALL
+      lastVerifiedAt: eventData.lastVerifiedAt ? new Date(eventData.lastVerifiedAt) : undefined,
+      verifiedBy: eventData.verifiedBy,
+      confidenceScore: eventData.confidenceScore ? parseFloat(eventData.confidenceScore) : undefined,
+      notesInternal: eventData.notesInternal,
+      
+      // Meta
+      tags: eventData.tags,
+      language: eventData.language,
+      conditions: eventData.conditions,
+      
+      // Timestamp
       updatedAt: new Date()
     };
-
-    // ✅ Only update image fields if provided
-    if (eventData.imageUrl) {
-      updateData.imageUrl = eventData.imageUrl;
-    }
-    if (eventData.images) {
-      updateData.images = eventData.images;
-    }
 
     const updatedEvent = await Event.findByIdAndUpdate(
       eventId,
@@ -777,18 +894,13 @@ router.put('/venues/:tempVenueId/events/:eventId', async (req: AuthRequest, res:
 
     console.log(`✅ Event updated: ${eventId}`);
 
-    // Audit log
     await AuditLog.create({
       auditId: uuidv4(),
       actorId: req.user.userId,
       actorRole: req.user.role,
       venueId: tempVenue.venueId.toString(),
       action: 'VENUE_EVENT_UPDATED',
-      meta: {
-        tempVenueId,
-        eventId,
-        eventName: eventData.eventName
-      }
+      meta: { tempVenueId, eventId, eventName: eventData.eventName }
     });
 
     res.json({
