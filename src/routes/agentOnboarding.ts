@@ -452,7 +452,7 @@ router.get('/venues/:tempVenueId/events', async (req: AuthRequest, res: Response
     // Connect to regional DB
     const regionalConnection = dbManager.getConnection(region);
 
-    // Get Event model from regional DB (assuming you have EventSchema exported)
+    // Get Event model from regional DB
     const Event = regionalConnection.model('Event');
 
     // Fetch events for this venue
@@ -460,16 +460,17 @@ router.get('/venues/:tempVenueId/events', async (req: AuthRequest, res: Response
       .sort({ eventStartsAt: 1 })
       .lean();
 
-    console.log(`Found ${events.length} events for venue ${venueId}`);
+    console.log(`✅ Found ${events.length} events for venue ${venueId}`);
 
     res.json({
       success: true,
       data: {
-        events: events || []
+        events: events || [],
+        count: events.length
       }
     });
   } catch (error: any) {
-    console.error('Error fetching venue events:', error);
+    console.error('❌ Error fetching venue events:', error);
     res.status(500).json({
       success: false,
       message: 'Failed to fetch events',
@@ -478,7 +479,6 @@ router.get('/venues/:tempVenueId/events', async (req: AuthRequest, res: Response
   }
 });
 
-// POST /api/agent/venues/:tempVenueId/events - Create event
 // POST /api/agent/venues/:tempVenueId/events - Create event
 router.post('/venues/:tempVenueId/events', async (req: AuthRequest, res: Response) => {
   try {
@@ -489,6 +489,14 @@ router.post('/venues/:tempVenueId/events', async (req: AuthRequest, res: Respons
     const { tempVenueId } = req.params;
     const eventData = req.body;
 
+    // ✅ VALIDATION: Check required fields
+    if (!eventData.eventName || !eventData.eventStartsAt || !eventData.eventEndsAt) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required fields: eventName, eventStartsAt, eventEndsAt'
+      });
+    }
+
     const tempVenue = await AgentVenueTemp.findOne({ tempVenueId });
     if (!tempVenue) {
       return res.status(404).json({ success: false, message: 'Venue not found' });
@@ -496,7 +504,7 @@ router.post('/venues/:tempVenueId/events', async (req: AuthRequest, res: Respons
 
     let venueId = tempVenue.venueId;
     if (!venueId) {
-      // Auto-create venue logic (same as before)
+      // Auto-create venue
       const region = (tempVenue.region || 'th') as any;
       const regionalConnection = dbManager.getConnection(region);
       const RegionalVenue = regionalConnection.models.Venue || regionalConnection.model('Venue', Venue.schema);
@@ -531,75 +539,85 @@ router.post('/venues/:tempVenueId/events', async (req: AuthRequest, res: Respons
     const regionalConnection = dbManager.getConnection(region);
     const Event = regionalConnection.models.Event || regionalConnection.model('Event', mongoose.model('Event').schema);
 
-    // Parse arrays/objects
+    // ✅ Parse arrays/objects with validation
     let daysOfWeek = eventData.daysOfWeek;
     if (typeof daysOfWeek === 'string') {
-      daysOfWeek = daysOfWeek.split(',').map((d: string) => parseInt(d.trim())).filter((d: number) => !isNaN(d));
+      daysOfWeek = daysOfWeek.split(',').map((d: string) => parseInt(d.trim())).filter((d: number) => !isNaN(d) && d >= 0 && d <= 6);
     }
 
     let timeSlots = eventData.timeSlots;
     if (typeof timeSlots === 'string') {
-      try { timeSlots = JSON.parse(timeSlots); } catch { timeSlots = undefined; }
+      try { 
+        timeSlots = JSON.parse(timeSlots); 
+      } catch (e) { 
+        console.warn('⚠️ Invalid timeSlots JSON:', e);
+        timeSlots = undefined; 
+      }
     }
 
     let participationModesSecondary = eventData.participationModesSecondary;
     if (typeof participationModesSecondary === 'string') {
-      participationModesSecondary = participationModesSecondary.split(',').map((m: string) => m.trim());
+      participationModesSecondary = participationModesSecondary.split(',').map((m: string) => m.trim()).filter(Boolean);
     }
 
-    // ✅ Create event with ALL fields including new ones
+    let tags = eventData.tags;
+    if (typeof tags === 'string') {
+      tags = tags.split(',').map((t: string) => t.trim()).filter(Boolean);
+    }
+
+    // ✅ Create event with ALL fields
     const newEvent = new Event({
       // Core
       venueId: venueId,
       eventName: eventData.eventName,
-      eventSubtitle: eventData.eventSubtitle, // ✅ NEW
+      eventSubtitle: eventData.eventSubtitle,
       description: eventData.description,
-      eventType: eventData.eventType || 'ENTERTAINMENT',
+      eventType: eventData.eventType || 'ETC1_entertainment',
       eventTypeSlug: eventData.eventTypeSlug,
       eventCategory: eventData.eventCategory,
       
-      // Source & Origin ✅ NEW
+      // Source & Origin
       sourceEventId: eventData.sourceEventId,
       sourceName: eventData.sourceName,
       sourceUrl: eventData.sourceUrl,
       venueSourceId: eventData.venueSourceId,
-      eventOriginType: eventData.eventOriginType,
+      eventOriginType: eventData.eventOriginType || 'MANUAL',
       eventExclusivity: eventData.eventExclusivity,
       
       // DateTime
       eventStartsAt: new Date(eventData.eventStartsAt),
       eventEndsAt: new Date(eventData.eventEndsAt),
       eventDuration: eventData.eventDuration,
-      eventTimezone: eventData.eventTimezone || 'Asia/Dubai',
+      eventTimezone: eventData.eventTimezone || 'Asia/Bangkok',
       allDay: eventData.allDay || false,
-      doorsOpenAt: eventData.doorsOpenAt ? new Date(eventData.doorsOpenAt) : undefined, // ✅ NEW
+      doorsOpenAt: eventData.doorsOpenAt ? new Date(eventData.doorsOpenAt) : undefined,
       
       // Recurrence
       eventRecurrence: eventData.eventRecurrence || 'NONE',
       recurrenceText: eventData.recurrenceText,
       seriesId: eventData.seriesId,
-      occurrenceId: eventData.occurrenceId, // ✅ NEW
-      isException: eventData.isException || false, // ✅ NEW
+      occurrenceId: eventData.occurrenceId,
+      isException: eventData.isException || false,
       daysOfWeek: daysOfWeek,
       timeSlots: timeSlots,
       
       // Participation
-      participationModePrimary: eventData.participationModePrimary,
+      participationModePrimary: eventData.participationModePrimary || 'DO',
       participationModesSecondary: participationModesSecondary,
       
       // Audience
       eventGender: eventData.eventGender,
       ageMin: eventData.ageMin ? parseInt(eventData.ageMin) : undefined,
       ageMax: eventData.ageMax ? parseInt(eventData.ageMax) : undefined,
-      eventFamilyFriendly: eventData.eventFamilyFriendly,
+      eventFamilyFriendly: eventData.eventFamilyFriendly || false,
       eventAgeRestriction: eventData.eventAgeRestriction,
       
       // Skill & Intensity
       eventSkillLevel: eventData.eventSkillLevel,
       eventIntensity: eventData.eventIntensity,
       
-      // Location ✅ NEW ALL
-      eventIndoorOutdoor: eventData.eventIndoorOutdoor,
+      // Location
+      eventIndoorOutdoor: eventData.eventIndoorOutdoor || 'INDOOR',
       accessibilityNotes: eventData.accessibilityNotes,
       locationName: eventData.locationName,
       address: eventData.address,
@@ -615,23 +633,23 @@ router.post('/venues/:tempVenueId/events', async (req: AuthRequest, res: Respons
       priceType: eventData.priceType || 'FREE',
       eventPriceFrom: eventData.eventPriceFrom ? parseFloat(eventData.eventPriceFrom) : 0,
       eventPriceMax: eventData.eventPriceMax ? parseFloat(eventData.eventPriceMax) : undefined,
-      eventCurrency: eventData.eventCurrency || 'AED',
-      priceNotes: eventData.priceNotes,
+      eventCurrency: eventData.eventCurrency || 'THB',
+      priceNotes: eventData.priceNotes, // ✅ "Includes 1 drink", "Early bird", etc.
       
       // Capacity
       capacity: eventData.capacity ? parseInt(eventData.capacity) : undefined,
-      ticketsAvailable: eventData.ticketsAvailable ? parseInt(eventData.ticketsAvailable) : 0, // ✅ NEW
+      ticketsAvailable: eventData.ticketsAvailable ? parseInt(eventData.ticketsAvailable) : 0,
       currentAttendees: 0,
       
       // RSVP/Booking
       rsvpRequired: eventData.rsvpRequired || false,
-      rsvpMethod: eventData.rsvpMethod,
-      rsvpDeadline: eventData.rsvpDeadline ? new Date(eventData.rsvpDeadline) : undefined,
+      rsvpMethod: eventData.rsvpMethod, // ✅ "Walk-in", "WhatsApp", "LINE", etc.
+      rsvpDeadline: eventData.rsvpDeadline ? new Date(eventData.rsvpDeadline) : undefined, // ✅
       bookingUrl: eventData.bookingUrl,
       ticketUrl: eventData.ticketUrl,
       ticketProvider: eventData.ticketProvider,
       
-      // Team/Players ✅ NEW ALL
+      // Team/Players
       playersPerSide: eventData.playersPerSide ? parseInt(eventData.playersPerSide) : undefined,
       teamSizeTotal: eventData.teamSizeTotal ? parseInt(eventData.teamSizeTotal) : undefined,
       minPlayers: eventData.minPlayers ? parseInt(eventData.minPlayers) : undefined,
@@ -642,8 +660,8 @@ router.post('/venues/:tempVenueId/events', async (req: AuthRequest, res: Respons
       status: eventData.status || 'SCHEDULED',
       visibility: eventData.visibility || 'PUBLIC',
       isActive: eventData.isActive !== undefined ? eventData.isActive : true,
-      cancellationReason: eventData.cancellationReason, // ✅ NEW
-      cancelledAt: eventData.cancelledAt ? new Date(eventData.cancelledAt) : undefined, // ✅ NEW
+      cancellationReason: eventData.cancellationReason, // ✅ "Weather", "Low signups", etc.
+      cancelledAt: eventData.cancelledAt ? new Date(eventData.cancelledAt) : undefined, // ✅
       
       // Weather
       weatherSensitive: eventData.weatherSensitive || false,
@@ -662,24 +680,24 @@ router.post('/venues/:tempVenueId/events', async (req: AuthRequest, res: Respons
       imageUrl: eventData.imageUrl,
       images: eventData.images || [],
       coverPhotoUrl: eventData.coverPhotoUrl,
-      eventPhotoUrl: eventData.eventPhotoUrl, // ✅ NEW
-      eventPhotoS3Key: eventData.eventPhotoS3Key, // ✅ NEW
+      eventPhotoUrl: eventData.eventPhotoUrl,
+      eventPhotoS3Key: eventData.eventPhotoS3Key,
       
       // Gear
       eventsGear: eventData.eventsGear,
       
-      // Check-in ✅ NEW
+      // Check-in
       checkInMethod: eventData.checkInMethod,
       onPremiseRequired: eventData.onPremiseRequired || false,
       
-      // Verification ✅ NEW ALL
+      // Verification
       lastVerifiedAt: eventData.lastVerifiedAt ? new Date(eventData.lastVerifiedAt) : undefined,
       verifiedBy: eventData.verifiedBy,
       confidenceScore: eventData.confidenceScore ? parseFloat(eventData.confidenceScore) : 0,
       notesInternal: eventData.notesInternal,
       
       // Meta
-      tags: eventData.tags || [],
+      tags: tags || [],
       language: eventData.language || 'en',
       conditions: eventData.conditions,
       region: region,
@@ -699,12 +717,21 @@ router.post('/venues/:tempVenueId/events', async (req: AuthRequest, res: Respons
       meta: { tempVenueId, eventId: newEvent._id.toString(), eventName: eventData.eventName }
     });
 
-    res.status(201).json({ success: true, data: newEvent, message: 'Event created successfully' });
+    res.status(201).json({ 
+      success: true, 
+      data: newEvent, 
+      message: 'Event created successfully' 
+    });
   } catch (error: any) {
-    console.error('Error creating event:', error);
-    res.status(500).json({ success: false, message: 'Failed to create event', error: error.message });
+    console.error('❌ Error creating event:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to create event', 
+      error: error.message 
+    });
   }
 });
+
 // PUT /api/agent/venues/:tempVenueId/events/:eventId - Update event
 router.put('/venues/:tempVenueId/events/:eventId', async (req: AuthRequest, res: Response) => {
   try {
@@ -724,37 +751,43 @@ router.put('/venues/:tempVenueId/events/:eventId', async (req: AuthRequest, res:
     const regionalConnection = dbManager.getConnection(region);
     const Event = regionalConnection.models.Event || regionalConnection.model('Event', mongoose.model('Event').schema);
 
-    // Parse arrays/objects
+    // ✅ Parse arrays/objects with validation
     let daysOfWeek = eventData.daysOfWeek;
     if (typeof daysOfWeek === 'string') {
-      daysOfWeek = daysOfWeek.split(',').map((d: string) => parseInt(d.trim())).filter((d: number) => !isNaN(d));
+      daysOfWeek = daysOfWeek.split(',').map((d: string) => parseInt(d.trim())).filter((d: number) => !isNaN(d) && d >= 0 && d <= 6);
     }
 
     let timeSlots = eventData.timeSlots;
     if (typeof timeSlots === 'string') {
       try {
         timeSlots = JSON.parse(timeSlots);
-      } catch {
+      } catch (e) {
+        console.warn('⚠️ Invalid timeSlots JSON:', e);
         timeSlots = undefined;
       }
     }
 
     let participationModesSecondary = eventData.participationModesSecondary;
     if (typeof participationModesSecondary === 'string') {
-      participationModesSecondary = participationModesSecondary.split(',').map((m: string) => m.trim());
+      participationModesSecondary = participationModesSecondary.split(',').map((m: string) => m.trim()).filter(Boolean);
     }
 
-    // ✅ Build update object with ALL fields (including 33 new ones)
+    let tags = eventData.tags;
+    if (typeof tags === 'string') {
+      tags = tags.split(',').map((t: string) => t.trim()).filter(Boolean);
+    }
+
+    // ✅ Build update object with ALL fields
     const updateData: any = {
       // Core
       eventName: eventData.eventName,
-      eventSubtitle: eventData.eventSubtitle, // ✅ NEW
+      eventSubtitle: eventData.eventSubtitle,
       description: eventData.description,
       eventType: eventData.eventType,
       eventTypeSlug: eventData.eventTypeSlug,
       eventCategory: eventData.eventCategory,
       
-      // Source & Origin ✅ NEW
+      // Source & Origin
       sourceEventId: eventData.sourceEventId,
       sourceName: eventData.sourceName,
       sourceUrl: eventData.sourceUrl,
@@ -768,14 +801,14 @@ router.put('/venues/:tempVenueId/events/:eventId', async (req: AuthRequest, res:
       eventDuration: eventData.eventDuration,
       eventTimezone: eventData.eventTimezone,
       allDay: eventData.allDay,
-      doorsOpenAt: eventData.doorsOpenAt ? new Date(eventData.doorsOpenAt) : undefined, // ✅ NEW
+      doorsOpenAt: eventData.doorsOpenAt ? new Date(eventData.doorsOpenAt) : undefined,
       
       // Recurrence
       eventRecurrence: eventData.eventRecurrence,
       recurrenceText: eventData.recurrenceText,
       seriesId: eventData.seriesId,
-      occurrenceId: eventData.occurrenceId, // ✅ NEW
-      isException: eventData.isException, // ✅ NEW
+      occurrenceId: eventData.occurrenceId,
+      isException: eventData.isException,
       daysOfWeek: daysOfWeek,
       timeSlots: timeSlots,
       
@@ -794,7 +827,7 @@ router.put('/venues/:tempVenueId/events/:eventId', async (req: AuthRequest, res:
       eventSkillLevel: eventData.eventSkillLevel,
       eventIntensity: eventData.eventIntensity,
       
-      // Location ✅ NEW ALL
+      // Location
       eventIndoorOutdoor: eventData.eventIndoorOutdoor,
       accessibilityNotes: eventData.accessibilityNotes,
       locationName: eventData.locationName,
@@ -812,21 +845,21 @@ router.put('/venues/:tempVenueId/events/:eventId', async (req: AuthRequest, res:
       eventPriceFrom: eventData.eventPriceFrom ? parseFloat(eventData.eventPriceFrom) : 0,
       eventPriceMax: eventData.eventPriceMax ? parseFloat(eventData.eventPriceMax) : undefined,
       eventCurrency: eventData.eventCurrency,
-      priceNotes: eventData.priceNotes,
+      priceNotes: eventData.priceNotes, // ✅
       
       // Capacity
       capacity: eventData.capacity ? parseInt(eventData.capacity) : undefined,
-      ticketsAvailable: eventData.ticketsAvailable ? parseInt(eventData.ticketsAvailable) : undefined, // ✅ NEW
+      ticketsAvailable: eventData.ticketsAvailable ? parseInt(eventData.ticketsAvailable) : undefined,
       
       // RSVP/Booking
       rsvpRequired: eventData.rsvpRequired,
-      rsvpMethod: eventData.rsvpMethod,
-      rsvpDeadline: eventData.rsvpDeadline ? new Date(eventData.rsvpDeadline) : undefined,
+      rsvpMethod: eventData.rsvpMethod, // ✅
+      rsvpDeadline: eventData.rsvpDeadline ? new Date(eventData.rsvpDeadline) : undefined, // ✅
       bookingUrl: eventData.bookingUrl,
       ticketUrl: eventData.ticketUrl,
       ticketProvider: eventData.ticketProvider,
       
-      // Team/Players ✅ NEW ALL
+      // Team/Players
       playersPerSide: eventData.playersPerSide ? parseInt(eventData.playersPerSide) : undefined,
       teamSizeTotal: eventData.teamSizeTotal ? parseInt(eventData.teamSizeTotal) : undefined,
       minPlayers: eventData.minPlayers ? parseInt(eventData.minPlayers) : undefined,
@@ -837,8 +870,8 @@ router.put('/venues/:tempVenueId/events/:eventId', async (req: AuthRequest, res:
       status: eventData.status,
       visibility: eventData.visibility,
       isActive: eventData.isActive,
-      cancellationReason: eventData.cancellationReason, // ✅ NEW
-      cancelledAt: eventData.cancelledAt ? new Date(eventData.cancelledAt) : undefined, // ✅ NEW
+      cancellationReason: eventData.cancellationReason, // ✅
+      cancelledAt: eventData.cancelledAt ? new Date(eventData.cancelledAt) : undefined, // ✅
       
       // Weather
       weatherSensitive: eventData.weatherSensitive,
@@ -857,24 +890,24 @@ router.put('/venues/:tempVenueId/events/:eventId', async (req: AuthRequest, res:
       imageUrl: eventData.imageUrl,
       images: eventData.images,
       coverPhotoUrl: eventData.coverPhotoUrl,
-      eventPhotoUrl: eventData.eventPhotoUrl, // ✅ NEW
-      eventPhotoS3Key: eventData.eventPhotoS3Key, // ✅ NEW
+      eventPhotoUrl: eventData.eventPhotoUrl,
+      eventPhotoS3Key: eventData.eventPhotoS3Key,
       
       // Gear
       eventsGear: eventData.eventsGear,
       
-      // Check-in ✅ NEW
+      // Check-in
       checkInMethod: eventData.checkInMethod,
       onPremiseRequired: eventData.onPremiseRequired,
       
-      // Verification ✅ NEW ALL
+      // Verification
       lastVerifiedAt: eventData.lastVerifiedAt ? new Date(eventData.lastVerifiedAt) : undefined,
       verifiedBy: eventData.verifiedBy,
       confidenceScore: eventData.confidenceScore ? parseFloat(eventData.confidenceScore) : undefined,
       notesInternal: eventData.notesInternal,
       
       // Meta
-      tags: eventData.tags,
+      tags: tags,
       language: eventData.language,
       conditions: eventData.conditions,
       
@@ -946,7 +979,7 @@ router.delete('/venues/:tempVenueId/events/:eventId', async (req: AuthRequest, r
       return res.status(404).json({ success: false, message: 'Event not found' });
     }
 
-    console.log(`Event deleted: ${eventId}`);
+    console.log(`✅ Event deleted: ${eventId}`);
 
     // Audit log
     await AuditLog.create({
@@ -967,7 +1000,7 @@ router.delete('/venues/:tempVenueId/events/:eventId', async (req: AuthRequest, r
       message: 'Event deleted successfully'
     });
   } catch (error: any) {
-    console.error('Error deleting event:', error);
+    console.error('❌ Error deleting event:', error);
     res.status(500).json({
       success: false,
       message: 'Failed to delete event',
