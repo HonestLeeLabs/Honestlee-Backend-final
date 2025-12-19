@@ -46,145 +46,145 @@ export enum PriceType {
 }
 
 export interface IEvent extends Document {
-  // Core
+  // ========== CORE ==========
   venueId: mongoose.Types.ObjectId;
   eventName: string;
-  eventSubtitle?: string; // ✅ ADDED
+  eventSubtitle?: string;
   description?: string;
-  eventType: string;
+  eventType: string; // L1 category (e.g., ETC1_sport_fitness)
   eventTypeSlug?: string;
-  eventCategory?: string;
+  eventCategory?: string; // L2 category (e.g., ETC2_combat_sports)
   
-  // Source & Origin ✅ ADDED
-  sourceEventId?: string;
-  sourceName?: string;
-  sourceUrl?: string;
-  venueSourceId?: string;
-  eventOriginType?: string;
-  eventExclusivity?: string;
+  // ========== SOURCE & ORIGIN ==========
+  sourceEventId?: string; // ID from external source
+  sourceName?: string; // e.g., Facebook, Instagram, Eventbrite
+  sourceUrl?: string; // Original event URL
+  venueSourceId?: string; // Venue ID in source system
+  eventOriginType?: string; // MANUAL, SCRAPED, API, etc.
+  eventExclusivity?: string; // EXCLUSIVE, PUBLIC, MEMBERS_ONLY
   
-  // DateTime
+  // ========== DATE & TIME ==========
   eventStartsAt: Date;
   eventEndsAt: Date;
-  eventDuration?: string;
-  eventTimezone: string;
+  eventDuration?: string; // Human-readable (e.g., "2 hours")
+  eventTimezone: string; // IANA timezone (e.g., Asia/Bangkok)
   allDay?: boolean;
-  doorsOpenAt?: Date; // ✅ ADDED
+  doorsOpenAt?: Date; // When doors open (before event starts)
   
-  // Recurrence
+  // ========== RECURRENCE ==========
   eventRecurrence?: EventRecurrence;
-  recurrenceText?: string;
-  seriesId?: string;
-  occurrenceId?: string; // ✅ ADDED
-  isException?: boolean; // ✅ ADDED
-  daysOfWeek?: number[];
-  timeSlots?: { start: string; end: string }[];
+  recurrenceText?: string; // Human-readable (e.g., "Every Monday at 6 PM")
+  seriesId?: string; // Group recurring events
+  occurrenceId?: string; // Unique ID for this specific occurrence
+  isException?: boolean; // True if this occurrence was modified
+  daysOfWeek?: number[]; // [0-6] for Sunday-Saturday
+  timeSlots?: { start: string; end: string }[]; // For flexible time slots
   
-  // Participation
+  // ========== PARTICIPATION ==========
   participationModePrimary?: ParticipationMode;
   participationModesSecondary?: ParticipationMode[];
   
-  // Audience
-  eventGender?: string;
+  // ========== AUDIENCE ==========
+  eventGender?: string; // NONE, LADIES_ONLY, MEN_ONLY, MIXED
   ageMin?: number;
   ageMax?: number;
   eventFamilyFriendly?: boolean;
-  eventAgeRestriction?: string;
+  eventAgeRestriction?: string; // Human-readable (e.g., "18+", "All ages")
   
-  // Skill & Intensity
-  eventSkillLevel?: string;
-  eventIntensity?: string;
+  // ========== SKILL & INTENSITY ==========
+  eventSkillLevel?: string; // BEGINNER, INTERMEDIATE, ADVANCED, MIXED
+  eventIntensity?: string; // LOW, MODERATE, HIGH, EXTREME
   
-  // Location ✅ ADDED ALL
-  eventIndoorOutdoor?: string;
-  accessibilityNotes?: string;
-  locationName?: string;
-  address?: string;
+  // ========== LOCATION ==========
+  eventIndoorOutdoor?: string; // INDOOR, OUTDOOR, MIXED
+  accessibilityNotes?: string; // Wheelchair accessible, etc.
+  locationName?: string; // Specific area (e.g., "Main Hall", "Rooftop")
+  address?: string; // If different from venue address
   neighborhood?: string;
   city?: string;
   country?: string;
-  geoOverride?: boolean;
+  geoOverride?: boolean; // True if using custom location
   lat?: number;
   lng?: number;
-  eventLocationDirections?: string;
+  eventLocationDirections?: string; // How to get there
   
-  // Pricing
+  // ========== PRICING ==========
   priceType?: PriceType;
   eventPriceFrom: number;
   eventPriceMax?: number;
   eventCurrency: string;
-  priceNotes?: string;
+  priceNotes?: string; // ✅ VERIFIED: "Includes 1 drink", "Early bird discount", etc.
   
-  // Capacity
+  // ========== CAPACITY ==========
   capacity?: number;
-  ticketsAvailable?: number; // ✅ ADDED
+  ticketsAvailable?: number;
   currentAttendees: number;
   
-  // RSVP/Booking
+  // ========== RSVP & BOOKING ==========
   rsvpRequired?: boolean;
-  rsvpMethod?: string;
-  rsvpDeadline?: Date;
+  rsvpMethod?: string; // ✅ VERIFIED: "Walk-in", "WhatsApp", "LINE", "Website", "Ticket platform"
+  rsvpDeadline?: Date; // ✅ VERIFIED: RSVP cutoff datetime
   bookingUrl?: string;
   ticketUrl?: string;
-  ticketProvider?: string;
+  ticketProvider?: string; // e.g., Eventbrite, Ticketmaster
   
-  // Team/Players ✅ ADDED ALL
+  // ========== TEAM / PLAYERS (Sports) ==========
   playersPerSide?: number;
   teamSizeTotal?: number;
   minPlayers?: number;
   maxPlayers?: number;
-  formatNotes?: string;
+  formatNotes?: string; // e.g., "5v5", "Round Robin"
   
-  // Status
+  // ========== STATUS ==========
   status?: EventStatus;
-  visibility?: string;
+  visibility?: string; // PUBLIC, UNLISTED, STAFF_ONLY
   isActive: boolean;
-  cancellationReason?: string; // ✅ ADDED
-  cancelledAt?: Date; // ✅ ADDED
+  cancellationReason?: string; // ✅ VERIFIED: "Weather", "Low signups", "Venue unavailable", etc.
+  cancelledAt?: Date; // ✅ VERIFIED: Timestamp when cancelled/postponed
   
-  // Weather
+  // ========== WEATHER ==========
   weatherSensitive?: boolean;
-  badWeatherPolicy?: string;
+  badWeatherPolicy?: string; // What happens if weather is bad
   
-  // Organizer
+  // ========== ORGANIZER ==========
   organizerName?: string;
-  organizerType?: string;
+  organizerType?: string; // INDIVIDUAL, COMPANY, COMMUNITY, etc.
   organizerContact?: string;
   organizerWhatsapp?: string;
   organizerLine?: string;
   organizerInstagram?: string;
   organizerEmail?: string;
   
-  // Media
-  imageUrl?: string;
-  images?: string[];
-  coverPhotoUrl?: string;
-  eventPhotoUrl?: string; // ✅ ADDED
-  eventPhotoS3Key?: string; // ✅ ADDED
+  // ========== MEDIA ==========
+  imageUrl?: string; // Legacy field
+  images?: string[]; // Multiple images
+  coverPhotoUrl?: string; // Main cover image
+  eventPhotoUrl?: string; // Agent-uploaded photo
+  eventPhotoS3Key?: string; // S3 key for photo
   
-  // Gear
-  eventsGear?: string;
+  // ========== GEAR ==========
+  eventsGear?: string; // Required equipment (e.g., "Tennis racket", "Yoga mat")
   
-  // Check-in ✅ ADDED
-  checkInMethod?: string;
-  onPremiseRequired?: boolean;
+  // ========== CHECK-IN ==========
+  checkInMethod?: string; // QR_CODE, NAME_LIST, APP, NONE
+  onPremiseRequired?: boolean; // Must check in on-site
   
-  // Verification ✅ ADDED ALL
+  // ========== VERIFICATION & DATA QUALITY ==========
   lastVerifiedAt?: Date;
-  verifiedBy?: string;
-  confidenceScore?: number;
-  notesInternal?: string;
+  verifiedBy?: string; // User ID or name of verifier
+  confidenceScore?: number; // 0.0 - 1.0 for data quality
+  notesInternal?: string; // Staff-only notes
   
-  // Meta
+  // ========== META ==========
   tags?: string[];
-  language?: string;
-  conditions?: string;
+  language?: string; // ISO language code (e.g., 'en', 'th')
+  conditions?: string; // Terms & conditions
   region?: 'ae' | 'th' | 'in' | 'global';
   createdBy: mongoose.Types.ObjectId;
   createdAt: Date;
   updatedAt: Date;
   
-  // Methods
+  // ========== METHODS ==========
   isValidNow(): boolean;
   isUpcoming(): boolean;
   hasCapacity(): boolean;
@@ -192,16 +192,16 @@ export interface IEvent extends Document {
 
 const EventSchema = new Schema<IEvent>(
   {
-    // Core
+    // ========== CORE ==========
     venueId: { type: Schema.Types.ObjectId, ref: 'Venue', required: true, index: true },
     eventName: { type: String, required: true, maxlength: 200 },
-    eventSubtitle: { type: String, maxlength: 100 }, // ✅ ADDED
+    eventSubtitle: { type: String, maxlength: 100 },
     description: { type: String, maxlength: 2000 },
     eventType: { type: String, required: true },
     eventTypeSlug: { type: String },
     eventCategory: { type: String },
     
-    // Source & Origin ✅ ADDED
+    // ========== SOURCE & ORIGIN ==========
     sourceEventId: { type: String },
     sourceName: { type: String },
     sourceUrl: { type: String },
@@ -209,39 +209,52 @@ const EventSchema = new Schema<IEvent>(
     eventOriginType: { type: String },
     eventExclusivity: { type: String },
     
-    // DateTime
+    // ========== DATE & TIME ==========
     eventStartsAt: { type: Date, required: true, index: true },
     eventEndsAt: { type: Date, required: true },
     eventDuration: { type: String },
     eventTimezone: { type: String, default: 'Asia/Dubai' },
     allDay: { type: Boolean, default: false },
-    doorsOpenAt: { type: Date }, // ✅ ADDED
+    doorsOpenAt: { type: Date },
     
-    // Recurrence
-    eventRecurrence: { type: String, enum: Object.values(EventRecurrence), default: EventRecurrence.NONE },
+    // ========== RECURRENCE ==========
+    eventRecurrence: { 
+      type: String, 
+      enum: Object.values(EventRecurrence), 
+      default: EventRecurrence.NONE 
+    },
     recurrenceText: { type: String },
     seriesId: { type: String },
-    occurrenceId: { type: String }, // ✅ ADDED
-    isException: { type: Boolean, default: false }, // ✅ ADDED
+    occurrenceId: { type: String },
+    isException: { type: Boolean, default: false },
     daysOfWeek: [{ type: Number, min: 0, max: 6 }],
-    timeSlots: [{ start: { type: String }, end: { type: String } }],
+    timeSlots: [{ 
+      start: { type: String }, 
+      end: { type: String } 
+    }],
     
-    // Participation
-    participationModePrimary: { type: String, enum: Object.values(ParticipationMode) },
-    participationModesSecondary: [{ type: String, enum: Object.values(ParticipationMode) }],
+    // ========== PARTICIPATION ==========
+    participationModePrimary: { 
+      type: String, 
+      enum: Object.values(ParticipationMode) 
+    },
+    participationModesSecondary: [{ 
+      type: String, 
+      enum: Object.values(ParticipationMode) 
+    }],
     
-    // Audience
+    // ========== AUDIENCE ==========
     eventGender: { type: String },
     ageMin: { type: Number },
     ageMax: { type: Number },
     eventFamilyFriendly: { type: Boolean },
     eventAgeRestriction: { type: String },
     
-    // Skill & Intensity
+    // ========== SKILL & INTENSITY ==========
     eventSkillLevel: { type: String },
     eventIntensity: { type: String },
     
-    // Location ✅ ADDED ALL
+    // ========== LOCATION ==========
     eventIndoorOutdoor: { type: String },
     accessibilityNotes: { type: String },
     locationName: { type: String },
@@ -254,45 +267,53 @@ const EventSchema = new Schema<IEvent>(
     lng: { type: Number },
     eventLocationDirections: { type: String },
     
-    // Pricing
-    priceType: { type: String, enum: Object.values(PriceType), default: PriceType.FREE },
+    // ========== PRICING ==========
+    priceType: { 
+      type: String, 
+      enum: Object.values(PriceType), 
+      default: PriceType.FREE 
+    },
     eventPriceFrom: { type: Number, default: 0, min: 0 },
     eventPriceMax: { type: Number, min: 0 },
     eventCurrency: { type: String, default: 'AED' },
-    priceNotes: { type: String },
+    priceNotes: { type: String, maxlength: 500 }, // ✅ VERIFIED & ENHANCED
     
-    // Capacity
+    // ========== CAPACITY ==========
     capacity: { type: Number, min: 0 },
-    ticketsAvailable: { type: Number, min: 0 }, // ✅ ADDED
+    ticketsAvailable: { type: Number, min: 0 },
     currentAttendees: { type: Number, default: 0 },
     
-    // RSVP/Booking
+    // ========== RSVP & BOOKING ==========
     rsvpRequired: { type: Boolean, default: false },
-    rsvpMethod: { type: String },
-    rsvpDeadline: { type: Date },
+    rsvpMethod: { type: String, maxlength: 100 }, // ✅ VERIFIED & ENHANCED
+    rsvpDeadline: { type: Date }, // ✅ VERIFIED
     bookingUrl: { type: String },
     ticketUrl: { type: String },
     ticketProvider: { type: String },
     
-    // Team/Players ✅ ADDED ALL
+    // ========== TEAM / PLAYERS ==========
     playersPerSide: { type: Number },
     teamSizeTotal: { type: Number },
     minPlayers: { type: Number },
     maxPlayers: { type: Number },
     formatNotes: { type: String },
     
-    // Status
-    status: { type: String, enum: Object.values(EventStatus), default: EventStatus.SCHEDULED },
+    // ========== STATUS ==========
+    status: { 
+      type: String, 
+      enum: Object.values(EventStatus), 
+      default: EventStatus.SCHEDULED 
+    },
     visibility: { type: String, default: 'PUBLIC' },
     isActive: { type: Boolean, default: true, index: true },
-    cancellationReason: { type: String }, // ✅ ADDED
-    cancelledAt: { type: Date }, // ✅ ADDED
+    cancellationReason: { type: String, maxlength: 500 }, // ✅ VERIFIED & ENHANCED
+    cancelledAt: { type: Date }, // ✅ VERIFIED
     
-    // Weather
+    // ========== WEATHER ==========
     weatherSensitive: { type: Boolean, default: false },
     badWeatherPolicy: { type: String },
     
-    // Organizer
+    // ========== ORGANIZER ==========
     organizerName: { type: String },
     organizerType: { type: String },
     organizerContact: { type: String },
@@ -301,48 +322,56 @@ const EventSchema = new Schema<IEvent>(
     organizerInstagram: { type: String },
     organizerEmail: { type: String },
     
-    // Media
+    // ========== MEDIA ==========
     imageUrl: { type: String },
     images: { type: [String], default: [] },
     coverPhotoUrl: { type: String },
-    eventPhotoUrl: { type: String }, // ✅ ADDED
-    eventPhotoS3Key: { type: String }, // ✅ ADDED
+    eventPhotoUrl: { type: String },
+    eventPhotoS3Key: { type: String },
     
-    // Gear
+    // ========== GEAR ==========
     eventsGear: { type: String },
     
-    // Check-in ✅ ADDED
+    // ========== CHECK-IN ==========
     checkInMethod: { type: String },
     onPremiseRequired: { type: Boolean, default: false },
     
-    // Verification ✅ ADDED ALL
+    // ========== VERIFICATION ==========
     lastVerifiedAt: { type: Date },
     verifiedBy: { type: String },
     confidenceScore: { type: Number, min: 0, max: 1 },
-    notesInternal: { type: String },
+    notesInternal: { type: String, maxlength: 1000 },
     
-    // Meta
+    // ========== META ==========
     tags: { type: [String] },
     language: { type: String, default: 'en' },
     conditions: { type: String },
-    region: { type: String, enum: ['ae', 'th', 'in', 'global'], default: 'global', index: true },
+    region: { 
+      type: String, 
+      enum: ['ae', 'th', 'in', 'global'], 
+      default: 'global', 
+      index: true 
+    },
     createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true }
   },
   { timestamps: true }
 );
 
-// Indexes
+// ========== INDEXES ==========
 EventSchema.index({ venueId: 1, isActive: 1, eventStartsAt: 1 });
 EventSchema.index({ eventStartsAt: 1, eventEndsAt: 1 });
 EventSchema.index({ eventType: 1, eventStartsAt: 1 });
 EventSchema.index({ region: 1, isActive: 1 });
 EventSchema.index({ eventTypeSlug: 1 });
+EventSchema.index({ status: 1, visibility: 1 });
+EventSchema.index({ createdBy: 1 });
 
-// Methods
+// ========== METHODS ==========
 EventSchema.methods.isValidNow = function (this: IEvent): boolean {
   const now = new Date();
   if (now < this.eventStartsAt || now > this.eventEndsAt) return false;
   if (!this.isActive) return false;
+  if (this.status === EventStatus.CANCELLED || this.status === EventStatus.POSTPONED) return false;
   if (this.capacity && this.currentAttendees >= this.capacity) return false;
   
   if (this.eventRecurrence !== EventRecurrence.NONE && this.daysOfWeek && this.daysOfWeek.length > 0) {
@@ -359,12 +388,22 @@ EventSchema.methods.isValidNow = function (this: IEvent): boolean {
 };
 
 EventSchema.methods.isUpcoming = function (this: IEvent): boolean {
-  return new Date() < this.eventStartsAt && this.isActive;
+  return new Date() < this.eventStartsAt && this.isActive && this.status !== EventStatus.CANCELLED;
 };
 
 EventSchema.methods.hasCapacity = function (this: IEvent): boolean {
   if (!this.capacity) return true;
   return this.currentAttendees < this.capacity;
 };
+
+// ========== VIRTUAL FIELDS ==========
+EventSchema.virtual('isCancelled').get(function (this: IEvent) {
+  return this.status === EventStatus.CANCELLED || !!this.cancelledAt;
+});
+
+EventSchema.virtual('availableSpots').get(function (this: IEvent) {
+  if (!this.capacity) return null;
+  return this.capacity - this.currentAttendees;
+});
 
 export default mongoose.model<IEvent>('Event', EventSchema);
