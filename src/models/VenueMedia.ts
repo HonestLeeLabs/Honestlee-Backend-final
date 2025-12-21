@@ -87,7 +87,7 @@ const VenueMediaSchema = new Schema<IVenueMedia>(
         
         // ✅ Food & Beverage
         'SEATING_AREA_WORK', 'VIBE_INTERIOR', 'FOOD_DISH', 'FOOD_DISPLAY_COUNTER',
-        'DRINKS_BAR', 'ICE_CREAM_FREEZERS', 'TABLE_NUMBERS',
+        'DRINKS_BAR', 'ICE_CREAM_FREEZERS', 'TABLE_NUMBERS', 'SCHEDULE',
         
         // ✅ Coffee categories
         'COFFEE_MACHINE', 'COFFEE_ACCESSORIES', 'COFFEE_BEANS_DISPLAY',
@@ -123,6 +123,8 @@ const VenueMediaSchema = new Schema<IVenueMedia>(
         
         // ✅ Internal/Operational
         'SCREENSHOT_GPS_CHANGE', 'ZONE_PHOTO',
+
+        
       ],
       index: true,
     },
