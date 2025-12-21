@@ -120,6 +120,7 @@ const frontendGroupMap: { [key: string]: string } = {
   'PROMOTIONAL_FLYERS': 'Latest',
   'OFFERS': 'Latest',
   TABLE_NUMBERS: 'Vibe',
+  SCHEDULE: 'Operational',
 };
 
 // ✅ Generate file hash for duplicate detection
