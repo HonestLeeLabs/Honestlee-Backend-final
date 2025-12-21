@@ -424,6 +424,93 @@ router.put('/venues/:tempVenueId/gps', (req: Request, res: Response, next: NextF
 // ====== Events Operations ======
 // ===== NEW: EVENTS OPERATIONS =====
 
+// GET /api/venues/:venueId/events - Public endpoint for fetching venue events
+router.get('/public/venues/:venueId/events', async (req: Request, res: Response) => {
+  try {
+    const { venueId } = req.params;
+    const { upcoming, isActive, sort } = req.query;
+
+    console.log('📡 [PUBLIC] Fetching events for venue:', venueId);
+
+    // Find the venue in AgentVenueTemp to get the actual venue ID
+    const tempVenue = await AgentVenueTemp.findOne({ 
+      $or: [
+        { tempVenueId: venueId },
+        { venueId: new mongoose.Types.ObjectId(venueId) }
+      ]
+    });
+
+    let actualVenueId = venueId;
+    let region: any = 'th'; // Default region
+
+    if (tempVenue) {
+      actualVenueId = tempVenue.venueId?.toString() || venueId;
+      region = tempVenue.region || 'th';
+      console.log('✅ Found temp venue, using actual venueId:', actualVenueId);
+    } else {
+      // Try to find venue in regional database
+      console.log('⚠️ No temp venue found, searching in regional databases');
+      
+      // Try each region
+      for (const reg of ['th', 'ae', 'in']) {
+        try {
+          const regionalConnection = dbManager.getConnection(reg as any);
+          const RegionalVenue = regionalConnection.models.Venue || 
+                               regionalConnection.model('Venue', Venue.schema);
+          
+          const venue = await RegionalVenue.findById(venueId);
+          if (venue) {
+            region = reg;
+            console.log(`✅ Found venue in ${reg} region`);
+            break;
+          }
+        } catch (err) {
+          console.log(`⚠️ Venue not found in ${reg} region`);
+        }
+      }
+    }
+
+    // Get regional connection
+    const regionalConnection = dbManager.getConnection(region);
+    const Event = regionalConnection.models.Event || 
+                  regionalConnection.model('Event', mongoose.model('Event').schema);
+
+    // Build query
+    const query: any = { venueId: new mongoose.Types.ObjectId(actualVenueId) };
+    
+    if (upcoming === 'true') {
+      query.eventStartsAt = { $gte: new Date() };
+    }
+    
+    if (isActive === 'true') {
+      query.isActive = true;
+    }
+
+    // Fetch events
+    const sortField = sort === 'eventStartsAt' ? 'eventStartsAt' : 'createdAt';
+    const events = await Event.find(query)
+      .sort({ [sortField]: 1 })
+      .lean();
+
+    console.log(`✅ [PUBLIC] Found ${events.length} events for venue ${venueId}`);
+
+    res.json({
+      success: true,
+      data: {
+        events: events || [],
+        count: events.length
+      }
+    });
+  } catch (error: any) {
+    console.error('❌ [PUBLIC] Error fetching venue events:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch events',
+      error: error.message
+    });
+  }
+});
+
 // GET /api/agent/venues/:tempVenueId/events - Get all events for a venue
 router.get('/venues/:tempVenueId/events', async (req: AuthRequest, res: Response) => {
   try {
