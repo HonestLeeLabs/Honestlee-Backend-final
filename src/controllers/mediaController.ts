@@ -440,8 +440,8 @@ export const uploadVenueMediaQuick = async (req: AuthRequest, res: Response) => 
       tempVenueId,
       venueId: venue.venueId,
       mediaType,
-      captureContext: captureContext || 'Agent onboarding',
-      submittedByRole: submittedByRole || 'Agent',
+      captureContext: captureContext || "Agent onboarding",
+      submittedByRole: submittedByRole || "Agent",
       submittedBy: currentUser.userId,
       fileUrl: cloudFrontUrl,
       thumbnailUrl,
@@ -455,6 +455,30 @@ export const uploadVenueMediaQuick = async (req: AuthRequest, res: Response) => 
       publicVisibility,
       frontendGroup,
       capturedAt: new Date(),
+
+      // EXIF data if provided (same pattern as uploadVenueMedia)
+      ...(req.body.exifDateTaken && {
+        exifDateTaken: new Date(req.body.exifDateTaken),
+      }),
+      ...(req.body.exifLatitude && {
+        exifLatitude: parseFloat(req.body.exifLatitude),
+      }),
+      ...(req.body.exifLongitude && {
+        exifLongitude: parseFloat(req.body.exifLongitude),
+      }),
+      ...(req.body.exifCamera && { exifCamera: req.body.exifCamera }),
+      ...(req.body.exifAltitude && {
+        exifAltitude: parseFloat(req.body.exifAltitude),
+      }),
+      ...(req.body.captureGpsLat && {
+        captureGpsLat: parseFloat(req.body.captureGpsLat),
+      }),
+      ...(req.body.captureGpsLng && {
+        captureGpsLng: parseFloat(req.body.captureGpsLng),
+      }),
+      ...(req.body.captureGpsAccuracy && {
+        captureGpsAccuracy: parseFloat(req.body.captureGpsAccuracy),
+      }),
     });
 
     await AuditLog.create({
