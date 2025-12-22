@@ -25,12 +25,23 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
       testServer,
       location,
       notes,
+      // WiFi-specific fields
       ssid,
       bssid,
       signalStrength,
       frequency,
       zoneId,
-      zoneName
+      zoneName,
+      // Connection details
+      networkType,
+      effectiveType,
+      downlink,
+      rtt,
+      wifiSecurity,
+      captivePortal,
+      userProvidedSsid,
+      isOnVenueWifi,
+      wifiNetworkName
     } = req.body;
 
     console.log('📥 Received speed test submission:', {
@@ -38,7 +49,10 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
       tempVenueId,
       downloadMbps,
       uploadMbps,
-      latencyMs
+      latencyMs,
+      ssid,
+      networkType,
+      userProvidedSsid
     });
 
     // Validate
@@ -49,7 +63,11 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    if (downloadMbps === undefined || uploadMbps === undefined || latencyMs === undefined) {
+    if (
+      downloadMbps === undefined ||
+      uploadMbps === undefined ||
+      latencyMs === undefined
+    ) {
       return res.status(400).json({
         success: false,
         message: 'Speed test metrics (downloadMbps, uploadMbps, latencyMs) are required'
@@ -63,7 +81,7 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
     // If using tempVenueId, verify venue exists
     if (tempVenueId && !venueId) {
       const tempVenue = await AgentVenueTemp.findOne({ tempVenueId });
-      
+
       if (!tempVenue) {
         return res.status(404).json({
           success: false,
@@ -75,35 +93,83 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
       region = tempVenue.region || region;
     }
 
-    // ✅ FIX: Convert userId to ObjectId if it's a string
-    const userIdValue = typeof req.user.userId === 'string' 
-      ? new mongoose.Types.ObjectId(req.user.userId)
-      : req.user.userId;
+    // Convert userId to ObjectId if it's a string
+    const userIdValue =
+      typeof req.user.userId === 'string'
+        ? new mongoose.Types.ObjectId(req.user.userId)
+        : req.user.userId;
 
-    // Create speed test
+    // Determine final SSID (prefer user-provided name, then raw ssid, then wifiNetworkName)
+    const finalSsid: string | undefined =
+      userProvidedSsid || ssid || wifiNetworkName;
+
+    // Determine if this is venue WiFi
+    const isVenueWifi: boolean = !!isOnVenueWifi;
+
+    // Store network details
+    const networkInfo = {
+      ssid: finalSsid,
+      bssid,
+      signalStrength,
+      frequency,
+      connectionType: connectionType || networkType || 'wifi',
+      effectiveType,
+      downlink,
+      rtt,
+      security: wifiSecurity || 'unknown',
+      captivePortal: !!captivePortal,
+      isVenueWifi
+    };
+
+    // Parse numeric fields robustly
+    const parsedDownload = typeof downloadMbps === 'number'
+      ? downloadMbps
+      : parseFloat(downloadMbps);
+    const parsedUpload = typeof uploadMbps === 'number'
+      ? uploadMbps
+      : parseFloat(uploadMbps);
+    const parsedLatency = typeof latencyMs === 'number'
+      ? latencyMs
+      : parseInt(latencyMs, 10);
+    const parsedJitter =
+      jitterMs !== undefined
+        ? (typeof jitterMs === 'number' ? jitterMs : parseFloat(jitterMs))
+        : undefined;
+    const parsedPacketLoss =
+      packetLoss !== undefined
+        ? (typeof packetLoss === 'number' ? packetLoss : parseFloat(packetLoss))
+        : undefined;
+
     const speedTest = new WifiSpeedTest({
       testId: uuidv4(),
       venueId: finalVenueId,
       tempVenueId: tempVenueId || undefined,
-      userId: userIdValue, // ✅ FIXED
+      userId: userIdValue,
       userRole: req.user.role,
-      downloadMbps: parseFloat(downloadMbps),
-      uploadMbps: parseFloat(uploadMbps),
-      latencyMs: parseInt(latencyMs),
-      jitterMs: jitterMs ? parseFloat(jitterMs) : undefined,
-      packetLoss: packetLoss ? parseFloat(packetLoss) : undefined,
-      connectionType: connectionType || 'wifi',
-      ssid,
+      downloadMbps: parsedDownload,
+      uploadMbps: parsedUpload,
+      latencyMs: parsedLatency,
+      jitterMs: parsedJitter,
+      packetLoss: parsedPacketLoss,
+      connectionType: connectionType || networkType || 'wifi',
+      ssid: finalSsid,
       bssid,
       signalStrength,
       frequency,
-      deviceInfo: deviceInfo || { model: 'Unknown', os: 'Unknown', browser: 'Unknown' },
+      // store comprehensive network info
+      networkInfo,
+      deviceInfo:
+        deviceInfo || { model: 'Unknown', os: 'Unknown', browser: 'Unknown' },
       testMethod: testMethod || 'ndt7',
       testServer,
       location,
       zoneId,
       zoneName,
-      notes,
+      notes:
+        notes ||
+        `SSID: ${finalSsid || 'Unknown'}, Venue WiFi: ${
+          isVenueWifi ? 'Yes' : 'No'
+        }`,
       isReliable: true,
       region,
       timestamp: new Date()
@@ -111,7 +177,7 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
 
     await speedTest.save();
 
-    // Update venue wifiData
+    // Update venue wifiData with SSID info
     if (tempVenueId) {
       await AgentVenueTemp.findOneAndUpdate(
         { tempVenueId },
@@ -125,21 +191,30 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
               qualityScore: speedTest.qualityScore,
               category: speedTest.category,
               testedAt: speedTest.timestamp,
-              testedBy: req.user.userId
+              testedBy: req.user.userId,
+              ssid: finalSsid,
+              isVenueWifi: isVenueWifi
+            }
+          },
+          $addToSet: {
+            'wifiData.ssids': {
+              ssid: finalSsid,
+              isVenueWifi: isVenueWifi,
+              lastTested: new Date(),
+              testCount: 1
             }
           }
         }
       );
     }
 
-    console.log(`✅ WiFi speed test saved: ${speedTest.testId}`);
+    console.log(`✅ WiFi speed test saved: ${speedTest.testId}, SSID: ${finalSsid}`);
 
     return res.status(201).json({
       success: true,
       message: 'Speed test submitted successfully',
       data: speedTest
     });
-
   } catch (error: any) {
     console.error('❌ Error submitting speed test:', error);
     return res.status(500).json({
@@ -155,26 +230,20 @@ export const getVenueSpeedTests = async (req: AuthRequest, res: Response) => {
     const { venueId } = req.params;
     const { limit = 50 } = req.query;
 
-    // ✅ FIX: Check if venueId is a valid ObjectId
     const isValidObjectId = mongoose.Types.ObjectId.isValid(venueId);
-    
-    // Build query based on whether it's a valid ObjectId or temp ID
+
     const query: any = isValidObjectId
       ? {
-          $or: [
-            { venueId },
-            { tempVenueId: venueId }
-          ]
+          $or: [{ venueId }, { tempVenueId: venueId }]
         }
       : {
-          // If not valid ObjectId, only search by tempVenueId
           tempVenueId: venueId
         };
 
     const tests = await WifiSpeedTest.find(query)
       .populate('userId', 'name email')
       .sort({ timestamp: -1 })
-      .limit(parseInt(limit as string))
+      .limit(parseInt(limit as string, 10))
       .lean();
 
     return res.json({
@@ -182,7 +251,6 @@ export const getVenueSpeedTests = async (req: AuthRequest, res: Response) => {
       data: tests,
       count: tests.length
     });
-
   } catch (error: any) {
     console.error('❌ Error fetching venue speed tests:', error);
     return res.status(500).json({
@@ -203,7 +271,7 @@ export const getMySpeedTests = async (req: AuthRequest, res: Response) => {
 
     const tests = await WifiSpeedTest.find({ userId: req.user.userId })
       .sort({ timestamp: -1 })
-      .limit(parseInt(limit as string))
+      .limit(parseInt(limit as string, 10))
       .lean();
 
     return res.json({
@@ -211,7 +279,6 @@ export const getMySpeedTests = async (req: AuthRequest, res: Response) => {
       data: tests,
       count: tests.length
     });
-
   } catch (error: any) {
     console.error('❌ Error fetching user tests:', error);
     return res.status(500).json({
@@ -238,7 +305,10 @@ export const deleteSpeedTest = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    if (test.userId.toString() !== req.user.userId && req.user.role !== 'ADMIN') {
+    if (
+      test.userId.toString() !== req.user.userId &&
+      req.user.role !== 'ADMIN'
+    ) {
       return res.status(403).json({
         success: false,
         message: 'Not authorized to delete this test'
@@ -251,7 +321,6 @@ export const deleteSpeedTest = async (req: AuthRequest, res: Response) => {
       success: true,
       message: 'Speed test deleted successfully'
     });
-
   } catch (error: any) {
     console.error('❌ Error deleting speed test:', error);
     return res.status(500).json({
