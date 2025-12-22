@@ -41,7 +41,11 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
       captivePortal,
       userProvidedSsid,
       isOnVenueWifi,
-      wifiNetworkName
+      wifiNetworkName,
+      // NEW – WiFi commercial / password details
+      isWifiFree,
+      wifiPassword,
+      wifiPasswordNote,
     } = req.body;
 
     console.log('📥 Received speed test submission:', {
@@ -52,7 +56,9 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
       latencyMs,
       ssid,
       networkType,
-      userProvidedSsid
+      userProvidedSsid,
+      isWifiFree,
+      hasPassword: !!wifiPassword,
     });
 
     // Validate
@@ -121,6 +127,20 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
       isVenueWifi
     };
 
+    // ---- NEW: build WiFi QR payload text (no external lib required here) ----
+    let wifiQrCode: string | undefined;
+    if (finalSsid && wifiPassword) {
+      // Map security to QR type
+      const sec = (wifiSecurity || '').toUpperCase();
+      let qrType = 'nopass';
+      if (sec.includes('WPA')) qrType = 'WPA';
+      else if (sec.includes('WEP')) qrType = 'WEP';
+      else if (wifiPassword) qrType = 'WPA'; // default if password exists
+
+      // Escape ; , : " if needed – for now keep simple
+      wifiQrCode = `WIFI:T:${qrType};S:${finalSsid};P:${wifiPassword};H:false;`;
+    }
+
     // Parse numeric fields robustly
     const parsedDownload = typeof downloadMbps === 'number'
       ? downloadMbps
@@ -139,6 +159,23 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
       packetLoss !== undefined
         ? (typeof packetLoss === 'number' ? packetLoss : parseFloat(packetLoss))
         : undefined;
+
+    const wifiCommercialNoteParts: string[] = [];
+    if (typeof isWifiFree === 'boolean') {
+      wifiCommercialNoteParts.push(`WiFi free: ${isWifiFree ? 'Yes' : 'No'}`);
+    }
+    if (wifiPassword) {
+      wifiCommercialNoteParts.push('Password stored');
+    }
+    if (wifiPasswordNote) {
+      wifiCommercialNoteParts.push(`Note: ${wifiPasswordNote}`);
+    }
+
+    const autoNotes = `SSID: ${finalSsid || 'Unknown'}, Venue WiFi: ${
+      isVenueWifi ? 'Yes' : 'No'
+    }${
+      wifiCommercialNoteParts.length ? ' | ' + wifiCommercialNoteParts.join(' | ') : ''
+    }`;
 
     const speedTest = new WifiSpeedTest({
       testId: uuidv4(),
@@ -165,112 +202,119 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
       location,
       zoneId,
       zoneName,
-      notes:
-        notes ||
-        `SSID: ${finalSsid || 'Unknown'}, Venue WiFi: ${
-          isVenueWifi ? 'Yes' : 'No'
-        }`,
+      notes: notes || autoNotes,
       isReliable: true,
       region,
-      timestamp: new Date()
+      timestamp: new Date(),
+      // NEW fields
+      isWifiFree: !!isWifiFree,
+      wifiPassword: wifiPassword || undefined,
+      wifiPasswordNote: wifiPasswordNote || undefined,
+      wifiQrCode,
     });
 
     await speedTest.save();
 
-// Update venue wifiData with SSID info
-if (tempVenueId) {
-  await AgentVenueTemp.findOneAndUpdate(
-    { tempVenueId },
-    [
-      {
-        $set: {
-          wifiData: {
-            $ifNull: ['$wifiData', {}],
+    // Update venue wifiData with SSID info
+    if (tempVenueId) {
+      await AgentVenueTemp.findOneAndUpdate(
+        { tempVenueId },
+        [
+          {
+            $set: {
+              wifiData: { $ifNull: ['$wifiData', {}] },
+            },
           },
-        },
-      },
-      {
-        $set: {
-          'wifiData.hasSpeedTest': true,
-          'wifiData.latestSpeedTest': {
-            downloadMbps: '$$ROOT.downloadMbps',
-            uploadMbps: '$$ROOT.uploadMbps',
-            latencyMs: '$$ROOT.latencyMs',
-            qualityScore: '$$ROOT.qualityScore',
-            category: '$$ROOT.category',
-            testedAt: '$$ROOT.timestamp',
-            testedBy: req.user.userId,
-            ssid: finalSsid,
-            isVenueWifi: isVenueWifi,
-          },
-          'wifiData.ssids': {
-            $let: {
-              vars: {
-                existing: {
-                  $ifNull: ['$wifiData.ssids', []],
-                },
+          {
+            $set: {
+              'wifiData.hasSpeedTest': true,
+              'wifiData.latestSpeedTest': {
+                downloadMbps: '$$ROOT.downloadMbps',
+                uploadMbps: '$$ROOT.uploadMbps',
+                latencyMs: '$$ROOT.latencyMs',
+                qualityScore: '$$ROOT.qualityScore',
+                category: '$$ROOT.category',
+                testedAt: '$$ROOT.timestamp',
+                testedBy: req.user.userId,
+                ssid: finalSsid,
+                isVenueWifi: isVenueWifi,
+                // NEW – expose free + QR summary at venue level
+                isWifiFree: !!isWifiFree,
+                hasWifiPassword: !!wifiPassword,
               },
-              in: {
-                $cond: {
-                  // does SSID already exist?
-                  if: {
-                    $gt: [
-                      {
-                        $size: {
-                          $filter: {
-                            input: '$$existing',
-                            as: 's',
-                            cond: { $eq: ['$$s.ssid', finalSsid] },
+              'wifiData.ssids': {
+                $let: {
+                  vars: {
+                    existing: {
+                      $ifNull: ['$wifiData.ssids', []],
+                    },
+                  },
+                  in: {
+                    $cond: {
+                      // does SSID already exist?
+                      if: {
+                        $gt: [
+                          {
+                            $size: {
+                              $filter: {
+                                input: '$$existing',
+                                as: 's',
+                                cond: { $eq: ['$$s.ssid', finalSsid] },
+                              },
+                            },
+                          },
+                          0,
+                        ],
+                      },
+                      // ✅ update existing ssid: increment testCount + update lastTested & isVenueWifi
+                      then: {
+                        $map: {
+                          input: '$$existing',
+                          as: 's',
+                          in: {
+                            $cond: [
+                              { $eq: ['$$s.ssid', finalSsid] },
+                              {
+                                ssid: '$$s.ssid',
+                                isVenueWifi: isVenueWifi,
+                                lastTested: new Date(),
+                                testCount: {
+                                  $add: ['$$s.testCount', 1],
+                                },
+                                // NEW: store venue-level WiFi meta at SSID level
+                                isWifiFree: !!isWifiFree,
+                                hasWifiPassword: !!wifiPassword,
+                              },
+                              '$$s',
+                            ],
                           },
                         },
                       },
-                      0,
-                    ],
-                  },
-                  // ✅ update existing ssid: increment testCount + update lastTested & isVenueWifi
-                  then: {
-                    $map: {
-                      input: '$$existing',
-                      as: 's',
-                      in: {
-                        $cond: [
-                          { $eq: ['$$s.ssid', finalSsid] },
-                          {
-                            ssid: '$$s.ssid',
-                            isVenueWifi: isVenueWifi,
-                            lastTested: new Date(),
-                            testCount: {
-                              $add: ['$$s.testCount', 1],
+                      // ✅ new ssid: push new item
+                      else: {
+                        $concatArrays: [
+                          '$$existing',
+                          [
+                            {
+                              ssid: finalSsid,
+                              isVenueWifi: isVenueWifi,
+                              lastTested: new Date(),
+                              testCount: 1,
+                              isWifiFree: !!isWifiFree,
+                              hasWifiPassword: !!wifiPassword,
                             },
-                          },
-                          '$$s',
+                          ],
                         ],
                       },
                     },
-                  },
-                  // ✅ new ssid: push new item
-                  else: {
-                    $concatArrays: [
-                      '$$existing',
-                      [
-                        {
-                          ssid: finalSsid,
-                          isVenueWifi: isVenueWifi,
-                          lastTested: new Date(),
-                          testCount: 1,
-                        },
-                      ],
-                    ],
                   },
                 },
               },
             },
           },
-        },
-      },
-    ],
-  );
-}
+        ],
+      );
+    }
 
     console.log(`✅ WiFi speed test saved: ${speedTest.testId}, SSID: ${finalSsid}`);
 

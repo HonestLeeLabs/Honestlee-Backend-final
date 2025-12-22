@@ -21,6 +21,12 @@ export interface IWifiSpeedTest extends Document {
   signalStrength?: number; // dBm
   frequency?: string; // '2.4GHz' | '5GHz'
   
+  // WiFi commercial/meta info
+  isWifiFree?: boolean;
+  wifiPassword?: string;
+  wifiPasswordNote?: string;
+  wifiQrCode?: string;
+  
   // Device Info
   deviceInfo: {
     model: string;
@@ -30,7 +36,7 @@ export interface IWifiSpeedTest extends Document {
   };
   
   // Test Method
-  testMethod: 'ookla' | 'fast.com' | 'manual' | 'speedtest-net' | 'cloudflare';
+  testMethod: 'ookla' | 'fast.com' | 'manual' | 'speedtest-net' | 'cloudflare' | 'ndt7';
   testServer?: string;
   
   // Location & Time
@@ -77,6 +83,12 @@ const WifiSpeedTestSchema = new Schema<IWifiSpeedTest>({
   bssid: String,
   signalStrength: Number,
   frequency: String,
+  
+  // WiFi commercial/meta info
+  isWifiFree: { type: Boolean, default: false },
+  wifiPassword: { type: String },          // consider encrypting / hashing if sensitive
+  wifiPasswordNote: { type: String },      // e.g. "Ask bar staff", "Valid 2 hours"
+  wifiQrCode: { type: String },            // e.g. WIFI:T:WPA;S:MySSID;P:secret;;
   
   deviceInfo: {
     model: { type: String, required: true },
@@ -144,15 +156,16 @@ WifiSpeedTestSchema.pre('save', function(next) {
   else score += 5;
   
   // Upload speed scoring (0-15 points)
-if (test.uploadMbps && test.uploadMbps > 0) {
-  if (test.uploadMbps >= 20) score += 15;
-  else if (test.uploadMbps >= 10) score += 12;
-  else if (test.uploadMbps >= 5) score += 8;
-  else score += 4;
-} else {
-  // Give minimum points if upload wasn't measured
-  score += 8; // neutral score
-}
+  if (test.uploadMbps && test.uploadMbps > 0) {
+    if (test.uploadMbps >= 20) score += 15;
+    else if (test.uploadMbps >= 10) score += 12;
+    else if (test.uploadMbps >= 5) score += 8;
+    else score += 4;
+  } else {
+    // Give minimum points if upload wasn't measured
+    score += 8; // neutral score
+  }
+  
   test.qualityScore = score;
   
   // Categorize
