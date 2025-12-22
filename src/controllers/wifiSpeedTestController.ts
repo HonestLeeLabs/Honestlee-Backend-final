@@ -177,36 +177,100 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
 
     await speedTest.save();
 
-    // Update venue wifiData with SSID info
-    if (tempVenueId) {
-      await AgentVenueTemp.findOneAndUpdate(
-        { tempVenueId },
-        {
-          $set: {
-            'wifiData.hasSpeedTest': true,
-            'wifiData.latestSpeedTest': {
-              downloadMbps: speedTest.downloadMbps,
-              uploadMbps: speedTest.uploadMbps,
-              latencyMs: speedTest.latencyMs,
-              qualityScore: speedTest.qualityScore,
-              category: speedTest.category,
-              testedAt: speedTest.timestamp,
-              testedBy: req.user.userId,
-              ssid: finalSsid,
-              isVenueWifi: isVenueWifi
-            }
+// Update venue wifiData with SSID info
+if (tempVenueId) {
+  await AgentVenueTemp.findOneAndUpdate(
+    { tempVenueId },
+    [
+      {
+        $set: {
+          wifiData: {
+            $ifNull: ['$wifiData', {}],
           },
-          $addToSet: {
-            'wifiData.ssids': {
-              ssid: finalSsid,
-              isVenueWifi: isVenueWifi,
-              lastTested: new Date(),
-              testCount: 1
-            }
-          }
-        }
-      );
-    }
+        },
+      },
+      {
+        $set: {
+          'wifiData.hasSpeedTest': true,
+          'wifiData.latestSpeedTest': {
+            downloadMbps: '$$ROOT.downloadMbps',
+            uploadMbps: '$$ROOT.uploadMbps',
+            latencyMs: '$$ROOT.latencyMs',
+            qualityScore: '$$ROOT.qualityScore',
+            category: '$$ROOT.category',
+            testedAt: '$$ROOT.timestamp',
+            testedBy: req.user.userId,
+            ssid: finalSsid,
+            isVenueWifi: isVenueWifi,
+          },
+          'wifiData.ssids': {
+            $let: {
+              vars: {
+                existing: {
+                  $ifNull: ['$wifiData.ssids', []],
+                },
+              },
+              in: {
+                $cond: {
+                  // does SSID already exist?
+                  if: {
+                    $gt: [
+                      {
+                        $size: {
+                          $filter: {
+                            input: '$$existing',
+                            as: 's',
+                            cond: { $eq: ['$$s.ssid', finalSsid] },
+                          },
+                        },
+                      },
+                      0,
+                    ],
+                  },
+                  // ✅ update existing ssid: increment testCount + update lastTested & isVenueWifi
+                  then: {
+                    $map: {
+                      input: '$$existing',
+                      as: 's',
+                      in: {
+                        $cond: [
+                          { $eq: ['$$s.ssid', finalSsid] },
+                          {
+                            ssid: '$$s.ssid',
+                            isVenueWifi: isVenueWifi,
+                            lastTested: new Date(),
+                            testCount: {
+                              $add: ['$$s.testCount', 1],
+                            },
+                          },
+                          '$$s',
+                        ],
+                      },
+                    },
+                  },
+                  // ✅ new ssid: push new item
+                  else: {
+                    $concatArrays: [
+                      '$$existing',
+                      [
+                        {
+                          ssid: finalSsid,
+                          isVenueWifi: isVenueWifi,
+                          lastTested: new Date(),
+                          testCount: 1,
+                        },
+                      ],
+                    ],
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    ],
+  );
+}
 
     console.log(`✅ WiFi speed test saved: ${speedTest.testId}, SSID: ${finalSsid}`);
 
