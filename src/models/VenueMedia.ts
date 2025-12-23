@@ -558,15 +558,15 @@ VenueMediaSchema.methods.getThumbnailInfo = function() {
     hasThumbnail: !!this.thumbnailUrl,
     thumbnailUrl: this.thumbnailUrl,
     thumbnailS3Key: this.thumbnailS3Key,
-    hasMedium: !!this.mediumUrl, // ✅ NEW
-    mediumUrl: this.mediumUrl, // ✅ NEW
-    mediumS3Key: this.mediumS3Key, // ✅ NEW
+    hasMedium: !!this.mediumUrl,
+    mediumUrl: this.mediumUrl,
+    mediumS3Key: this.mediumS3Key,
     usesOriginalAsThumbnail: this.isVideo || !this.thumbnailUrl,
-    recommendedSize: this.isVideo ? 'Original' : '300x300 WebP'
+    recommendedSize: this.isVideo ? 'Original' : '500x500 WebP'
   };
 };
 
-// ✅ NEW: Instance method to get all media sizes info
+// In VenueMediaSchema.methods.getMediaSizesInfo
 VenueMediaSchema.methods.getMediaSizesInfo = function() {
   return {
     original: {
@@ -579,13 +579,13 @@ VenueMediaSchema.methods.getMediaSizesInfo = function() {
       has: !!this.thumbnailUrl,
       url: this.thumbnailUrl,
       s3Key: this.thumbnailS3Key,
-      size: '200x200 WebP'
+      size: '500x500 WebP' 
     },
     medium: {
       has: !!this.mediumUrl,
       url: this.mediumUrl,
       s3Key: this.mediumS3Key,
-      size: '800px max WebP'
+      size: '1000px max WebP'
     },
     isVideo: this.isVideo,
     usesFallback: this.isVideo || !this.thumbnailUrl
