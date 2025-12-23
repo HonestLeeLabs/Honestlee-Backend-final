@@ -6,7 +6,6 @@ import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
 import sharp from 'sharp';
 
-
 // ===== AWS S3 CLIENT CONFIGURATION =====
 const s3 = new S3Client({
   credentials: {
@@ -21,14 +20,22 @@ const s3 = new S3Client({
   maxAttempts: 5,
 });
 
-
 console.log('✅ S3 Client initialized:', {
   region: process.env.AWS_REGION || 'ap-south-1',
   bucket: process.env.S3_BUCKET_NAME || 'honestlee-user-upload'
 });
 
+// ===== HELPER: Check if image needs compression =====
+const shouldCompressImage = (fileSize: number, targetSize: number): boolean => {
+  const fileSizeKB = fileSize / 1024;
+  const targetSizeKB = targetSize / 1024;
+  
+  // If original is already smaller than 50KB, still compress to ensure consistency
+  // If original is larger, definitely compress
+  return fileSizeKB > 50 || fileSizeKB > targetSizeKB;
+};
 
-// ===== IMAGE SIZE GENERATION (3 VERSIONS) =====
+// ===== IMAGE SIZE GENERATION (3 VERSIONS) - FIXED =====
 const generateImageSizes = async (
   fileBuffer: Buffer,
   isVideo: boolean
@@ -39,27 +46,79 @@ const generateImageSizes = async (
   if (isVideo) return { thumbnail: null, medium: null };
   
   try {
+    // Get original image metadata
+    const metadata = await sharp(fileBuffer).metadata();
+    const originalWidth = metadata.width || 0;
+    const originalHeight = metadata.height || 0;
+    
+    console.log(`📐 Original dimensions: ${originalWidth}x${originalHeight}`);
+    
     // 1. THUMBNAIL: 500x500, WebP 70% (for grid view)
+    // Always resize and compress, even if smaller
     const thumbnail = await sharp(fileBuffer)
       .resize(500, 500, {
         fit: 'cover',
-        position: 'center'
+        position: 'center',
+        withoutEnlargement: false  // ✅ FIXED: Force resize even if smaller
       })
-      .webp({ quality: 70, effort: 6 })
+      .webp({ 
+        quality: 70, 
+        effort: 6,
+        force: true  // ✅ FIXED: Force WebP conversion
+      })
       .toBuffer();
     
     console.log(`✅ Thumbnail (500x500): ${(thumbnail.length / 1024).toFixed(2)} KB`);
     
-    // 2. MEDIUM: 1000x1000, WebP 75% (for modal view)
+    // 2. MEDIUM: Max 1000px on longest side, WebP 75% (for modal view)
+    // Calculate proper resize dimensions
+    let mediumWidth, mediumHeight;
+    const maxDimension = 1000;
+    
+    if (originalWidth > maxDimension || originalHeight > maxDimension) {
+      // Image is larger than max, resize it
+      if (originalWidth > originalHeight) {
+        mediumWidth = maxDimension;
+        mediumHeight = Math.round((originalHeight / originalWidth) * maxDimension);
+      } else {
+        mediumHeight = maxDimension;
+        mediumWidth = Math.round((originalWidth / originalHeight) * maxDimension);
+      }
+    } else {
+      // Image is smaller than max, but still compress it to WebP
+      mediumWidth = originalWidth;
+      mediumHeight = originalHeight;
+    }
+    
     const medium = await sharp(fileBuffer)
-      .resize(1000, 1000, {
+      .resize(mediumWidth, mediumHeight, {
         fit: 'inside',
-        withoutEnlargement: true
+        withoutEnlargement: false,  // ✅ FIXED: Allow processing of smaller images
+        kernel: 'lanczos3'  // ✅ Better quality resize
       })
-      .webp({ quality: 75, effort: 6 })
+      .webp({ 
+        quality: 75, 
+        effort: 6,
+        force: true  // ✅ FIXED: Force WebP conversion
+      })
       .toBuffer();
     
-    console.log(`✅ Medium (1000x1000): ${(medium.length / 1024).toFixed(2)} KB`);
+    console.log(`✅ Medium (${mediumWidth}x${mediumHeight}): ${(medium.length / 1024).toFixed(2)} KB`);
+    
+    // ✅ FIXED: Verify compression worked
+    if (thumbnail.length > fileBuffer.length * 0.8) {
+      console.warn(`⚠️ Thumbnail not compressed enough, retrying with lower quality...`);
+      const retryThumbnail = await sharp(fileBuffer)
+        .resize(500, 500, {
+          fit: 'cover',
+          position: 'center'
+        })
+        .webp({ quality: 60, effort: 6, force: true })
+        .toBuffer();
+      
+      console.log(`✅ Retry Thumbnail: ${(retryThumbnail.length / 1024).toFixed(2)} KB`);
+      return { thumbnail: retryThumbnail, medium };
+    }
     
     return { thumbnail, medium };
   } catch (error) {
@@ -67,7 +126,6 @@ const generateImageSizes = async (
     return { thumbnail: null, medium: null };
   }
 };
-
 
 // ===== UPLOAD TO S3 WITH ALL SIZES =====
 export const uploadToS3WithSizes = async (
@@ -86,6 +144,8 @@ export const uploadToS3WithSizes = async (
   
   const fileExtension = path.extname(file.originalname).toLowerCase();
   const isVideo = ['.mp4', '.mov', '.avi', '.webm', '.mkv', '.3gp', '.3gpp', '.m4v'].includes(fileExtension);
+  
+  console.log(`📊 Original file size: ${(file.size / 1024).toFixed(2)} KB`);
   
   // Upload original
   await s3.send(new PutObjectCommand({
@@ -114,37 +174,46 @@ export const uploadToS3WithSizes = async (
     // Upload thumbnail
     if (thumbnail) {
       thumbnailKey = `${parsedPath.dir}/${parsedPath.name}-thumb.webp`;
+      
+      // ✅ FIXED: Add cache control headers
       await s3.send(new PutObjectCommand({
         Bucket: bucketName,
         Key: thumbnailKey,
         Body: thumbnail,
         ContentType: 'image/webp',
+        CacheControl: 'public, max-age=31536000',  // Cache for 1 year
       }));
+      
       thumbnailUrl = cloudFrontDomain
         ? `https://${cloudFrontDomain}/${thumbnailKey}`
         : `https://${bucketName}.s3.${process.env.AWS_REGION || 'ap-south-1'}.amazonaws.com/${thumbnailKey}`;
-      console.log(`✅ Thumbnail uploaded: ${thumbnailUrl}`);
+      
+      console.log(`✅ Thumbnail uploaded: ${(thumbnail.length / 1024).toFixed(2)} KB → ${thumbnailUrl}`);
     }
     
     // Upload medium
     if (medium) {
       mediumKey = `${parsedPath.dir}/${parsedPath.name}-medium.webp`;
+      
+      // ✅ FIXED: Add cache control headers
       await s3.send(new PutObjectCommand({
         Bucket: bucketName,
         Key: mediumKey,
         Body: medium,
         ContentType: 'image/webp',
+        CacheControl: 'public, max-age=31536000',  // Cache for 1 year
       }));
+      
       mediumUrl = cloudFrontDomain
         ? `https://${cloudFrontDomain}/${mediumKey}`
         : `https://${bucketName}.s3.${process.env.AWS_REGION || 'ap-south-1'}.amazonaws.com/${mediumKey}`;
-      console.log(`✅ Medium uploaded: ${mediumUrl}`);
+      
+      console.log(`✅ Medium uploaded: ${(medium.length / 1024).toFixed(2)} KB → ${mediumUrl}`);
     }
   }
   
   return { originalUrl, thumbnailUrl, mediumUrl, thumbnailKey, mediumKey };
 };
-
 
 // ===== FIXED MOBILE FILE FILTER =====
 const venueMediaFileFilter = (req: any, file: any, cb: any) => {
@@ -162,14 +231,12 @@ const venueMediaFileFilter = (req: any, file: any, cb: any) => {
     origin: req.headers?.['origin'],
   });
 
-
   // ✅ MOBILE SAFETY CHECK: Accept ANY file > 5KB
   if (file.size > 5 * 1024) {
     console.log(`${logId} ✅ MOBILE ACCEPTED: Size > 5KB`);
     cb(null, true);
     return;
   }
-
 
   if (!file || !file.originalname) {
     console.error(`${logId} ❌ REJECTED: Invalid file object`);
@@ -178,7 +245,6 @@ const venueMediaFileFilter = (req: any, file: any, cb: any) => {
     cb(error, false);
     return;
   }
-
 
   const allowedExtensions = /\.(jpg|jpeg|png|gif|webp|heic|heif|bmp|tiff|tif|jpe|jfif|mp4|mov|avi|webm|mkv|3gp|3gpp|m4v|insp)$/i;
   
@@ -189,7 +255,6 @@ const venueMediaFileFilter = (req: any, file: any, cb: any) => {
     return;
   }
 
-
   const allowedMimeTypes = [
     'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp',
     'image/bmp', 'image/tiff', 'image/x-icon',
@@ -199,7 +264,6 @@ const venueMediaFileFilter = (req: any, file: any, cb: any) => {
     'application/octet-stream', 'binary/octet-stream', '', null, undefined
   ];
 
-
   const fileMimeType = (file.mimetype || '').toLowerCase();
   
   if (allowedMimeTypes.includes(fileMimeType) || !file.mimetype) {
@@ -208,13 +272,11 @@ const venueMediaFileFilter = (req: any, file: any, cb: any) => {
     return;
   }
 
-
   console.error(`${logId} ❌ REJECTED: Invalid file type`);
   const error: any = new Error('Only image and video files are allowed');
   error.code = 'FILE_TYPE_NOT_ALLOWED';
   cb(error, false);
 };
-
 
 // ===== HELPER FUNCTIONS =====
 const getMimeToExtensionMap = (): { [key: string]: string } => ({
@@ -232,7 +294,6 @@ const getMimeToExtensionMap = (): { [key: string]: string } => ({
   'video/webm': '.webm',
   'video/3gpp': '.3gp',
 });
-
 
 const getContentTypeMap = (): { [key: string]: string } => ({
   '.jpg': 'image/jpeg',
@@ -252,7 +313,6 @@ const getContentTypeMap = (): { [key: string]: string } => ({
   '.3gp': 'video/3gpp',
 });
 
-
 const getFileExtension = (file: any): string => {
   let fileExtension = path.extname(file.originalname || '').toLowerCase();
   
@@ -268,7 +328,6 @@ const getFileExtension = (file: any): string => {
   
   return fileExtension;
 };
-
 
 const getContentType = (file: any, fileExtension: string): string => {
   const contentTypeMap = getContentTypeMap();
@@ -289,7 +348,6 @@ const getContentType = (file: any, fileExtension: string): string => {
   
   return contentType;
 };
-
 
 // ===== MANUAL UPLOAD HANDLER (for thumbnail generation) =====
 export const processVenueMediaUpload = async (
@@ -321,7 +379,6 @@ export const processVenueMediaUpload = async (
   return { originalUrl, thumbnailUrl, mediumUrl, s3Key, thumbnailKey, mediumKey };
 };
 
-
 // ===== HELPER: PROCESS OTHER UPLOADS WITH SIZES =====
 export const processUploadWithSizes = async (
   file: Express.Multer.File,
@@ -351,7 +408,6 @@ export const processUploadWithSizes = async (
   
   return { originalUrl, thumbnailUrl, mediumUrl, s3Key, thumbnailKey, mediumKey };
 };
-
 
 // ===== DELETE ALL SIZES =====
 export const deleteAllSizesFromS3 = async (originalKey: string): Promise<boolean> => {
@@ -387,7 +443,6 @@ export const deleteAllSizesFromS3 = async (originalKey: string): Promise<boolean
   }
 };
 
-
 // ===== DELETE THUMBNAIL HELPER (backward compatibility) =====
 export const deleteThumbnailFromS3 = async (originalKey: string): Promise<boolean> => {
   try {
@@ -413,9 +468,7 @@ export const deleteThumbnailFromS3 = async (originalKey: string): Promise<boolea
   }
 };
 
-
 // ===== DIRECT S3 UPLOAD CONFIGURATIONS (for non-venue uploads without thumbnails) =====
-
 
 // ===== VENUE MEDIA UPLOAD TO S3 (10GB+ Support) =====
 export const uploadVenueMediaDirect = multer({
@@ -435,13 +488,11 @@ export const uploadVenueMediaDirect = multer({
       const agentId = (req as any).user?.userId || 'anonymous';
       const tempVenueId = req.params?.tempVenueId || 'unknown';
 
-
       let fileExtension = getFileExtension(file);
       
       const uniqueId = uuidv4();
       const timestamp = Date.now();
       const fileName = `venue-media/${tempVenueId}/${agentId}-${timestamp}-${uniqueId}${fileExtension}`;
-
 
       console.log(`✅ S3 Upload Key: ${fileName}`);
       cb(null, fileName);
@@ -461,7 +512,6 @@ export const uploadVenueMediaDirect = multer({
     fieldSize: Infinity,
   }
 });
-
 
 // ===== REVIEW IMAGES UPLOAD (10GB Support) =====
 export const uploadReviewImages = multer({
@@ -496,7 +546,6 @@ export const uploadReviewImages = multer({
   }
 });
 
-
 // ===== PROFILE IMAGE UPLOAD (10GB Support) =====
 export const uploadProfileImage = multer({
   storage: multerS3({
@@ -525,7 +574,6 @@ export const uploadProfileImage = multer({
     fileSize: Infinity
   }
 });
-
 
 // ===== EVENT IMAGES UPLOAD (10GB Support) =====
 export const uploadEventImages = multer({
@@ -557,7 +605,6 @@ export const uploadEventImages = multer({
   }
 });
 
-
 // ===== MEMORY STORAGE UPLOADS (for manual processing with sizes) =====
 export const uploadVenueMediaMemory = multer({
   storage: multer.memoryStorage(),
@@ -569,7 +616,6 @@ export const uploadVenueMediaMemory = multer({
   }
 });
 
-
 export const uploadReviewImagesMemory = multer({
   storage: multer.memoryStorage(),
   fileFilter: venueMediaFileFilter,
@@ -579,7 +625,6 @@ export const uploadReviewImagesMemory = multer({
   }
 });
 
-
 export const uploadProfileImageMemory = multer({
   storage: multer.memoryStorage(),
   fileFilter: venueMediaFileFilter,
@@ -587,7 +632,6 @@ export const uploadProfileImageMemory = multer({
     fileSize: Infinity
   }
 });
-
 
 export const uploadEventImagesMemory = multer({
   storage: multer.memoryStorage(),
@@ -597,7 +641,6 @@ export const uploadEventImagesMemory = multer({
     files: 10
   }
 });
-
 
 // ===== S3 FILE OPERATIONS =====
 export const deleteFileFromS3 = async (fileKey: string): Promise<boolean> => {
@@ -616,7 +659,6 @@ export const deleteFileFromS3 = async (fileKey: string): Promise<boolean> => {
   }
 };
 
-
 export const getS3KeyFromUrl = (url: string): string | null => {
   try {
     const urlObj = new URL(url);
@@ -626,7 +668,6 @@ export const getS3KeyFromUrl = (url: string): string | null => {
     return null;
   }
 };
-
 
 // ===== BATCH DELETE =====
 export const deleteMultipleFilesFromS3 = async (fileKeys: string[]): Promise<boolean> => {
