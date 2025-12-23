@@ -42,10 +42,16 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
       userProvidedSsid,
       isOnVenueWifi,
       wifiNetworkName,
-      // NEW – WiFi commercial / password details
+      // WiFi commercial / password details
       isWifiFree,
       wifiPassword,
       wifiPasswordNote,
+      // NEW contextual fields
+      displayMethod,
+      displayLocation,
+      peopleCount,
+      zoneInfo,
+      hasNoWifi,
     } = req.body;
 
     console.log('📥 Received speed test submission:', {
@@ -59,6 +65,11 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
       userProvidedSsid,
       isWifiFree,
       hasPassword: !!wifiPassword,
+      // NEW fields log
+      displayMethod,
+      displayLocation,
+      peopleCount,
+      hasNoWifi,
     });
 
     // Validate
@@ -127,7 +138,7 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
       isVenueWifi
     };
 
-    // ---- NEW: build WiFi QR payload text (no external lib required here) ----
+    // Build WiFi QR payload text
     let wifiQrCode: string | undefined;
     if (finalSsid && wifiPassword) {
       // Map security to QR type
@@ -137,9 +148,11 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
       else if (sec.includes('WEP')) qrType = 'WEP';
       else if (wifiPassword) qrType = 'WPA'; // default if password exists
 
-      // Escape ; , : " if needed – for now keep simple
       wifiQrCode = `WIFI:T:${qrType};S:${finalSsid};P:${wifiPassword};H:false;`;
     }
+
+    // Build zone info object
+    const finalZoneInfo = zoneInfo ? JSON.parse(JSON.stringify(zoneInfo)) : undefined;
 
     // Parse numeric fields robustly
     const parsedDownload = typeof downloadMbps === 'number'
@@ -159,7 +172,12 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
       packetLoss !== undefined
         ? (typeof packetLoss === 'number' ? packetLoss : parseFloat(packetLoss))
         : undefined;
+    const parsedPeopleCount =
+      peopleCount !== undefined
+        ? (typeof peopleCount === 'number' ? peopleCount : parseInt(peopleCount))
+        : undefined;
 
+    // Enhanced auto notes with contextual info
     const wifiCommercialNoteParts: string[] = [];
     if (typeof isWifiFree === 'boolean') {
       wifiCommercialNoteParts.push(`WiFi free: ${isWifiFree ? 'Yes' : 'No'}`);
@@ -171,11 +189,21 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
       wifiCommercialNoteParts.push(`Note: ${wifiPasswordNote}`);
     }
 
-    const autoNotes = `SSID: ${finalSsid || 'Unknown'}, Venue WiFi: ${
+    const baseAutoNotes = `SSID: ${finalSsid || 'Unknown'}, Venue WiFi: ${
       isVenueWifi ? 'Yes' : 'No'
     }${
       wifiCommercialNoteParts.length ? ' | ' + wifiCommercialNoteParts.join(' | ') : ''
     }`;
+
+    // Add contextual notes
+    const contextualNotes: string[] = [];
+    if (displayMethod && displayMethod !== 'unknown') contextualNotes.push(`Display: ${displayMethod}`);
+    if (displayLocation) contextualNotes.push(`Location: ${displayLocation}`);
+    if (parsedPeopleCount !== undefined) contextualNotes.push(`People: ${parsedPeopleCount}`);
+    if (hasNoWifi) contextualNotes.push('NO WIFI at venue');
+    if (finalZoneInfo?.zoneName) contextualNotes.push(`Zone: ${finalZoneInfo.zoneName}`);
+
+    const enhancedAutoNotes = `${baseAutoNotes}${contextualNotes.length ? ' | ' + contextualNotes.join(' | ') : ''}`;
 
     const speedTest = new WifiSpeedTest({
       testId: uuidv4(),
@@ -202,20 +230,26 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
       location,
       zoneId,
       zoneName,
-      notes: notes || autoNotes,
+      notes: notes || enhancedAutoNotes,
       isReliable: true,
       region,
       timestamp: new Date(),
-      // NEW fields
+      // WiFi commercial fields
       isWifiFree: !!isWifiFree,
       wifiPassword: wifiPassword || undefined,
       wifiPasswordNote: wifiPasswordNote || undefined,
       wifiQrCode,
+      // NEW contextual fields
+      displayMethod: displayMethod || 'unknown',
+      displayLocation,
+      peopleCount: parsedPeopleCount,
+      zoneInfo: finalZoneInfo,
+      hasNoWifi: !!hasNoWifi,
     });
 
     await speedTest.save();
 
-    // Update venue wifiData with SSID info
+    // Update venue wifiData with SSID info and contextual data
     if (tempVenueId) {
       await AgentVenueTemp.findOneAndUpdate(
         { tempVenueId },
@@ -229,18 +263,24 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
             $set: {
               'wifiData.hasSpeedTest': true,
               'wifiData.latestSpeedTest': {
-                downloadMbps: '$$ROOT.downloadMbps',
-                uploadMbps: '$$ROOT.uploadMbps',
-                latencyMs: '$$ROOT.latencyMs',
-                qualityScore: '$$ROOT.qualityScore',
-                category: '$$ROOT.category',
-                testedAt: '$$ROOT.timestamp',
+                downloadMbps: parsedDownload,
+                uploadMbps: parsedUpload,
+                latencyMs: parsedLatency,
+                qualityScore: speedTest.qualityScore,
+                category: speedTest.category,
+                testedAt: new Date(),
                 testedBy: req.user.userId,
                 ssid: finalSsid,
                 isVenueWifi: isVenueWifi,
-                // NEW – expose free + QR summary at venue level
+                // WiFi commercial fields
                 isWifiFree: !!isWifiFree,
                 hasWifiPassword: !!wifiPassword,
+                // NEW contextual fields
+                displayMethod: displayMethod || 'unknown',
+                displayLocation,
+                peopleCount: parsedPeopleCount,
+                zoneInfo: finalZoneInfo,
+                hasNoWifi: !!hasNoWifi,
               },
               'wifiData.ssids': {
                 $let: {
@@ -281,9 +321,15 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
                                 testCount: {
                                   $add: ['$$s.testCount', 1],
                                 },
-                                // NEW: store venue-level WiFi meta at SSID level
+                                // WiFi commercial fields
                                 isWifiFree: !!isWifiFree,
                                 hasWifiPassword: !!wifiPassword,
+                                // NEW contextual fields at SSID level
+                                displayMethod: displayMethod || 'unknown',
+                                displayLocation,
+                                peopleCount: parsedPeopleCount,
+                                zoneInfo: finalZoneInfo,
+                                hasNoWifi: !!hasNoWifi,
                               },
                               '$$s',
                             ],
@@ -302,6 +348,12 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
                               testCount: 1,
                               isWifiFree: !!isWifiFree,
                               hasWifiPassword: !!wifiPassword,
+                              // NEW contextual fields at SSID level
+                              displayMethod: displayMethod || 'unknown',
+                              displayLocation,
+                              peopleCount: parsedPeopleCount,
+                              zoneInfo: finalZoneInfo,
+                              hasNoWifi: !!hasNoWifi,
                             },
                           ],
                         ],

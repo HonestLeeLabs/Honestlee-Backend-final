@@ -57,6 +57,21 @@ export interface IWifiSpeedTest extends Document {
   // Additional
   notes?: string;
   region: string;
+  
+  // NEW contextual fields
+  displayMethod?: 'signage' | 'tablets' | 'pamphlets' | 'verbal' | 'none' | 'other' | 'unknown';
+  displayLocation?: string;
+  peopleCount?: number;
+  zoneInfo?: {
+    zoneId?: string;
+    zoneName?: string;
+    hasWifi?: boolean;
+  };
+  hasNoWifi?: boolean;
+  
+  // Network Info (if stored separately)
+  networkInfo?: any;
+  
   createdAt: Date;
   updatedAt: Date;
 }
@@ -122,6 +137,24 @@ const WifiSpeedTestSchema = new Schema<IWifiSpeedTest>({
   
   notes: String,
   region: { type: String, required: true, index: true },
+  
+  // Network Info
+  networkInfo: { type: Schema.Types.Mixed },
+  
+  // NEW contextual fields
+  displayMethod: { 
+    type: String, 
+    enum: ['signage', 'tablets', 'pamphlets', 'verbal', 'none', 'other', 'unknown'],
+    default: 'unknown'
+  },
+  displayLocation: String,
+  peopleCount: { type: Number, min: 0 },
+  zoneInfo: {
+    zoneId: String,
+    zoneName: String,
+    hasWifi: Boolean
+  },
+  hasNoWifi: { type: Boolean, default: false },
 }, {
   timestamps: true,
   collection: 'wifi_speed_tests'
