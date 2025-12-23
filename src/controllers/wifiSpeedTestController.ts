@@ -30,8 +30,8 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
       bssid,
       signalStrength,
       frequency,
-      zoneId,
-      zoneName,
+      zoneId,        // ✅ Direct zoneId from frontend
+      zoneName,      // ✅ Direct zoneName from frontend
       // Connection details
       networkType,
       effectiveType,
@@ -50,7 +50,7 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
       displayMethod,
       displayLocation,
       peopleCount,
-      zoneInfo,
+      zoneInfo,      // ✅ Structured zoneInfo from frontend
       hasNoWifi,
     } = req.body;
 
@@ -61,6 +61,8 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
       uploadMbps,
       latencyMs,
       ssid,
+      zoneId,        // ✅ Log zoneId
+      zoneName,      // ✅ Log zoneName
       networkType,
       userProvidedSsid,
       isWifiFree,
@@ -151,8 +153,36 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
       wifiQrCode = `WIFI:T:${qrType};S:${finalSsid};P:${wifiPassword};H:false;`;
     }
 
-    // Build zone info object
-    const finalZoneInfo = zoneInfo ? JSON.parse(JSON.stringify(zoneInfo)) : undefined;
+    // ✅ FIXED: Build final zone info - prioritize structured zoneInfo, fallback to individual fields
+    let finalZoneInfo;
+    let finalZoneId = zoneId;
+    let finalZoneName = zoneName;
+
+    if (zoneInfo) {
+      try {
+        finalZoneInfo = JSON.parse(JSON.stringify(zoneInfo));
+        finalZoneId = finalZoneInfo.zoneId || zoneId;
+        finalZoneName = finalZoneInfo.zoneName || zoneName;
+      } catch (e) {
+        console.warn('⚠️ Invalid zoneInfo JSON, using individual fields');
+        finalZoneInfo = undefined;
+      }
+    }
+
+    // Fallback: create zoneInfo from individual fields if not provided
+    if (!finalZoneInfo && (finalZoneId || finalZoneName)) {
+      finalZoneInfo = {
+        zoneId: finalZoneId,
+        zoneName: finalZoneName,
+        hasWifi: !hasNoWifi
+      };
+    }
+
+    console.log('🎯 Final zone data:', {
+      zoneId: finalZoneId,
+      zoneName: finalZoneName,
+      zoneInfo: finalZoneInfo
+    });
 
     // Parse numeric fields robustly
     const parsedDownload = typeof downloadMbps === 'number'
@@ -201,7 +231,7 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
     if (displayLocation) contextualNotes.push(`Location: ${displayLocation}`);
     if (parsedPeopleCount !== undefined) contextualNotes.push(`People: ${parsedPeopleCount}`);
     if (hasNoWifi) contextualNotes.push('NO WIFI at venue');
-    if (finalZoneInfo?.zoneName) contextualNotes.push(`Zone: ${finalZoneInfo.zoneName}`);
+    if (finalZoneName) contextualNotes.push(`Zone: ${finalZoneName}`);  // ✅ Use finalZoneName
 
     const enhancedAutoNotes = `${baseAutoNotes}${contextualNotes.length ? ' | ' + contextualNotes.join(' | ') : ''}`;
 
@@ -228,8 +258,8 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
       testMethod: testMethod || 'ndt7',
       testServer,
       location,
-      zoneId,
-      zoneName,
+      zoneId: finalZoneId,     // ✅ Fixed: use finalZoneId
+      zoneName: finalZoneName, // ✅ Fixed: use finalZoneName
       notes: notes || enhancedAutoNotes,
       isReliable: true,
       region,
@@ -243,7 +273,7 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
       displayMethod: displayMethod || 'unknown',
       displayLocation,
       peopleCount: parsedPeopleCount,
-      zoneInfo: finalZoneInfo,
+      zoneInfo: finalZoneInfo,  // ✅ Fixed: use finalZoneInfo
       hasNoWifi: !!hasNoWifi,
     });
 
@@ -279,7 +309,9 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
                 displayMethod: displayMethod || 'unknown',
                 displayLocation,
                 peopleCount: parsedPeopleCount,
-                zoneInfo: finalZoneInfo,
+                zoneInfo: finalZoneInfo,  // ✅ Fixed
+                zoneId: finalZoneId,      // ✅ Added
+                zoneName: finalZoneName,  // ✅ Added
                 hasNoWifi: !!hasNoWifi,
               },
               'wifiData.ssids': {
@@ -329,6 +361,8 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
                                 displayLocation,
                                 peopleCount: parsedPeopleCount,
                                 zoneInfo: finalZoneInfo,
+                                zoneId: finalZoneId,      // ✅ Added
+                                zoneName: finalZoneName,  // ✅ Added
                                 hasNoWifi: !!hasNoWifi,
                               },
                               '$$s',
@@ -353,6 +387,8 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
                               displayLocation,
                               peopleCount: parsedPeopleCount,
                               zoneInfo: finalZoneInfo,
+                              zoneId: finalZoneId,      // ✅ Added
+                              zoneName: finalZoneName,  // ✅ Added
                               hasNoWifi: !!hasNoWifi,
                             },
                           ],
@@ -368,7 +404,7 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
       );
     }
 
-    console.log(`✅ WiFi speed test saved: ${speedTest.testId}, SSID: ${finalSsid}`);
+    console.log(`✅ WiFi speed test saved: ${speedTest.testId}, SSID: ${finalSsid}, Zone: ${finalZoneName || 'None'}`);
 
     return res.status(201).json({
       success: true,
