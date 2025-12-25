@@ -102,7 +102,7 @@ const VenueMediaSchema = new Schema<IVenueMedia>(
         'GYM_AREA', 'CONFERENCE_ROOM',
         
         // ✅ Retail & Other
-        'SUPERMARKET_AISLE',
+        'SUPERMARKET_AISLE', 'POSSYSTEM',
         
         // ✅ Family & Pet
         'FAMILY_KIDS_AREA', 'HIGH_CHAIRS', 'PET_AREA',

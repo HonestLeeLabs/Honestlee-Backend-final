@@ -95,6 +95,7 @@ const frontendGroupMap: { [key: string]: string } = {
   RECEIPTS: 'Operational',
   SOCIAL_MEDIA: 'Latest',
   SPORTS_AMENITIES: 'Amenities',
+  'POSSYSTEM': 'Amenities', 
   TV_DISPLAY: 'Amenities',
   'POLICY_PAYMENT': 'Policies',
   'POLICY_SMOKING': 'Policies',
