@@ -46,12 +46,14 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
       isWifiFree,
       wifiPassword,
       wifiPasswordNote,
-      // NEW contextual fields
+      // Contextual fields
       displayMethod,
       displayLocation,
       peopleCount,
       zoneInfo,      // ✅ Structured zoneInfo from frontend
       hasNoWifi,
+      // ✅ NEW: Mobile Network Info
+      mobileNetworkInfo,
     } = req.body;
 
     console.log('📥 Received speed test submission:', {
@@ -72,6 +74,8 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
       displayLocation,
       peopleCount,
       hasNoWifi,
+      // ✅ NEW: Log mobile network info
+      mobileNetworkInfo,
     });
 
     // Validate
@@ -219,6 +223,17 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
       wifiCommercialNoteParts.push(`Note: ${wifiPasswordNote}`);
     }
 
+    // Add mobile network info to notes if available
+    if (mobileNetworkInfo?.carrier) {
+      const mobileParts = [];
+      mobileParts.push(`Mobile: ${mobileNetworkInfo.carrier}`);
+      if (mobileNetworkInfo.networkType) mobileParts.push(mobileNetworkInfo.networkType);
+      if (mobileNetworkInfo.signalBars) mobileParts.push(`${mobileNetworkInfo.signalBars}/5 bars`);
+      if (mobileNetworkInfo.signalStrength) mobileParts.push(mobileNetworkInfo.signalStrength);
+      if (mobileNetworkInfo.towerDistance) mobileParts.push(`Tower: ~${mobileNetworkInfo.towerDistance}`);
+      wifiCommercialNoteParts.push(`Mobile Network: ${mobileParts.join(', ')}`);
+    }
+
     const baseAutoNotes = `SSID: ${finalSsid || 'Unknown'}, Venue WiFi: ${
       isVenueWifi ? 'Yes' : 'No'
     }${
@@ -275,6 +290,8 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
       peopleCount: parsedPeopleCount,
       zoneInfo: finalZoneInfo,  // ✅ Fixed: use finalZoneInfo
       hasNoWifi: !!hasNoWifi,
+      // ✅ NEW: Mobile Network Info
+      mobileNetworkInfo: mobileNetworkInfo || undefined,
     });
 
     await speedTest.save();
@@ -313,6 +330,8 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
                 zoneId: finalZoneId,      // ✅ Added
                 zoneName: finalZoneName,  // ✅ Added
                 hasNoWifi: !!hasNoWifi,
+                // ✅ NEW: Mobile Network Info in venue data
+                mobileNetworkInfo: mobileNetworkInfo || undefined,
               },
               'wifiData.ssids': {
                 $let: {
@@ -364,6 +383,8 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
                                 zoneId: finalZoneId,      // ✅ Added
                                 zoneName: finalZoneName,  // ✅ Added
                                 hasNoWifi: !!hasNoWifi,
+                                // ✅ NEW: Mobile Network Info at SSID level
+                                mobileNetworkInfo: mobileNetworkInfo || undefined,
                               },
                               '$$s',
                             ],
@@ -390,6 +411,8 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
                               zoneId: finalZoneId,      // ✅ Added
                               zoneName: finalZoneName,  // ✅ Added
                               hasNoWifi: !!hasNoWifi,
+                              // ✅ NEW: Mobile Network Info at SSID level
+                              mobileNetworkInfo: mobileNetworkInfo || undefined,
                             },
                           ],
                         ],
@@ -404,7 +427,7 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
       );
     }
 
-    console.log(`✅ WiFi speed test saved: ${speedTest.testId}, SSID: ${finalSsid}, Zone: ${finalZoneName || 'None'}`);
+    console.log(`✅ WiFi speed test saved: ${speedTest.testId}, SSID: ${finalSsid}, Zone: ${finalZoneName || 'None'}, Mobile Network: ${mobileNetworkInfo?.carrier || 'None'}`);
 
     return res.status(201).json({
       success: true,

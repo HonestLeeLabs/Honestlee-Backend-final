@@ -69,6 +69,15 @@ export interface IWifiSpeedTest extends Document {
   };
   hasNoWifi?: boolean;
   
+  // NEW: Mobile Network Info (when WiFi not available)
+  mobileNetworkInfo?: {
+    carrier?: string;          // e.g., "AIS", "True", "DTAC", "Airtel", "Jio"
+    networkType?: string;      // e.g., "5G", "4G LTE", "4G", "3G"
+    signalStrength?: string;   // e.g., "-70 dBm"
+    signalBars?: number;       // 1-5 bars
+    towerDistance?: string;    // e.g., "500m", "1km"
+  };
+  
   // Network Info (if stored separately)
   networkInfo?: any;
   
@@ -101,9 +110,9 @@ const WifiSpeedTestSchema = new Schema<IWifiSpeedTest>({
   
   // WiFi commercial/meta info
   isWifiFree: { type: Boolean, default: false },
-  wifiPassword: { type: String },          // consider encrypting / hashing if sensitive
-  wifiPasswordNote: { type: String },      // e.g. "Ask bar staff", "Valid 2 hours"
-  wifiQrCode: { type: String },            // e.g. WIFI:T:WPA;S:MySSID;P:secret;;
+  wifiPassword: { type: String },
+  wifiPasswordNote: { type: String },
+  wifiQrCode: { type: String },
   
   deviceInfo: {
     model: { type: String, required: true },
@@ -155,6 +164,16 @@ const WifiSpeedTestSchema = new Schema<IWifiSpeedTest>({
     hasWifi: Boolean
   },
   hasNoWifi: { type: Boolean, default: false },
+  
+  // NEW: Mobile Network Info
+  mobileNetworkInfo: {
+    carrier: String,
+    networkType: String,
+    signalStrength: String,
+    signalBars: { type: Number, min: 1, max: 5 },
+    towerDistance: String
+  },
+  
 }, {
   timestamps: true,
   collection: 'wifi_speed_tests'
