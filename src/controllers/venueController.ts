@@ -1,18 +1,298 @@
+// src/controllers/venueController.ts
 import { Response } from 'express';
 import { AuthRequest } from '../middlewares/authMiddleware';
 import { RegionRequest } from '../middlewares/regionMiddleware';
 import { getVenueModel } from '../models/Venue';
 import { dbManager } from '../config/database';
 import mongoose from 'mongoose';
-import User, { Role } from '../models/User'; // ✅ CRITICAL: Import User model
+import User, { Role } from '../models/User';
 
 type CombinedRequest = AuthRequest & RegionRequest;
+
+// ✅ Interface for WiFi data from agent_venue_temps
+interface AgentVenueWifiData {
+  _id: mongoose.Types.ObjectId;
+  venueId: mongoose.Types.ObjectId;
+  wifiData?: {
+    hasSpeedTest?: boolean;
+    latestSpeedTest?: {
+      downloadMbps?: number;
+      uploadMbps?: number;
+      latencyMs?: number;
+      testCount?: number;
+      lastTestedAt?: Date;
+    };
+    ssids?: string[];
+  };
+}
 
 // Helper to check user roles
 function hasRole(userRole: string | undefined, allowedRoles: string[]): boolean {
   if (!userRole) return false;
   return allowedRoles.includes(userRole);
 }
+
+// GET VENUES WITH WIFI DATA FROM BOTH agent_venue_temps AND wifi_speed_tests
+export const getVenues = async (req: CombinedRequest, res: Response) => {
+  try {
+    const region = req.region || 'th';
+    await dbManager.connectRegion(region);
+    const Venue = getVenueModel(region);
+
+    if (!req.user) return res.status(401).json({ message: 'Unauthorized' });
+
+    const {
+      page = '1',
+      limit,
+      venuetype,
+      venuecategory,
+      groupid,
+      BillingCity,
+      BillingCountry,
+      BudgetFriendly,
+      PubWifi,
+      minRating,
+      search,
+      sortBy = 'createdAt',
+      sortOrder = 'desc',
+      latitude,
+      longitude,
+      radius = '5000',
+      fetchAll = 'false',
+      includeWifiData = 'true',
+      hasWifiTests, // ✅ Filter parameter for WiFi tests
+    } = req.query;
+
+    const query: any = { isActive: true, region };
+
+    // Existing filters
+    if (venuetype) query.venuetype = venuetype;
+    if (venuecategory) query.venuecategory = venuecategory;
+    if (groupid) query.groupid = groupid;
+    if (BillingCity) query.BillingCity = BillingCity;
+    if (BillingCountry) query.BillingCountry = BillingCountry;
+    if (BudgetFriendly) query.BudgetFriendly = BudgetFriendly;
+    if (PubWifi) query.PubWifi = PubWifi === '1' || PubWifi === 'true' ? 1 : 0;
+    if (minRating && !isNaN(Number(minRating))) query.Rating = { $gte: Number(minRating) };
+
+    if (search && typeof search === 'string') {
+      query.$or = [
+        { AccountName: { $regex: search, $options: 'i' } },
+        { BillingCity: { $regex: search, $options: 'i' } },
+      ];
+    }
+
+    if (latitude && longitude) {
+      const lat = parseFloat(latitude.toString());
+      const lng = parseFloat(longitude.toString());
+      const rad = parseInt(radius.toString());
+      query.geometry = {
+        $near: {
+          $geometry: { type: 'Point', coordinates: [lng, lat] },
+          $maxDistance: rad,
+        },
+      };
+    }
+
+    const sortObj: any = {};
+    sortObj[sortBy.toString()] = sortOrder === 'asc' ? 1 : -1;
+
+    const pageNum = Number(page);
+    const shouldFetchAll = fetchAll === 'true' || fetchAll === '1';
+    const shouldIncludeWifiData = includeWifiData === 'true' || includeWifiData === '1';
+
+    let queryresult: any[];
+
+    if (shouldFetchAll) {
+      queryresult = await Venue.find(query).sort(sortObj).lean();
+    } else {
+      const limitNum = limit ? Number(limit) : 10;
+      queryresult = await Venue.find(query)
+        .sort(sortObj)
+        .skip((pageNum - 1) * limitNum)
+        .limit(limitNum)
+        .lean();
+    }
+
+    const total = await Venue.countDocuments(query);
+
+    // ✅ WiFi Data Aggregation from BOTH sources
+    if (shouldIncludeWifiData && queryresult.length > 0) {
+      const venueIds = queryresult.map((v) => v._id);
+
+      console.log(`🔍 Fetching WiFi data for ${venueIds.length} venues from both collections`);
+
+      try {
+        // Access the shared database
+        const sharedDb = mongoose.connection.useDb('honestlee_shared');
+        const AgentVenueTemp = sharedDb.collection('agent_venue_temps');
+        const WifiSpeedTests = sharedDb.collection('wifi_speed_tests');
+
+        // ✅ STEP 1: Fetch from agent_venue_temps (aggregated data)
+        const agentVenueWifiData = await AgentVenueTemp.aggregate([
+          {
+            $match: {
+              venueId: { $in: venueIds },
+              'wifiData.hasSpeedTest': true
+            }
+          },
+          {
+            $project: {
+              _id: 1,
+              venueId: 1,
+              'wifiData.hasSpeedTest': 1,
+              'wifiData.latestSpeedTest': 1,
+              'wifiData.ssids': 1
+            }
+          }
+        ]).toArray();
+
+        console.log(`✅ Agent Venue Temps: Found ${agentVenueWifiData.length} venues with WiFi data`);
+
+        // ✅ STEP 2: Fetch from wifi_speed_tests (raw test data)
+        // Get latest test for each venue
+        const wifiSpeedTestData = await WifiSpeedTests.aggregate([
+          {
+            $match: {
+              venueId: { $in: venueIds },
+              isReliable: true,
+              region: region
+            }
+          },
+          {
+            $sort: { timestamp: -1 }
+          },
+          {
+            $group: {
+              _id: '$venueId',
+              latestTest: { $first: '$$ROOT' },
+              testCount: { $sum: 1 },
+              avgDownload: { $avg: '$downloadMbps' },
+              avgUpload: { $avg: '$uploadMbps' },
+              avgLatency: { $avg: '$latencyMs' }
+            }
+          }
+        ]).toArray();
+
+        console.log(`✅ WiFi Speed Tests: Found ${wifiSpeedTestData.length} venues with speed tests`);
+
+        // ✅ STEP 3: Merge data from both sources (agent_venue_temps takes priority)
+        const wifiDataMap = new Map<string, any>();
+
+        // First, add data from agent_venue_temps
+        agentVenueWifiData.forEach((agentVenue: any) => {
+          if (agentVenue.venueId) {
+            const venueIdStr = agentVenue.venueId.toString();
+            const speedTest = agentVenue.wifiData?.latestSpeedTest;
+
+            wifiDataMap.set(venueIdStr, {
+              hasWifiSpeedData: true,
+              hasWifiTests: true,
+              wifiTestsCount: speedTest?.testCount || 1,
+              DLSPeedMBPS: speedTest?.downloadMbps || null,
+              ULSPeedMBPS: speedTest?.uploadMbps || null,
+              DLSpeedMBPS: speedTest?.downloadMbps || null,
+              ULSpeedMBPS: speedTest?.uploadMbps || null,
+              latencyMs: speedTest?.latencyMs || null,
+              lastTestedAt: speedTest?.lastTestedAt,
+              wifiSSIDs: agentVenue.wifiData?.ssids || [],
+              dataSource: 'agent_venue_temps'
+            });
+          }
+        });
+
+        // Then, fill in missing venues from wifi_speed_tests
+        wifiSpeedTestData.forEach((wifiTest: any) => {
+          if (wifiTest._id) {
+            const venueIdStr = wifiTest._id.toString();
+            
+            // Only add if NOT already present from agent_venue_temps
+            if (!wifiDataMap.has(venueIdStr)) {
+              const latestTest = wifiTest.latestTest;
+
+              wifiDataMap.set(venueIdStr, {
+                hasWifiSpeedData: true,
+                hasWifiTests: true,
+                wifiTestsCount: wifiTest.testCount || 1,
+                DLSPeedMBPS: latestTest.downloadMbps || null,
+                ULSPeedMBPS: latestTest.uploadMbps || null,
+                DLSpeedMBPS: latestTest.downloadMbps || null,
+                ULSpeedMBPS: latestTest.uploadMbps || null,
+                latencyMs: latestTest.latencyMs || null,
+                lastTestedAt: latestTest.timestamp,
+                wifiQualityScore: latestTest.qualityScore || null,
+                wifiCategory: latestTest.category || null,
+                avgDownloadMbps: wifiTest.avgDownload || null,
+                avgUploadMbps: wifiTest.avgUpload || null,
+                dataSource: 'wifi_speed_tests'
+              });
+            }
+          }
+        });
+
+        console.log(`✅ Total WiFi Data Coverage: ${wifiDataMap.size} venues`);
+
+        // Merge WiFi data into venue results
+        queryresult = queryresult.map((venue) => {
+          const venueId = venue._id.toString();
+          const wifiData = wifiDataMap.get(venueId);
+
+          if (wifiData) {
+            return { ...venue, ...wifiData };
+          }
+
+          return {
+            ...venue,
+            hasWifiSpeedData: false,
+            hasWifiTests: false,
+            wifiTestsCount: 0,
+            DLSPeedMBPS: null,
+            ULSPeedMBPS: null,
+            DLSpeedMBPS: null,
+            ULSpeedMBPS: null,
+          };
+        });
+
+      } catch (wifiError: any) {
+        console.error('❌ Error fetching WiFi data:', wifiError);
+        // Continue without WiFi data
+      }
+    }
+
+    // ✅ Filter by WiFi test availability (AFTER merging WiFi data)
+    if (hasWifiTests !== undefined) {
+      const filterHasWifi = hasWifiTests === 'true' || hasWifiTests === '1';
+      const beforeFilterCount = queryresult.length;
+      
+      queryresult = queryresult.filter((venue) => {
+        if (filterHasWifi) {
+          return venue.hasWifiTests === true && venue.wifiTestsCount > 0;
+        } else {
+          return !venue.hasWifiTests || venue.wifiTestsCount === 0;
+        }
+      });
+      
+      console.log(`🔍 Filtered from ${beforeFilterCount} to ${queryresult.length} venues with hasWifiTests=${filterHasWifi}`);
+    }
+
+    res.json({
+      success: true,
+      region,
+      data: queryresult,
+      pagination: shouldFetchAll
+        ? { total, fetchAll: true, returned: queryresult.length }
+        : {
+            total,
+            page: pageNum,
+            limit: limit ? Number(limit) : 10,
+            totalPages: Math.ceil(total / (limit ? Number(limit) : 10)),
+          },
+    });
+  } catch (error: any) {
+    console.error('❌ Error fetching venues:', error);
+    res.status(500).json({ success: false, message: 'Error fetching venues', error: error.message });
+  }
+};
 
 // CREATE VENUE - FIXED VERSION
 export const createVenue = async (req: CombinedRequest, res: Response) => {
@@ -265,115 +545,6 @@ export const updateVenue = async (req: CombinedRequest, res: Response) => {
   }
 };
 
-// GET VENUES
-export const getVenues = async (req: CombinedRequest, res: Response) => {
-  try {
-    const region = req.region || 'ae';
-    await dbManager.connectRegion(region);
-    const Venue = getVenueModel(region);
-
-    if (!req.user) {
-      return res.status(401).json({ message: 'Unauthorized' });
-    }
-
-    const {
-      page = 1,
-      limit,
-      venuetype,
-      venuecategory,
-      groupid,
-      BillingCity,
-      BillingCountry,
-      BudgetFriendly,
-      PubWifi,
-      minRating,
-      search,
-      sortBy = 'createdAt',
-      sortOrder = 'desc',
-      latitude,
-      longitude,
-      radius = 5000,
-      fetchAll = 'false'
-    } = req.query;
-
-    const query: any = { isActive: true, region };
-
-    if (venuetype) query.venuetype = venuetype;
-    if (venuecategory) query.venuecategory = venuecategory;
-    if (groupid) query.groupid = groupid;
-    if (BillingCity) query.BillingCity = BillingCity;
-    if (BillingCountry) query.BillingCountry = BillingCountry;
-    if (BudgetFriendly) query.BudgetFriendly = BudgetFriendly;
-    if (PubWifi) query.PubWifi = PubWifi === '1' || PubWifi === 'true' ? 1 : 0;
-    if (minRating && !isNaN(Number(minRating))) {
-      query.Rating = { $gte: Number(minRating) };
-    }
-
-    if (search && typeof search === 'string') {
-      query.$or = [
-        { AccountName: { $regex: search, $options: 'i' } },
-        { BillingCity: { $regex: search, $options: 'i' } }
-      ];
-    }
-
-    if (latitude && longitude) {
-      const lat = parseFloat(latitude.toString());
-      const lng = parseFloat(longitude.toString());
-      const rad = parseInt(radius.toString());
-      query.geometry = {
-        $near: {
-          $geometry: { type: 'Point', coordinates: [lng, lat] },
-          $maxDistance: rad
-        }
-      };
-    }
-
-    const sortObj: any = {};
-    sortObj[sortBy.toString()] = sortOrder === 'asc' ? 1 : -1;
-
-    const pageNum = Number(page);
-    const shouldFetchAll = fetchAll === 'true' || fetchAll === '1';
-    
-    let query_result;
-    
-    if (shouldFetchAll) {
-      query_result = await Venue.find(query).sort(sortObj);
-    } else {
-      const limitNum = limit ? Number(limit) : 10;
-      query_result = await Venue.find(query)
-        .sort(sortObj)
-        .skip((pageNum - 1) * limitNum)
-        .limit(limitNum);
-    }
-
-    const total = await Venue.countDocuments(query);
-
-    res.json({
-      success: true,
-      region,
-      data: query_result,
-      pagination: shouldFetchAll ? {
-        total,
-        fetchAll: true,
-        returned: query_result.length
-      } : {
-        total,
-        page: pageNum,
-        limit: limit ? Number(limit) : 10,
-        totalPages: Math.ceil(total / (limit ? Number(limit) : 10))
-      }
-    });
-
-  } catch (error: any) {
-    console.error('Error fetching venues:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Error fetching venues', 
-      error: error.message 
-    });
-  }
-};
-
 // ✅ FIXED: GET VENUE BY ID - Removed .populate() to avoid User model error
 export const getVenueById = async (req: CombinedRequest, res: Response) => {
   try {
@@ -506,7 +677,8 @@ export const getVenuesByCategory = async (req: CombinedRequest, res: Response) =
     })
       .sort({ Rating: -1 })
       .skip((pageNum - 1) * limitNum)
-      .limit(limitNum);
+      .limit(limitNum)
+      .lean();
 
     const total = await Venue.countDocuments({ 
       venuecategory: category, 
