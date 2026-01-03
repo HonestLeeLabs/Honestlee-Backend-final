@@ -240,6 +240,7 @@ export const generateWiFiToken = async (req: AuthRequest, res: Response) => {
       ssid: wifiData.ssid,
       hasPassword: !!wifiData.password,
       tokenPreview: token.substring(0, 8) + '...',
+      deepLink: deepLink,
       expiresIn: '10 minutes'
     });
 
