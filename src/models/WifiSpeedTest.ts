@@ -27,6 +27,12 @@ export interface IWifiSpeedTest extends Document {
   wifiPasswordNote?: string;
   wifiQrCode?: string;
   
+  // ✅ ADDED: Network metadata fields
+  ipAddress?: string;
+  hostname?: string;
+  testDuration?: number;
+  testServer?: string;
+  
   // Device Info
   deviceInfo: {
     model: string;
@@ -37,7 +43,6 @@ export interface IWifiSpeedTest extends Document {
   
   // Test Method
   testMethod: 'ookla' | 'fast.com' | 'manual' | 'speedtest-net' | 'cloudflare' | 'ndt7';
-  testServer?: string;
   
   // Location & Time
   location?: {
@@ -114,6 +119,12 @@ const WifiSpeedTestSchema = new Schema<IWifiSpeedTest>({
   wifiPasswordNote: { type: String },
   wifiQrCode: { type: String },
   
+  // ✅ ADDED: Network metadata fields
+  ipAddress: { type: String },
+  hostname: { type: String },
+  testDuration: { type: Number, min: 0 },
+  testServer: String,
+  
   deviceInfo: {
     model: { type: String, required: true },
     os: { type: String, required: true },
@@ -126,7 +137,6 @@ const WifiSpeedTestSchema = new Schema<IWifiSpeedTest>({
     enum: ['ookla', 'fast.com', 'manual', 'speedtest-net', 'cloudflare', 'ndt7'],
     required: true
   },
-  testServer: String,
   
   location: {
     lat: Number,

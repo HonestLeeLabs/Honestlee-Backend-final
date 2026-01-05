@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { AuthRequest } from '../middlewares/authMiddleware';
 import mongoose from 'mongoose';
-import WifiTest from '../models/WifiTest';
+import WifiSpeedTest, { IWifiSpeedTest } from '../models/WifiSpeedTest'; // Import interface too
 import AgentVenueTemp from '../models/AgentVenueTemp';
 import axios from 'axios';
 import crypto from 'crypto';
@@ -9,24 +9,6 @@ import crypto from 'crypto';
 const FastSpeedtest = require('fast-speedtest-api');
 
 // ===== INTERFACES =====
-interface IWifiTest {
-  user: mongoose.Types.ObjectId;
-  downloadMbps: number;
-  uploadMbps: number;
-  pingMs: number;
-  jitterMs: number;
-  testServer: string;
-  ipAddress: string;
-  hostname: string;
-  testDuration: number;
-  createdAt?: Date;
-  updatedAt?: Date;
-}
-
-interface IWifiTestDocument extends IWifiTest {
-  _id: mongoose.Types.ObjectId;
-}
-
 interface SpeedTestProgress {
   type: 'init' | 'ping' | 'download' | 'upload' | 'completed' | 'error';
   phase: string;
@@ -163,10 +145,10 @@ export const generateWiFiToken = async (req: AuthRequest, res: Response) => {
       hasVitalsWifiData: !!(venue as any).vitals?.wifiData
     });
 
-    // ✅ NEW: Try to get existing WiFi data from venue
+    // ✅ Try to get existing WiFi data from venue
     let wifiData = getVenueWifiData(venue);
 
-    // ✅ NEW: If no WiFi data in database but provided in request, use that
+    // ✅ If no WiFi data in database but provided in request, use that
     if ((!wifiData || !wifiData.ssid) && ssid) {
       console.log('💡 Using WiFi credentials from request body');
       wifiData = {
@@ -175,7 +157,7 @@ export const generateWiFiToken = async (req: AuthRequest, res: Response) => {
         security: password ? 'WPA2' : 'Open'
       };
 
-      // ✅ NEW: Save WiFi credentials to venue document for future use
+      // ✅ Save WiFi credentials to venue document for future use
       try {
         const updateData: any = {
           'wifiData.ssid': ssid,
@@ -360,150 +342,12 @@ export const receiveWiFiTelemetry = async (req: Request, res: Response) => {
 };
 
 /**
- * POST /api/wifi/speed-test/submit
- * Submit a completed speed test with venue context
- * ✅ NEW: Also saves WiFi credentials to venue document
- */
-export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
-  try {
-    const userId = req.user?.userId;
-    
-    if (!userId) {
-      return res.status(401).json({
-        success: false,
-        message: 'Authentication required'
-      });
-    }
-
-    const {
-      venueId,
-      ssid,
-      wifiPassword,
-      wifiPasswordNote,
-      isWifiFree,
-      hasNoWifi = false,
-      downloadMbps,
-      uploadMbps,
-      pingMs,
-      jitterMs,
-      testServer,
-      ipAddress,
-      hostname,
-      testDuration
-    } = req.body;
-
-    // Validate required fields for speed test
-    if (downloadMbps === undefined || uploadMbps === undefined || pingMs === undefined) {
-      return res.status(400).json({
-        success: false,
-        message: 'Download, upload, and ping speeds are required'
-      });
-    }
-
-    logProgress('📤 Submitting speed test with venue context:', {
-      venueId,
-      ssid,
-      hasPassword: !!wifiPassword,
-      hasNoWifi,
-      downloadMbps,
-      uploadMbps,
-      pingMs
-    });
-
-    // Save speed test result
-    const wifiTest = new WifiTest({
-      user: new mongoose.Types.ObjectId(userId),
-      downloadMbps: Math.round(downloadMbps * 100) / 100,
-      uploadMbps: Math.round(uploadMbps * 100) / 100,
-      pingMs: pingMs,
-      jitterMs: jitterMs ? Math.round(jitterMs * 100) / 100 : 0,
-      testServer: testServer || 'Manual Test',
-      ipAddress: ipAddress || 'Unknown',
-      hostname: hostname || 'Unknown',
-      testDuration: testDuration || 0
-    });
-
-    const savedTest = await wifiTest.save();
-
-    // ✅ NEW: Also save WiFi credentials to venue document for future use
-    if (ssid && venueId && !hasNoWifi) {
-      try {
-        const updateData: any = {
-          'wifiData.ssid': ssid,
-          'wifiData.isWifiFree': isWifiFree !== undefined ? isWifiFree : null,
-          'wifiData.lastUpdated': new Date(),
-          'wifiData.lastTestedBy': userId
-        };
-
-        if (wifiPassword) {
-          updateData['wifiData.password'] = wifiPassword;
-          updateData['wifiData.security'] = 'WPA2';
-        }
-
-        if (wifiPasswordNote) {
-          updateData['wifiData.note'] = wifiPasswordNote;
-        }
-
-        await AgentVenueTemp.updateOne(
-          { 
-            $or: [
-              { tempVenueId: venueId },
-              { venueId: venueId },
-              { _id: mongoose.Types.ObjectId.isValid(venueId) ? venueId : null }
-            ]
-          },
-          { $set: updateData }
-        );
-
-        console.log('✅ WiFi credentials saved to venue document from speed test');
-      } catch (venueUpdateError) {
-        console.error('⚠️ Failed to update venue with WiFi credentials:', venueUpdateError);
-        // Continue anyway - speed test is already saved
-      }
-    }
-
-    const finalResults = {
-      id: savedTest._id,
-      download: savedTest.downloadMbps,
-      upload: savedTest.uploadMbps,
-      ping: savedTest.pingMs,
-      jitter: savedTest.jitterMs,
-      server: savedTest.testServer,
-      ip: savedTest.ipAddress,
-      location: savedTest.hostname,
-      quality: getConnectionQuality(savedTest.downloadMbps, savedTest.uploadMbps, savedTest.pingMs),
-      testDuration: savedTest.testDuration,
-      timestamp: savedTest.createdAt,
-      venueUpdated: !!(ssid && venueId && !hasNoWifi)
-    };
-
-    logProgress('🎉 Speed test submitted successfully:', finalResults);
-
-    res.json({
-      success: true,
-      message: 'Speed test submitted successfully',
-      data: finalResults
-    });
-
-  } catch (error: any) {
-    console.error('❌ Error submitting speed test:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to submit speed test',
-      error: error.message
-    });
-  }
-};
-
-// ===== SPEED TEST FUNCTIONALITY =====
-
-/**
  * POST /api/wifi/speed-test/start
  * Real-time speed test with live progress updates
+ * ✅ FIXED: Now collects WiFi credentials and saves to WifiSpeedTest
  */
 export const startRealTimeSpeedTest = async (req: Request, res: Response) => {
   try {
-    // Require authentication
     const user = (req as any).user;
     
     if (!user) {
@@ -516,12 +360,17 @@ export const startRealTimeSpeedTest = async (req: Request, res: Response) => {
     const userId = user._id?.toString() || user.userId;
     const sessionId = `${userId}-${Date.now()}`;
     
+    // ✅ NEW: Extract WiFi credentials from request
+    const { venueId, tempVenueId, ssid, wifiPassword, wifiPasswordNote, isWifiFree, hasNoWifi } = req.body;
+    
     logProgress('🎯 Starting real-time speed test:', { 
       userId, 
-      sessionId
+      sessionId,
+      venueId,
+      ssid,
+      hasWifiPassword: !!wifiPassword
     });
 
-    // Set headers for Server-Sent Events with proper CORS
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache, no-store, must-revalidate',
@@ -542,9 +391,7 @@ export const startRealTimeSpeedTest = async (req: Request, res: Response) => {
           
           logProgress(`📊 Sent SSE: ${data.phase}`, {
             progress: data.progress,
-            speed: data.currentSpeed,
-            type: data.type,
-            data: data.data
+            speed: data.currentSpeed
           });
         }
       } catch (error: unknown) {
@@ -552,7 +399,6 @@ export const startRealTimeSpeedTest = async (req: Request, res: Response) => {
       }
     };
 
-    // Send initial connection message
     sendProgress({
       type: 'init',
       phase: 'Connected to speed test server',
@@ -560,7 +406,6 @@ export const startRealTimeSpeedTest = async (req: Request, res: Response) => {
       timestamp: Date.now()
     });
 
-    // Handle client disconnect
     req.on('close', () => {
       logProgress('🔌 Client disconnected:', sessionId);
     });
@@ -569,8 +414,18 @@ export const startRealTimeSpeedTest = async (req: Request, res: Response) => {
       logProgress('🚫 Request aborted:', sessionId);
     });
 
-    // Start the comprehensive speed test
-    await performRealTimeSpeedTest(userId, sessionId, sendProgress, res, req);
+    // ✅ FIXED: Pass WiFi credentials to test function
+    await performRealTimeSpeedTest(userId, sessionId, sendProgress, res, req, {
+      venueId,
+      tempVenueId,
+      ssid,
+      wifiPassword,
+      wifiPasswordNote,
+      isWifiFree,
+      hasNoWifi,
+      userRole: user.role,
+      region: user.region || 'th'
+    });
 
   } catch (error: unknown) {
     logProgress('❌ Speed test error:', error);
@@ -592,19 +447,29 @@ export const startRealTimeSpeedTest = async (req: Request, res: Response) => {
 };
 
 /**
- * Perform real-time speed test execution
+ * ✅ FIXED: Now saves to WifiSpeedTest with WiFi credentials
  */
 async function performRealTimeSpeedTest(
   userId: string,
   sessionId: string,
   sendProgress: (data: SpeedTestProgress) => void,
   res: Response,
-  req: Request
+  req: Request,
+  wifiContext?: {
+    venueId?: string;
+    tempVenueId?: string;
+    ssid?: string;
+    wifiPassword?: string;
+    wifiPasswordNote?: string;
+    isWifiFree?: boolean;
+    hasNoWifi?: boolean;
+    userRole?: string;
+    region?: string;
+  }
 ) {
   try {
-    logProgress('🚀 Starting real-time speed test execution:', { userId, sessionId });
+    logProgress('🚀 Starting real-time speed test execution:', { userId, sessionId, wifiContext });
     
-    // Step 1: Initialize test
     sendProgress({
       type: 'init',
       phase: 'Initializing speed test...',
@@ -614,7 +479,7 @@ async function performRealTimeSpeedTest(
     
     await new Promise(resolve => setTimeout(resolve, 800));
 
-    // Step 2: Get IP address and location
+    // Get IP and location
     let ipAddress = 'Unknown';
     let location = 'Unknown';
     
@@ -653,7 +518,7 @@ async function performRealTimeSpeedTest(
 
     await new Promise(resolve => setTimeout(resolve, 800));
 
-    // Step 3: Ping test
+    // Ping test
     let pingMs = 0;
     sendProgress({
       type: 'ping',
@@ -687,7 +552,7 @@ async function performRealTimeSpeedTest(
 
     await new Promise(resolve => setTimeout(resolve, 1000));
 
-    // Step 4: Download speed test
+    // Download test
     let downloadSpeed = 0;
     let maxDownloadSpeed = 0;
     const downloadSpeeds: number[] = [];
@@ -723,7 +588,6 @@ async function performRealTimeSpeedTest(
         speedTestPromise = Promise.resolve(0);
       }
       
-      // Progressive updates
       for (let i = 0; i < downloadProgressSteps.length; i++) {
         await new Promise(resolve => setTimeout(resolve, 1500));
         
@@ -747,7 +611,6 @@ async function performRealTimeSpeedTest(
         });
       }
 
-      // Wait for actual speed test
       try {
         const actualSpeed = await Promise.race([
           speedTestPromise,
@@ -804,7 +667,7 @@ async function performRealTimeSpeedTest(
 
     await new Promise(resolve => setTimeout(resolve, 1000));
 
-    // Step 5: Upload speed test
+    // Upload test
     let uploadSpeed = 0;
     let maxUploadSpeed = 0;
     const uploadSpeeds: number[] = [];
@@ -855,23 +718,109 @@ async function performRealTimeSpeedTest(
 
     await new Promise(resolve => setTimeout(resolve, 1000));
 
-    // Step 6: Save results
+    // ✅ FIXED: Save to WifiSpeedTest with WiFi credentials
     const jitterMs = Math.random() * 10 + 1;
     
     try {
-      const wifiTest = new WifiTest({
-        user: new mongoose.Types.ObjectId(userId),
+      const { v4: uuidv4 } = require('uuid');
+      
+      // Calculate quality score
+      const qualityScore = calculateQualityScore(downloadSpeed, uploadSpeed, pingMs);
+      const category = getCategory(qualityScore);
+      
+      // Generate WiFi QR code if credentials provided
+      let wifiQrCode = '';
+      if (wifiContext?.ssid && wifiContext?.wifiPassword && !wifiContext?.hasNoWifi) {
+        const escapedSsid = wifiContext.ssid.replace(/([\\;:,"])/g, '\\$1');
+        const escapedPassword = wifiContext.wifiPassword.replace(/([\\;:,"])/g, '\\$1');
+        wifiQrCode = `WIFI:T:WPA;S:${escapedSsid};P:${escapedPassword};H:false;`;
+      }
+      
+      const speedTest = new WifiSpeedTest({
+        testId: uuidv4(),
+        venueId: wifiContext?.venueId,
+        tempVenueId: wifiContext?.tempVenueId,
+        userId: new mongoose.Types.ObjectId(userId),
+        userRole: wifiContext?.userRole || 'USER',
         downloadMbps: Math.round(downloadSpeed * 100) / 100,
         uploadMbps: Math.round(uploadSpeed * 100) / 100,
-        pingMs: pingMs,
+        latencyMs: pingMs,
         jitterMs: Math.round(jitterMs * 100) / 100,
+        packetLoss: 0,
+        connectionType: 'wifi',
+        // ✅ WiFi credentials
+        ssid: wifiContext?.ssid || null,
+        wifiPassword: wifiContext?.wifiPassword || null,
+        wifiPasswordNote: wifiContext?.wifiPasswordNote || null,
+        isWifiFree: wifiContext?.isWifiFree !== undefined ? wifiContext.isWifiFree : null,
+        wifiQrCode: wifiQrCode || null,
+        hasNoWifi: wifiContext?.hasNoWifi || false,
+        deviceInfo: {
+          model: 'Unknown',
+          os: 'Unknown',
+          browser: 'Chrome'
+        },
+        testMethod: 'fast.com',
         testServer: 'Fast.com (Netflix CDN)',
-        ipAddress: ipAddress,
-        hostname: location,
-        testDuration: 18
+        location: {
+          lat: 0,
+          lng: 0,
+          accuracy: 0
+        },
+        timestamp: new Date(),
+        isReliable: true,
+        notes: `SSID: ${wifiContext?.ssid || 'Unknown'}`,
+        region: wifiContext?.region || 'th',
+        networkInfo: {
+          ssid: wifiContext?.ssid,
+          connectionType: 'wifi',
+          effectiveType: '4g',
+          security: wifiContext?.wifiPassword ? 'WPA' : 'unknown',
+          captivePortal: false,
+          isVenueWifi: true
+        },
+        displayMethod: 'unknown',
+        qualityScore,
+        category
       });
       
-      const savedTest = await wifiTest.save();
+      const savedTest = await speedTest.save();
+      
+      // ✅ Update venue with WiFi credentials
+      if (wifiContext?.ssid && (wifiContext?.venueId || wifiContext?.tempVenueId) && !wifiContext?.hasNoWifi) {
+        try {
+          const updateData: any = {
+            'wifiData.ssid': wifiContext.ssid,
+            'wifiData.isWifiFree': wifiContext.isWifiFree,
+            'wifiData.lastUpdated': new Date(),
+            'wifiData.lastTestedBy': userId
+          };
+
+          if (wifiContext.wifiPassword) {
+            updateData['wifiData.password'] = wifiContext.wifiPassword;
+            updateData['wifiData.security'] = 'WPA2';
+          }
+
+          if (wifiContext.wifiPasswordNote) {
+            updateData['wifiData.note'] = wifiContext.wifiPasswordNote;
+          }
+
+          await AgentVenueTemp.updateOne(
+            { 
+              $or: [
+                { tempVenueId: wifiContext.tempVenueId || wifiContext.venueId },
+                { venueId: wifiContext.venueId },
+                { _id: mongoose.Types.ObjectId.isValid(wifiContext.venueId || '') ? wifiContext.venueId : null }
+              ]
+            },
+            { $set: updateData }
+          );
+
+          console.log('✅ WiFi credentials saved to venue document from speed test');
+        } catch (venueUpdateError) {
+          console.error('⚠️ Failed to update venue with WiFi credentials:', venueUpdateError);
+        }
+      }
       
       const finalResults = {
         id: savedTest._id,
@@ -886,7 +835,11 @@ async function performRealTimeSpeedTest(
         maxDownloadSpeed: maxDownloadSpeed.toFixed(2),
         maxUploadSpeed: maxUploadSpeed.toFixed(2),
         testDuration: 18,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        // ✅ Include WiFi info
+        ssid: wifiContext?.ssid,
+        hasWifiPassword: !!wifiContext?.wifiPassword,
+        isWifiFree: wifiContext?.isWifiFree
       };
       
       logProgress('🎉 FINAL SPEED TEST RESULTS:', finalResults);
@@ -918,7 +871,6 @@ async function performRealTimeSpeedTest(
       });
     }
     
-    // Close connection
     setTimeout(() => {
       try {
         if (!res.destroyed) {
@@ -950,14 +902,175 @@ async function performRealTimeSpeedTest(
 }
 
 /**
- * Helper function to determine connection quality
+ * POST /api/wifi/speed-test/submit
+ * Submit a completed speed test with venue context
+ * ✅ NEW: Also saves WiFi credentials to venue document
  */
-const getConnectionQuality = (download: number, upload: number, ping: number): string => {
-  if (download >= 25 && upload >= 3 && ping <= 50) return 'Excellent';
-  if (download >= 10 && upload >= 1 && ping <= 100) return 'Good';
-  if (download >= 5 && upload >= 0.5 && ping <= 150) return 'Fair';
-  return 'Poor';
+export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.user?.userId;
+    
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required'
+      });
+    }
+
+    const {
+      venueId,
+      ssid,
+      wifiPassword,
+      wifiPasswordNote,
+      isWifiFree,
+      hasNoWifi = false,
+      downloadMbps,
+      uploadMbps,
+      pingMs,
+      jitterMs,
+      testServer,
+      ipAddress,
+      hostname,
+      testDuration
+    } = req.body;
+
+    // Validate required fields for speed test
+    if (downloadMbps === undefined || uploadMbps === undefined || pingMs === undefined) {
+      return res.status(400).json({
+        success: false,
+        message: 'Download, upload, and ping speeds are required'
+      });
+    }
+
+    logProgress('📤 Submitting speed test with venue context:', {
+      venueId,
+      ssid,
+      hasPassword: !!wifiPassword,
+      hasNoWifi,
+      downloadMbps,
+      uploadMbps,
+      pingMs
+    });
+
+    // Save speed test result using WifiSpeedTest model
+    const { v4: uuidv4 } = require('uuid');
+    
+    const wifiTest = new WifiSpeedTest({
+      testId: uuidv4(),
+      venueId: venueId,
+      userId: new mongoose.Types.ObjectId(userId),
+      userRole: req.user?.role || 'USER',
+      downloadMbps: Math.round(downloadMbps * 100) / 100,
+      uploadMbps: Math.round(uploadMbps * 100) / 100,
+      latencyMs: pingMs,
+      jitterMs: jitterMs ? Math.round(jitterMs * 100) / 100 : 0,
+      packetLoss: 0,
+      connectionType: 'wifi',
+      testServer: testServer || 'Manual Test',
+      // Store IP and hostname in appropriate fields
+      ipAddress: ipAddress || 'Unknown',
+      hostname: hostname || 'Unknown',
+      testDuration: testDuration || 0,
+      // WiFi credentials
+      ssid: ssid || null,
+      wifiPassword: wifiPassword || null,
+      wifiPasswordNote: wifiPasswordNote || null,
+      isWifiFree: isWifiFree !== undefined ? isWifiFree : null,
+      hasNoWifi: hasNoWifi,
+      deviceInfo: {
+        model: 'Unknown',
+        os: 'Unknown',
+        browser: 'Unknown'
+      },
+      testMethod: 'manual',
+      timestamp: new Date(),
+      region: req.user?.region || 'th',
+      networkInfo: {
+        ssid: ssid,
+        connectionType: 'wifi',
+        effectiveType: 'unknown',
+        security: wifiPassword ? 'WPA' : 'unknown',
+        captivePortal: false,
+        isVenueWifi: true
+      }
+    });
+
+    const savedTest = await wifiTest.save();
+
+    // ✅ NEW: Also save WiFi credentials to venue document for future use
+    if (ssid && venueId && !hasNoWifi) {
+      try {
+        const updateData: any = {
+          'wifiData.ssid': ssid,
+          'wifiData.isWifiFree': isWifiFree !== undefined ? isWifiFree : null,
+          'wifiData.lastUpdated': new Date(),
+          'wifiData.lastTestedBy': userId
+        };
+
+        if (wifiPassword) {
+          updateData['wifiData.password'] = wifiPassword;
+          updateData['wifiData.security'] = 'WPA2';
+        }
+
+        if (wifiPasswordNote) {
+          updateData['wifiData.note'] = wifiPasswordNote;
+        }
+
+        await AgentVenueTemp.updateOne(
+          { 
+            $or: [
+              { tempVenueId: venueId },
+              { venueId: venueId },
+              { _id: mongoose.Types.ObjectId.isValid(venueId) ? venueId : null }
+            ]
+          },
+          { $set: updateData }
+        );
+
+        console.log('✅ WiFi credentials saved to venue document from speed test');
+      } catch (venueUpdateError) {
+        console.error('⚠️ Failed to update venue with WiFi credentials:', venueUpdateError);
+        // Continue anyway - speed test is already saved
+      }
+    }
+
+    // Type-safe access using interface casting
+    const savedTestObj = savedTest.toObject() as IWifiSpeedTest & { _id: mongoose.Types.ObjectId };
+    
+    const finalResults = {
+      id: savedTest._id,
+      download: savedTestObj.downloadMbps,
+      upload: savedTestObj.uploadMbps,
+      ping: savedTestObj.latencyMs,
+      jitter: savedTestObj.jitterMs,
+      server: savedTestObj.testServer,
+      ip: savedTestObj.ipAddress || 'Unknown',
+      location: savedTestObj.hostname || 'Unknown',
+      quality: getConnectionQuality(savedTestObj.downloadMbps, savedTestObj.uploadMbps, savedTestObj.latencyMs),
+      testDuration: savedTestObj.testDuration || 0,
+      timestamp: savedTestObj.timestamp,
+      venueUpdated: !!(ssid && venueId && !hasNoWifi)
+    };
+
+    logProgress('🎉 Speed test submitted successfully:', finalResults);
+
+    res.json({
+      success: true,
+      message: 'Speed test submitted successfully',
+      data: finalResults
+    });
+
+  } catch (error: any) {
+    console.error('❌ Error submitting speed test:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to submit speed test',
+      error: error.message
+    });
+  }
 };
+
+// ===== SPEED TEST HISTORY =====
 
 /**
  * GET /api/wifi/tests
@@ -974,13 +1087,13 @@ export const getUserWifiTests = async (req: Request, res: Response) => {
     const pageNum = Math.max(Number(page), 1);
     const skip = (pageNum - 1) * limitNum;
     
-    const tests = await WifiTest.find({ user: userId })
-      .sort({ createdAt: -1 })
+    const tests = await WifiSpeedTest.find({ userId: new mongoose.Types.ObjectId(userId) })
+      .sort({ timestamp: -1 })
       .limit(limitNum)
       .skip(skip)
-      .lean<IWifiTestDocument[]>();
+      .lean();
     
-    const totalTests = await WifiTest.countDocuments({ user: userId });
+    const totalTests = await WifiSpeedTest.countDocuments({ userId: new mongoose.Types.ObjectId(userId) });
     
     res.json({
       success: true,
@@ -1012,9 +1125,9 @@ export const getLatestSpeedTest = async (req: Request, res: Response) => {
     const user = (req as any).user;
     const userId = user._id?.toString() || user.userId;
     
-    const latestTest = await WifiTest.findOne({ user: userId })
-      .sort({ createdAt: -1 })
-      .lean<IWifiTestDocument>();
+    const latestTest = await WifiSpeedTest.findOne({ userId: new mongoose.Types.ObjectId(userId) })
+      .sort({ timestamp: -1 })
+      .lean();
     
     if (!latestTest) {
       return res.status(404).json({
@@ -1053,9 +1166,9 @@ export const deleteSpeedTest = async (req: Request, res: Response) => {
       });
     }
     
-    const deletedTest = await WifiTest.findOneAndDelete({
+    const deletedTest = await WifiSpeedTest.findOneAndDelete({
       _id: testId,
-      user: userId
+      userId: new mongoose.Types.ObjectId(userId)
     });
     
     if (!deletedTest) {
@@ -1076,4 +1189,36 @@ export const deleteSpeedTest = async (req: Request, res: Response) => {
       error: error instanceof Error ? error.message : 'Unknown error'
     });
   }
+};
+
+// ===== HELPER FUNCTIONS =====
+
+/**
+ * Helper function to calculate quality score
+ */
+function calculateQualityScore(download: number, upload: number, latency: number): number {
+  const downloadScore = Math.min((download / 100) * 40, 40);
+  const uploadScore = Math.min((upload / 50) * 30, 30);
+  const latencyScore = Math.max(30 - (latency / 10), 0);
+  return Math.round(downloadScore + uploadScore + latencyScore);
+}
+
+/**
+ * Helper function to get category from quality score
+ */
+function getCategory(score: number): string {
+  if (score >= 80) return 'excellent';
+  if (score >= 60) return 'good';
+  if (score >= 40) return 'fair';
+  return 'poor';
+}
+
+/**
+ * Helper function to determine connection quality
+ */
+const getConnectionQuality = (download: number, upload: number, ping: number): string => {
+  if (download >= 25 && upload >= 3 && ping <= 50) return 'Excellent';
+  if (download >= 10 && upload >= 1 && ping <= 100) return 'Good';
+  if (download >= 5 && upload >= 0.5 && ping <= 150) return 'Fair';
+  return 'Poor';
 };
