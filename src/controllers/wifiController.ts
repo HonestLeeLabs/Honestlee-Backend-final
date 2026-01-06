@@ -1380,3 +1380,64 @@ const getConnectionQuality = (download: number, upload: number, ping: number): s
   if (download >= 5 && upload >= 0.5 && ping <= 150) return 'Fair';
   return 'Poor';
 };
+
+/**
+ * GET /wifi/join
+ * Redirect to mobile app scheme with fallback
+ * Handles: https://api.honestlee.ae/wifi/join?token=...
+ * Redirects to: honestlee://wifi/join?token=...
+ */
+export const redirectWiFiJoin = (req: Request, res: Response) => {
+  const { token } = req.query;
+
+  if (!token || typeof token !== 'string') {
+    return res.status(400).send('Invalid token');
+  }
+
+  // Construct Custom Scheme URL
+  const appSchemeUrl = `honestlee://wifi/join?token=${token}`;
+
+  // Simple HTML fallback page
+  const html = `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Connecting to WiFi...</title>
+        <style>
+          body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; text-align: center; padding: 40px 20px; background: #f9fafb; color: #111827; }
+          .container { max-width: 400px; margin: 0 auto; background: white; padding: 30px; border-radius: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
+          h1 { margin-bottom: 10px; font-size: 24px; }
+          p { color: #6b7280; margin-bottom: 30px; line-height: 1.5; }
+          .token-box { background: #f3f4f6; padding: 15px; border-radius: 8px; word-break: break-all; font-family: monospace; font-size: 14px; margin-bottom: 20px; color: #374151; }
+          .btn { display: inline-block; background: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 12px; font-weight: 600; margin-bottom: 15px; width: 100%; box-sizing: border-box; }
+          .note { font-size: 12px; color: #9ca3af; margin-top: 20px; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <h1>Launching App...</h1>
+          <p>Trying to open the Honestlee WiFi app. If you don't have it installed, this will fail.</p>
+          
+          <a href="${appSchemeUrl}" class="btn">Try Open App Again</a>
+          
+          <div style="text-align: left; margin-top: 30px;">
+            <p style="margin-bottom: 5px; font-weight: 600; font-size: 14px;">Debug Info:</p>
+            <div class="token-box">Token: ${token.substring(0, 20)}...</div>
+          </div>
+
+          <p class="note">If you are on desktop, this error is expected as the app is not installed.</p>
+        </div>
+
+        <script>
+          // Attempt automatic redirect
+          setTimeout(function() {
+            window.location.href = "${appSchemeUrl}";
+          }, 300);
+        </script>
+      </body>
+    </html>
+  `;
+
+  res.send(html);
+};
