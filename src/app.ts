@@ -21,6 +21,8 @@ import { startSyncJobs } from './jobs/syncJob';
 import authRoutes from './routes/authRoutes';
 import googleAuthRoutes from './routes/googleAuthRoutes';
 import wifiRoutes from './routes/wifiRoutes';
+// Import redirect controller
+import { redirectWiFiJoin } from './controllers/wifiController';
 import reviewRoutes from './routes/reviewRoutes';
 import venueRoutes from './routes/venueRoutes';
 import venueDubaiRoutes from './routes/venueDubaiRoutes';
@@ -251,10 +253,10 @@ const connectDatabases = async () => {
       } catch (indexError) {
         console.error('❌ Error fixing indexes:', indexError);
       }
-      
+
       testEmailConfig();
       startSyncJobs();
-      
+
       // ✅ Log assetlinks.json file status
       const assetlinksPath = path.join(__dirname, '../public/.well-known/assetlinks.json');
       const fs = require('fs');
@@ -273,6 +275,10 @@ const connectDatabases = async () => {
 };
 
 connectDatabases();
+
+// ===== PUBLIC REDIRECT ROUTES =====
+// Handle WiFi deep link redirect (e.g. from QR codes or frontend)
+app.get('/wifi/join', redirectWiFiJoin);
 
 // ===== API ROUTES =====
 app.use('/api/auth', authRoutes);
@@ -302,7 +308,7 @@ app.get('/health', (req, res) => {
   const fs = require('fs');
   const assetlinksPath = path.join(__dirname, '../public/.well-known/assetlinks.json');
   const assetlinksExists = fs.existsSync(assetlinksPath);
-  
+
   res.json({
     status: 'OK',
     timestamp: new Date().toISOString(),
