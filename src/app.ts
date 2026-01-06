@@ -8,6 +8,7 @@ import session from 'express-session';
 import passport from './config/passport';
 import mongoose from 'mongoose';
 import http from 'http';
+import path from 'path';
 import { Server as SocketIOServer } from 'socket.io';
 
 import { dbManager } from './config/database';
@@ -186,6 +187,23 @@ app.use((req, res, next) => {
   next();
 });
 
+// ✅✅✅ ANDROID INSTANT APP: Serve assetlinks.json (MUST BE BEFORE OTHER ROUTES)
+app.use('/.well-known', express.static(path.join(__dirname, '../public/.well-known'), {
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.json')) {
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Cache-Control', 'public, max-age=86400'); // Cache for 24 hours
+    }
+  }
+}));
+
+// ✅ Log when assetlinks.json is accessed
+app.get('/.well-known/assetlinks.json', (req, res, next) => {
+  console.log('📱 Android App Links: assetlinks.json requested from:', req.ip);
+  next();
+});
+
 // ===== DATABASE CONNECTION LOGIC =====
 const connectDatabases = async () => {
   try {
@@ -236,6 +254,17 @@ const connectDatabases = async () => {
       
       testEmailConfig();
       startSyncJobs();
+      
+      // ✅ Log assetlinks.json file status
+      const assetlinksPath = path.join(__dirname, '../public/.well-known/assetlinks.json');
+      const fs = require('fs');
+      if (fs.existsSync(assetlinksPath)) {
+        console.log('✅ assetlinks.json found at:', assetlinksPath);
+        console.log('📱 Android Instant App verification file ready');
+      } else {
+        console.warn('⚠️  assetlinks.json NOT FOUND at:', assetlinksPath);
+        console.warn('⚠️  Create file: public/.well-known/assetlinks.json');
+      }
     }
   } catch (error: any) {
     console.error('❌ Database connection error:', error.message);
@@ -270,6 +299,10 @@ app.use('/api/wifi-speed', wifiSpeedTestRoutes);
 // ===== HEALTH CHECK ENDPOINT =====
 app.get('/health', (req, res) => {
   const dbStatus = mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected';
+  const fs = require('fs');
+  const assetlinksPath = path.join(__dirname, '../public/.well-known/assetlinks.json');
+  const assetlinksExists = fs.existsSync(assetlinksPath);
+  
   res.json({
     status: 'OK',
     timestamp: new Date().toISOString(),
@@ -284,6 +317,10 @@ app.get('/health', (req, res) => {
     regions: {
       ae: 'Dubai/UAE',
       th: 'Thailand'
+    },
+    androidInstantApp: {
+      assetlinksFile: assetlinksExists ? 'Ready' : 'Missing',
+      url: `${req.protocol}://${req.get('host')}/.well-known/assetlinks.json`
     }
   });
 });

@@ -1,0 +1,10 @@
+[{
+  "relation": ["delegate_permission/common.handle_all_urls"],
+  "target": {
+    "namespace": "android_app",
+    "package_name": "com.honestlee.wifishim",
+    "sha256_cert_fingerprints": [
+      "1D:0F:92:F2:C2:E3:55:09:11:A9:2E:A8:6C:EF:3D:E4:E4:66:FA:54:9E:B8:0E:B2:08:60:63:41:12:64:C0:ED"
+    ]
+  }
+}]
