@@ -3,8 +3,141 @@ import { AuthRequest } from '../middlewares/authMiddleware';
 import mongoose from 'mongoose';
 import WifiSpeedTest, { IWifiSpeedTest } from '../models/WifiSpeedTest'; // Import interface too
 import AgentVenueTemp from '../models/AgentVenueTemp';
+import VenueDubai from '../models/VenueDubai';
+import { getVenueModel } from '../models/Venue';
+import { dbManager, Region } from '../config/database';
 import axios from 'axios';
 import crypto from 'crypto';
+
+// ===== VENUE SOURCE TYPES =====
+type VenueSource = 'AgentVenueTemp' | 'VenueDubai' | 'Venue';
+
+interface VenueLookupResult {
+  venue: any;
+  source: VenueSource;
+  region?: string;
+}
+
+/**
+ * Find a venue across multiple collections and regions
+ * Search order:
+ *   1. AgentVenueTemp (onboarding/temporary venues - shared DB)
+ *   2. VenueDubai (Dubai production venues)
+ *   3. Regional Venue models (TH, AE, IN - based on region header)
+ * 
+ * This ensures backward compatibility while supporting all venue sources
+ */
+async function findVenueAcrossCollections(
+  venueId: string,
+  region: string = 'th'
+): Promise<VenueLookupResult | null> {
+  const isValidObjectId = mongoose.Types.ObjectId.isValid(venueId);
+
+  console.log(`🔍 Searching for venue: ${venueId} (region: ${region})`);
+
+  // 1. First, try AgentVenueTemp (onboarding/temporary venues)
+  try {
+    const agentVenue = await AgentVenueTemp.findOne({
+      $or: [
+        { tempVenueId: venueId },
+        { venueId: venueId },
+        ...(isValidObjectId ? [{ _id: venueId }] : [])
+      ]
+    }).lean();
+
+    if (agentVenue) {
+      console.log(`✅ Found in AgentVenueTemp`);
+      return { venue: agentVenue, source: 'AgentVenueTemp' };
+    }
+  } catch (err) {
+    console.log(`⚠️ AgentVenueTemp search failed:`, err);
+  }
+
+  // 2. Try VenueDubai (Dubai production venues)
+  try {
+    if (isValidObjectId) {
+      const dubaiVenue = await VenueDubai.findById(venueId).lean();
+      if (dubaiVenue) {
+        console.log(`✅ Found in VenueDubai by _id`);
+        return { venue: dubaiVenue, source: 'VenueDubai', region: 'ae' };
+      }
+    }
+
+    // Also try VenueDubai by Dubaiid field (alternative identifier)
+    const dubaiVenueByDubaiId = await VenueDubai.findOne({ Dubaiid: venueId }).lean();
+    if (dubaiVenueByDubaiId) {
+      console.log(`✅ Found in VenueDubai by Dubaiid`);
+      return { venue: dubaiVenueByDubaiId, source: 'VenueDubai', region: 'ae' };
+    }
+  } catch (err) {
+    console.log(`⚠️ VenueDubai search failed:`, err);
+  }
+
+  // 3. Try Regional Venue model (TH, AE, IN)
+  if (isValidObjectId) {
+    // Try the requested region first
+    const regionsToTry = [region, 'th', 'ae', 'in'].filter((r, i, arr) => arr.indexOf(r) === i);
+
+    for (const reg of regionsToTry) {
+      try {
+        await dbManager.connectRegion(reg as Region);
+        const Venue = getVenueModel(reg as Region);
+
+        const regionalVenue = await Venue.findById(venueId).lean();
+        if (regionalVenue) {
+          console.log(`✅ Found in regional Venue model (${reg})`);
+          return { venue: regionalVenue, source: 'Venue', region: reg };
+        }
+      } catch (err) {
+        console.log(`⚠️ Regional Venue (${reg}) search failed:`, err);
+      }
+    }
+
+    // Also try by globalId field in regional venues
+    for (const reg of regionsToTry) {
+      try {
+        await dbManager.connectRegion(reg as Region);
+        const Venue = getVenueModel(reg as Region);
+
+        const venueByGlobalId = await Venue.findOne({ globalId: venueId }).lean();
+        if (venueByGlobalId) {
+          console.log(`✅ Found in regional Venue (${reg}) by globalId`);
+          return { venue: venueByGlobalId, source: 'Venue', region: reg };
+        }
+      } catch (err) {
+        // Continue to next region
+      }
+    }
+  }
+
+  console.log(`❌ Venue not found in any collection`);
+  return null;
+}
+
+/**
+ * Get the display name from a venue (handles different schema structures)
+ */
+function getVenueName(venue: any, source: VenueSource): string {
+  if (source === 'AgentVenueTemp') {
+    return venue.name || venue.venueName || 'Unknown Venue';
+  }
+  // VenueDubai and regional Venue use AccountName
+  return venue.AccountName || venue.name || 'Unknown Venue';
+}
+
+/**
+ * Get the venue identifier for token storage
+ */
+function getVenueIdentifier(venue: any, source: VenueSource): string {
+  if (source === 'AgentVenueTemp') {
+    return venue.tempVenueId || venue.venueId?.toString() || venue._id?.toString();
+  }
+  if (source === 'VenueDubai') {
+    return venue.Dubaiid || venue._id?.toString();
+  }
+  // Regional Venue - prefer globalId, fallback to _id
+  return venue.globalId || venue._id?.toString();
+}
 
 const FastSpeedtest = require('fast-speedtest-api');
 
@@ -55,14 +188,14 @@ declare global {
 const logProgress = (message: string, data?: any) => {
   const timestamp = new Date().toISOString();
   console.log(`[${timestamp}] ${message}`, data ? JSON.stringify(data, null, 2) : '');
-  
+
   if (!global.speedTestLogs) global.speedTestLogs = [];
   global.speedTestLogs.push({
     timestamp,
     message,
     data: data || null
   });
-  
+
   if (global.speedTestLogs.length > 100) {
     global.speedTestLogs.shift();
   }
@@ -80,7 +213,7 @@ function getVenueWifiData(venue: any): { ssid?: string; password?: string; secur
       security: venue.wifiData.security || 'WPA2'
     };
   }
-  
+
   // Fallback to vitals.wifiData (legacy structure)
   if (venue.vitals?.wifiData?.ssid) {
     return {
@@ -89,7 +222,7 @@ function getVenueWifiData(venue: any): { ssid?: string; password?: string; secur
       security: venue.vitals.wifiData.security || 'WPA2'
     };
   }
-  
+
   // Check alternative nested paths
   if (venue.venue?.wifiData?.ssid) {
     return {
@@ -98,7 +231,7 @@ function getVenueWifiData(venue: any): { ssid?: string; password?: string; secur
       security: venue.venue.wifiData.security || 'WPA2'
     };
   }
-  
+
   return null;
 }
 
@@ -106,11 +239,12 @@ function getVenueWifiData(venue: any): { ssid?: string; password?: string; secur
 /**
  * POST /api/wifi/connect/generate-token
  * Generate a secure token for WiFi connection
- * ✅ NEW: Accept WiFi credentials in request body if not in database
+ * ✅ Supports venues from both AgentVenueTemp and VenueDubai collections
+ * ✅ Accepts WiFi credentials in request body if not in database
  */
 export const generateWiFiToken = async (req: AuthRequest, res: Response) => {
   try {
-    const { venueId, ssid, password, isWifiFree, note } = req.body;
+    const { venueId, ssid, password, isWifiFree, note, security } = req.body;
 
     if (!venueId) {
       return res.status(400).json({
@@ -119,34 +253,50 @@ export const generateWiFiToken = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    console.log('🔄 Generating WiFi token for venue:', venueId);
+    // ✅ Get region from request header (set by frontend)
+    const region = (req.headers['x-region'] as string) || (req as any).region || 'th';
 
-    // Fetch venue data - try multiple ID formats
-    const venue = await AgentVenueTemp.findOne({
-      $or: [
-        { tempVenueId: venueId },
-        { venueId: venueId },
-        { _id: mongoose.Types.ObjectId.isValid(venueId) ? venueId : null }
-      ]
-    }).lean();
+    console.log('🔄 Generating WiFi token for venue:', venueId, 'region:', region);
 
-    if (!venue) {
-      console.log('❌ Venue not found:', venueId);
+    // ✅ Use multi-collection lookup with region support
+    const lookupResult = await findVenueAcrossCollections(venueId, region);
+
+    if (!lookupResult) {
+      console.log('❌ Venue not found in any collection:', venueId);
       return res.status(404).json({
         success: false,
-        message: 'Venue not found'
+        message: 'Venue not found',
+        debug: {
+          searchedCollections: ['AgentVenueTemp', 'VenueDubai', 'Venue (regional)'],
+          searchedRegions: [region, 'th', 'ae', 'in'],
+          venueId: venueId
+        }
       });
     }
 
+    const { venue, source } = lookupResult;
+    const venueName = getVenueName(venue, source);
+    const venueIdentifier = getVenueIdentifier(venue, source);
+
     console.log('✅ Venue found:', {
-      name: venue.name,
-      tempVenueId: venue.tempVenueId,
-      hasWifiData: !!venue.wifiData,
+      name: venueName,
+      source: source,
+      venueIdentifier: venueIdentifier,
+      hasWifiData: !!(venue.wifiData?.ssid || venue.WifiSSID),
       hasVitalsWifiData: !!(venue as any).vitals?.wifiData
     });
 
     // ✅ Try to get existing WiFi data from venue
     let wifiData = getVenueWifiData(venue);
+
+    // ✅ For VenueDubai, also check WifiSSID field
+    if (!wifiData && source === 'VenueDubai' && venue.WifiSSID) {
+      wifiData = {
+        ssid: venue.WifiSSID,
+        password: '', // VenueDubai doesn't store password
+        security: 'WPA2'
+      };
+    }
 
     // ✅ If no WiFi data in database but provided in request, use that
     if ((!wifiData || !wifiData.ssid) && ssid) {
@@ -154,35 +304,40 @@ export const generateWiFiToken = async (req: AuthRequest, res: Response) => {
       wifiData = {
         ssid: ssid,
         password: password || '',
-        security: password ? 'WPA2' : 'Open'
+        security: security || (password ? 'WPA2' : 'Open')
       };
 
-      // ✅ Save WiFi credentials to venue document for future use
-      try {
-        const updateData: any = {
-          'wifiData.ssid': ssid,
-          'wifiData.isWifiFree': isWifiFree,
-          'wifiData.lastUpdated': new Date()
-        };
+      // ✅ Save WiFi credentials to venue document (only for AgentVenueTemp)
+      // VenueDubai is typically read-only production data
+      if (source === 'AgentVenueTemp') {
+        try {
+          const updateData: any = {
+            'wifiData.ssid': ssid,
+            'wifiData.isWifiFree': isWifiFree,
+            'wifiData.lastUpdated': new Date()
+          };
 
-        if (password) {
-          updateData['wifiData.password'] = password;
-          updateData['wifiData.security'] = 'WPA2';
+          if (password) {
+            updateData['wifiData.password'] = password;
+            updateData['wifiData.security'] = security || 'WPA2';
+          }
+
+          if (note) {
+            updateData['wifiData.note'] = note;
+          }
+
+          await AgentVenueTemp.updateOne(
+            { _id: venue._id },
+            { $set: updateData }
+          );
+
+          console.log('✅ WiFi credentials saved to AgentVenueTemp document');
+        } catch (saveError) {
+          console.error('⚠️ Failed to save WiFi credentials to venue:', saveError);
+          // Continue anyway - at least generate token for this session
         }
-
-        if (note) {
-          updateData['wifiData.note'] = note;
-        }
-
-        await AgentVenueTemp.updateOne(
-          { _id: venue._id },
-          { $set: updateData }
-        );
-
-        console.log('✅ WiFi credentials saved to venue document');
-      } catch (saveError) {
-        console.error('⚠️ Failed to save WiFi credentials to venue:', saveError);
-        // Continue anyway - at least generate token for this session
+      } else {
+        console.log('ℹ️ Skipping credential save for VenueDubai (production data)');
       }
     }
 
@@ -194,9 +349,10 @@ export const generateWiFiToken = async (req: AuthRequest, res: Response) => {
         message: 'WiFi information not available for this venue',
         hasWifi: false,
         debug: {
-          venueName: venue.name,
+          venueName: venueName,
           venueId: venueId,
-          checkedPaths: ['wifiData', 'vitals.wifiData', 'venue.wifiData']
+          source: source,
+          checkedPaths: ['wifiData', 'vitals.wifiData', 'venue.wifiData', 'WifiSSID']
         }
       });
     }
@@ -209,8 +365,8 @@ export const generateWiFiToken = async (req: AuthRequest, res: Response) => {
       ssid: wifiData.ssid,
       password: wifiData.password || '',
       security: wifiData.security || 'WPA2',
-      venueId: (venue.tempVenueId || (venue.venueId as any)?.toString() || (venue._id as any).toString()),
-      venueName: venue.name,
+      venueId: venueIdentifier,
+      venueName: venueName,
       expiresAt: Date.now() + (10 * 60 * 1000) // 10 minutes
     });
 
@@ -218,7 +374,8 @@ export const generateWiFiToken = async (req: AuthRequest, res: Response) => {
     const deepLink = `honestlee://wifi/join?token=${token}`;
 
     console.log('✅ WiFi token generated successfully:', {
-      venueName: venue.name,
+      venueName: venueName,
+      source: source,
       ssid: wifiData.ssid,
       hasPassword: !!wifiData.password,
       tokenPreview: token.substring(0, 8) + '...',
@@ -232,8 +389,9 @@ export const generateWiFiToken = async (req: AuthRequest, res: Response) => {
         token,
         deepLink,
         expiresIn: 600, // seconds
-        venueName: venue.name,
-        ssid: wifiData.ssid
+        venueName: venueName,
+        ssid: wifiData.ssid,
+        source: source // Include source for debugging
       }
     });
 
@@ -349,7 +507,7 @@ export const receiveWiFiTelemetry = async (req: Request, res: Response) => {
 export const startRealTimeSpeedTest = async (req: Request, res: Response) => {
   try {
     const user = (req as any).user;
-    
+
     if (!user) {
       return res.status(401).json({
         success: false,
@@ -359,12 +517,12 @@ export const startRealTimeSpeedTest = async (req: Request, res: Response) => {
 
     const userId = user._id?.toString() || user.userId;
     const sessionId = `${userId}-${Date.now()}`;
-    
+
     // ✅ NEW: Extract WiFi credentials from request
     const { venueId, tempVenueId, ssid, wifiPassword, wifiPasswordNote, isWifiFree, hasNoWifi } = req.body;
-    
-    logProgress('🎯 Starting real-time speed test:', { 
-      userId, 
+
+    logProgress('🎯 Starting real-time speed test:', {
+      userId,
       sessionId,
       venueId,
       ssid,
@@ -388,7 +546,7 @@ export const startRealTimeSpeedTest = async (req: Request, res: Response) => {
           const enhancedData = { ...data, sessionId: sessionId.slice(-8), userId: userId.slice(-8) };
           const message = `data: ${JSON.stringify(enhancedData)}\n\n`;
           res.write(message);
-          
+
           logProgress(`📊 Sent SSE: ${data.phase}`, {
             progress: data.progress,
             speed: data.currentSpeed
@@ -469,31 +627,31 @@ async function performRealTimeSpeedTest(
 ) {
   try {
     logProgress('🚀 Starting real-time speed test execution:', { userId, sessionId, wifiContext });
-    
+
     sendProgress({
       type: 'init',
       phase: 'Initializing speed test...',
       progress: 2,
       timestamp: Date.now()
     });
-    
+
     await new Promise(resolve => setTimeout(resolve, 800));
 
     // Get IP and location
     let ipAddress = 'Unknown';
     let location = 'Unknown';
-    
+
     sendProgress({
       type: 'init',
       phase: 'Getting network information...',
       progress: 5,
       timestamp: Date.now()
     });
-    
+
     try {
       const ipResponse = await axios.get('https://api.ipify.org?format=json', { timeout: 5000 });
       ipAddress = ipResponse.data.ip;
-      
+
       try {
         const locationResponse = await axios.get(`https://ipapi.co/${ipAddress}/json/`, { timeout: 5000 });
         location = `${locationResponse.data.city}, ${locationResponse.data.country_name}`;
@@ -502,11 +660,11 @@ async function performRealTimeSpeedTest(
       }
     } catch (ipError: unknown) {
       logProgress('⚠️ Could not get IP address');
-      ipAddress = req.ip || 
-                 req.headers['x-forwarded-for'] as string || 
-                 req.headers['x-real-ip'] as string ||
-                 req.socket.remoteAddress || 
-                 'Unknown';
+      ipAddress = req.ip ||
+        req.headers['x-forwarded-for'] as string ||
+        req.headers['x-real-ip'] as string ||
+        req.socket.remoteAddress ||
+        'Unknown';
     }
 
     sendProgress({
@@ -526,12 +684,12 @@ async function performRealTimeSpeedTest(
       progress: 10,
       timestamp: Date.now()
     });
-    
+
     try {
       const pingStart = Date.now();
       await axios.get('https://www.google.com', { timeout: 5000 });
       pingMs = Date.now() - pingStart;
-      
+
       sendProgress({
         type: 'ping',
         phase: `Ping: ${pingMs}ms`,
@@ -556,7 +714,7 @@ async function performRealTimeSpeedTest(
     let downloadSpeed = 0;
     let maxDownloadSpeed = 0;
     const downloadSpeeds: number[] = [];
-    
+
     sendProgress({
       type: 'download',
       phase: 'Starting download test...',
@@ -566,9 +724,9 @@ async function performRealTimeSpeedTest(
 
     try {
       const downloadProgressSteps = [25, 32, 38, 45, 52, 58, 65];
-      
+
       let speedTestPromise: Promise<number>;
-      
+
       try {
         const speedtest = new FastSpeedtest({
           token: "YXNkZmFzZGxmbnNkYWZoYXNkZmhrYWxm",
@@ -579,27 +737,27 @@ async function performRealTimeSpeedTest(
           bufferSize: 8,
           unit: FastSpeedtest.UNITS.Mbps
         });
-        
+
         speedTestPromise = speedtest.getSpeed();
         logProgress('📊 Started Fast.com speed test');
-        
+
       } catch (initError) {
         logProgress('❌ Failed to initialize Fast.com speedtest:', initError);
         speedTestPromise = Promise.resolve(0);
       }
-      
+
       for (let i = 0; i < downloadProgressSteps.length; i++) {
         await new Promise(resolve => setTimeout(resolve, 1500));
-        
+
         const timeProgress = (i + 1) / downloadProgressSteps.length;
         const baseSpeed = 15 + (Math.random() * 30 * timeProgress);
         const speedVariation = Math.sin(i * 0.8) * 8;
         const currentSpeed = Math.max(2, baseSpeed + speedVariation);
-        
+
         downloadSpeeds.push(currentSpeed);
         maxDownloadSpeed = Math.max(maxDownloadSpeed, currentSpeed);
         const averageSpeed = downloadSpeeds.reduce((a, b) => a + b, 0) / downloadSpeeds.length;
-        
+
         sendProgress({
           type: 'download',
           phase: `Download: ${currentSpeed.toFixed(1)} Mbps`,
@@ -614,16 +772,16 @@ async function performRealTimeSpeedTest(
       try {
         const actualSpeed = await Promise.race([
           speedTestPromise,
-          new Promise<number>((_, reject) => 
+          new Promise<number>((_, reject) =>
             setTimeout(() => reject(new Error('Speed test timeout')), 15000)
           )
         ]);
-        
+
         if (actualSpeed && actualSpeed > 0) {
           downloadSpeed = actualSpeed;
           maxDownloadSpeed = Math.max(maxDownloadSpeed, downloadSpeed);
           logProgress('✅ Got actual Fast.com speed:', `${downloadSpeed.toFixed(2)} Mbps`);
-          
+
           sendProgress({
             type: 'download',
             phase: `Download completed: ${downloadSpeed.toFixed(2)} Mbps`,
@@ -636,11 +794,11 @@ async function performRealTimeSpeedTest(
         } else {
           throw new Error('Fast.com returned 0 speed');
         }
-        
+
       } catch (speedTestError) {
         logProgress('⚠️ Fast.com speed test failed, using progressive average:', speedTestError);
         downloadSpeed = downloadSpeeds.reduce((a, b) => a + b, 0) / downloadSpeeds.length;
-        
+
         sendProgress({
           type: 'download',
           phase: `Download completed: ${downloadSpeed.toFixed(2)} Mbps (measured)`,
@@ -651,11 +809,11 @@ async function performRealTimeSpeedTest(
           timestamp: Date.now()
         });
       }
-      
+
     } catch (downloadError: unknown) {
       logProgress('❌ Download test completely failed:', downloadError);
       downloadSpeed = 15 + Math.random() * 25;
-      
+
       sendProgress({
         type: 'download',
         phase: `Download: ${downloadSpeed.toFixed(2)} Mbps (estimated)`,
@@ -671,7 +829,7 @@ async function performRealTimeSpeedTest(
     let uploadSpeed = 0;
     let maxUploadSpeed = 0;
     const uploadSpeeds: number[] = [];
-    
+
     sendProgress({
       type: 'upload',
       phase: 'Starting upload test...',
@@ -680,19 +838,19 @@ async function performRealTimeSpeedTest(
     });
 
     const uploadProgressSteps = [80, 85, 90, 95];
-    
+
     for (let i = 0; i < uploadProgressSteps.length; i++) {
       await new Promise(resolve => setTimeout(resolve, 1800));
-      
+
       const uploadRatio = 0.08 + (Math.random() * 0.25);
       const baseUploadSpeed = Math.max(0.5, downloadSpeed * uploadRatio);
       const uploadVariation = Math.sin(i * 0.9) * (baseUploadSpeed * 0.2);
       const currentUploadSpeed = Math.max(0.5, baseUploadSpeed + uploadVariation);
-      
+
       uploadSpeeds.push(currentUploadSpeed);
       maxUploadSpeed = Math.max(maxUploadSpeed, currentUploadSpeed);
       const averageUploadSpeed = uploadSpeeds.reduce((a, b) => a + b, 0) / uploadSpeeds.length;
-      
+
       sendProgress({
         type: 'upload',
         phase: `Upload: ${currentUploadSpeed.toFixed(1)} Mbps`,
@@ -720,14 +878,14 @@ async function performRealTimeSpeedTest(
 
     // ✅ FIXED: Save to WifiSpeedTest with WiFi credentials
     const jitterMs = Math.random() * 10 + 1;
-    
+
     try {
       const { v4: uuidv4 } = require('uuid');
-      
+
       // Calculate quality score
       const qualityScore = calculateQualityScore(downloadSpeed, uploadSpeed, pingMs);
       const category = getCategory(qualityScore);
-      
+
       // Generate WiFi QR code if credentials provided
       let wifiQrCode = '';
       if (wifiContext?.ssid && wifiContext?.wifiPassword && !wifiContext?.hasNoWifi) {
@@ -735,7 +893,7 @@ async function performRealTimeSpeedTest(
         const escapedPassword = wifiContext.wifiPassword.replace(/([\\;:,"])/g, '\\$1');
         wifiQrCode = `WIFI:T:WPA;S:${escapedSsid};P:${escapedPassword};H:false;`;
       }
-      
+
       const speedTest = new WifiSpeedTest({
         testId: uuidv4(),
         venueId: wifiContext?.venueId,
@@ -783,9 +941,9 @@ async function performRealTimeSpeedTest(
         qualityScore,
         category
       });
-      
+
       const savedTest = await speedTest.save();
-      
+
       // ✅ Update venue with WiFi credentials
       if (wifiContext?.ssid && (wifiContext?.venueId || wifiContext?.tempVenueId) && !wifiContext?.hasNoWifi) {
         try {
@@ -806,7 +964,7 @@ async function performRealTimeSpeedTest(
           }
 
           await AgentVenueTemp.updateOne(
-            { 
+            {
               $or: [
                 { tempVenueId: wifiContext.tempVenueId || wifiContext.venueId },
                 { venueId: wifiContext.venueId },
@@ -821,7 +979,7 @@ async function performRealTimeSpeedTest(
           console.error('⚠️ Failed to update venue with WiFi credentials:', venueUpdateError);
         }
       }
-      
+
       const finalResults = {
         id: savedTest._id,
         download: downloadSpeed.toFixed(2),
@@ -841,9 +999,9 @@ async function performRealTimeSpeedTest(
         hasWifiPassword: !!wifiContext?.wifiPassword,
         isWifiFree: wifiContext?.isWifiFree
       };
-      
+
       logProgress('🎉 FINAL SPEED TEST RESULTS:', finalResults);
-      
+
       sendProgress({
         type: 'completed',
         phase: 'Speed test completed successfully!',
@@ -851,7 +1009,7 @@ async function performRealTimeSpeedTest(
         data: finalResults,
         timestamp: Date.now()
       });
-      
+
       sendProgress({
         type: 'completed',
         phase: `📊 RESULTS: Download: ${downloadSpeed.toFixed(2)} Mbps | Upload: ${uploadSpeed.toFixed(2)} Mbps | Ping: ${pingMs}ms | Quality: ${getConnectionQuality(downloadSpeed, uploadSpeed, pingMs)}`,
@@ -859,7 +1017,7 @@ async function performRealTimeSpeedTest(
         data: finalResults,
         timestamp: Date.now()
       });
-      
+
     } catch (saveError: unknown) {
       logProgress('❌ Failed to save speed test results:', saveError);
       sendProgress({
@@ -870,7 +1028,7 @@ async function performRealTimeSpeedTest(
         timestamp: Date.now()
       });
     }
-    
+
     setTimeout(() => {
       try {
         if (!res.destroyed) {
@@ -881,10 +1039,10 @@ async function performRealTimeSpeedTest(
         logProgress('⚠️ Error closing connection');
       }
     }, 3000);
-    
+
   } catch (error: unknown) {
     logProgress('❌ Real-time speed test failed:', error);
-    
+
     sendProgress({
       type: 'error',
       phase: 'Speed test failed',
@@ -892,7 +1050,7 @@ async function performRealTimeSpeedTest(
       data: { error: error instanceof Error ? error.message : 'Unknown error' },
       timestamp: Date.now()
     });
-    
+
     setTimeout(() => {
       if (!res.destroyed) {
         res.end();
@@ -909,7 +1067,7 @@ async function performRealTimeSpeedTest(
 export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.userId;
-    
+
     if (!userId) {
       return res.status(401).json({
         success: false,
@@ -954,7 +1112,7 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
 
     // Save speed test result using WifiSpeedTest model
     const { v4: uuidv4 } = require('uuid');
-    
+
     const wifiTest = new WifiSpeedTest({
       testId: uuidv4(),
       venueId: venueId,
@@ -1017,7 +1175,7 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
         }
 
         await AgentVenueTemp.updateOne(
-          { 
+          {
             $or: [
               { tempVenueId: venueId },
               { venueId: venueId },
@@ -1036,7 +1194,7 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
 
     // Type-safe access using interface casting
     const savedTestObj = savedTest.toObject() as IWifiSpeedTest & { _id: mongoose.Types.ObjectId };
-    
+
     const finalResults = {
       id: savedTest._id,
       download: savedTestObj.downloadMbps,
@@ -1080,21 +1238,21 @@ export const getUserWifiTests = async (req: Request, res: Response) => {
   try {
     const user = (req as any).user;
     const userId = user._id?.toString() || user.userId;
-    
+
     const { limit = 10, page = 1 } = req.query;
-    
+
     const limitNum = Math.min(Number(limit), 50);
     const pageNum = Math.max(Number(page), 1);
     const skip = (pageNum - 1) * limitNum;
-    
+
     const tests = await WifiSpeedTest.find({ userId: new mongoose.Types.ObjectId(userId) })
       .sort({ timestamp: -1 })
       .limit(limitNum)
       .skip(skip)
       .lean();
-    
+
     const totalTests = await WifiSpeedTest.countDocuments({ userId: new mongoose.Types.ObjectId(userId) });
-    
+
     res.json({
       success: true,
       data: {
@@ -1107,7 +1265,7 @@ export const getUserWifiTests = async (req: Request, res: Response) => {
         }
       }
     });
-    
+
   } catch (error: unknown) {
     res.status(500).json({
       success: false,
@@ -1124,23 +1282,23 @@ export const getLatestSpeedTest = async (req: Request, res: Response) => {
   try {
     const user = (req as any).user;
     const userId = user._id?.toString() || user.userId;
-    
+
     const latestTest = await WifiSpeedTest.findOne({ userId: new mongoose.Types.ObjectId(userId) })
       .sort({ timestamp: -1 })
       .lean();
-    
+
     if (!latestTest) {
       return res.status(404).json({
         success: false,
         message: 'No speed tests found'
       });
     }
-    
+
     res.json({
       success: true,
       data: latestTest
     });
-    
+
   } catch (error: unknown) {
     res.status(500).json({
       success: false,
@@ -1158,31 +1316,31 @@ export const deleteSpeedTest = async (req: Request, res: Response) => {
     const user = (req as any).user;
     const userId = user._id?.toString() || user.userId;
     const { testId } = req.params;
-    
+
     if (!mongoose.Types.ObjectId.isValid(testId)) {
       return res.status(400).json({
         success: false,
         message: 'Invalid test ID format'
       });
     }
-    
+
     const deletedTest = await WifiSpeedTest.findOneAndDelete({
       _id: testId,
       userId: new mongoose.Types.ObjectId(userId)
     });
-    
+
     if (!deletedTest) {
       return res.status(404).json({
         success: false,
         message: 'Speed test not found'
       });
     }
-    
+
     res.json({
       success: true,
       message: 'Speed test deleted successfully'
     });
-    
+
   } catch (error: unknown) {
     res.status(500).json({
       success: false,
