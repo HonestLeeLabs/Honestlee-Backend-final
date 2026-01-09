@@ -91,7 +91,7 @@ export const getVenueOwner = async (req: CombinedRequest, res: Response) => {
 
         const venue = await Venue.findById(venueId)
             .select('_id AccountName ownerId')
-            .populate('ownerId', '_id name email phone role');
+            .lean();
 
         if (!venue) {
             return res.status(404).json({
@@ -100,12 +100,20 @@ export const getVenueOwner = async (req: CombinedRequest, res: Response) => {
             });
         }
 
+        // Manually fetch owner from User collection (global DB)
+        let owner = null;
+        if (venue.ownerId) {
+            owner = await User.findById(venue.ownerId)
+                .select('_id name email phone role')
+                .lean();
+        }
+
         res.json({
             success: true,
             data: {
                 venueId: venue._id,
                 venueName: venue.AccountName,
-                owner: venue.ownerId || null
+                owner: owner
             }
         });
     } catch (error: any) {
@@ -129,6 +137,8 @@ export const assignOwner = async (req: CombinedRequest, res: Response) => {
         const { userId, updateUserRole = true } = req.body;
         const region = req.region || 'ae';
 
+        console.log(`🔍 assignOwner called for venueId: ${venueId}, userId: ${userId}, region: ${region}`);
+
         // Connect to regional database
         await dbManager.connectRegion(region);
         const Venue = getVenueModel(region);
@@ -151,43 +161,54 @@ export const assignOwner = async (req: CombinedRequest, res: Response) => {
         // Find venue
         const venue = await Venue.findById(venueId);
         if (!venue) {
+            console.log(`❌ Venue not found: ${venueId}`);
             return res.status(404).json({
                 success: false,
                 message: 'Venue not found'
             });
         }
 
-        // Find user
+        console.log(`✅ Found venue: ${venue.AccountName}`);
+
+        // Find user (from global DB)
         const user = await User.findById(userId);
         if (!user) {
+            console.log(`❌ User not found: ${userId}`);
             return res.status(404).json({
                 success: false,
                 message: 'User not found'
             });
         }
 
+        console.log(`✅ Found user: ${user.name}`);
+
         // Update venue with owner (use type assertion for ObjectId compatibility)
         (venue as any).ownerId = new mongoose.Types.ObjectId(userId);
         await venue.save();
+
+        console.log(`✅ Owner assigned to venue`);
 
         // Optionally update user role to OWNER
         if (updateUserRole && user.role !== Role.OWNER && user.role !== Role.ADMIN) {
             user.role = Role.OWNER;
             await user.save();
+            console.log(`✅ User role updated to OWNER`);
         }
 
-        // Fetch updated venue with populated owner
-        const updatedVenue = await Venue.findById(venueId)
-            .select('_id AccountName ownerId')
-            .populate('ownerId', '_id name email phone role');
-
+        // Return success with user data (no populate needed)
         res.json({
             success: true,
             message: 'Owner assigned successfully',
             data: {
-                venueId: updatedVenue?._id,
-                venueName: updatedVenue?.AccountName,
-                owner: updatedVenue?.ownerId
+                venueId: venue._id,
+                venueName: venue.AccountName,
+                owner: {
+                    _id: user._id,
+                    name: user.name,
+                    email: user.email,
+                    phone: user.phone,
+                    role: user.role
+                }
             }
         });
     } catch (error: any) {
@@ -245,7 +266,7 @@ export const createAndAssignOwner = async (req: CombinedRequest, res: Response) 
 
         console.log(`✅ Found venue: ${venue.AccountName}`);
 
-        // Check if user already exists with same email or phone
+        // Check if user already exists with same email or phone (in global DB)
         if (email) {
             const existingByEmail = await User.findOne({ email: email.toLowerCase() });
             if (existingByEmail) {
@@ -276,7 +297,7 @@ export const createAndAssignOwner = async (req: CombinedRequest, res: Response) 
             }
         }
 
-        // Create new user with OWNER role
+        // Create new user with OWNER role (in global DB)
         const newUser = new User({
             name,
             email: email ? email.toLowerCase() : undefined,
@@ -291,19 +312,22 @@ export const createAndAssignOwner = async (req: CombinedRequest, res: Response) 
         // Assign to venue (use type assertion for ObjectId compatibility)
         (venue as any).ownerId = newUser._id;
         await venue.save();
+        console.log(`✅ Owner assigned to venue`);
 
-        // Fetch updated venue with populated owner
-        const updatedVenue = await Venue.findById(venueId)
-            .select('_id AccountName ownerId')
-            .populate('ownerId', '_id name email phone role');
-
+        // Return success with user data (no populate needed)
         res.status(201).json({
             success: true,
             message: 'Owner created and assigned successfully',
             data: {
-                venueId: updatedVenue?._id,
-                venueName: updatedVenue?.AccountName,
-                owner: updatedVenue?.ownerId
+                venueId: venue._id,
+                venueName: venue.AccountName,
+                owner: {
+                    _id: newUser._id,
+                    name: newUser.name,
+                    email: newUser.email,
+                    phone: newUser.phone,
+                    role: newUser.role
+                }
             }
         });
     } catch (error: any) {
@@ -414,16 +438,37 @@ export const getVenuesWithOwners = async (req: CombinedRequest, res: Response) =
 
         const venues = await Venue.find(query)
             .select('_id globalId AccountName BillingCity venuecategory ownerId isActive')
-            .populate('ownerId', '_id name email phone role')
             .skip((numericPage - 1) * numericLimit)
             .limit(numericLimit)
-            .sort({ AccountName: 1 });
+            .sort({ AccountName: 1 })
+            .lean();
+
+        // Manually fetch owner data for all venues with owners
+        const ownerIds = venues
+            .filter(v => v.ownerId)
+            .map(v => v.ownerId);
+
+        let ownerMap = new Map<string, any>();
+        if (ownerIds.length > 0) {
+            const owners = await User.find({ _id: { $in: ownerIds } })
+                .select('_id name email phone role')
+                .lean();
+            owners.forEach(owner => {
+                ownerMap.set(owner._id.toString(), owner);
+            });
+        }
+
+        // Attach owner data to venues
+        const venuesWithOwners = venues.map(venue => ({
+            ...venue,
+            ownerId: venue.ownerId ? ownerMap.get(venue.ownerId.toString()) || null : null
+        }));
 
         const total = await Venue.countDocuments(query);
 
         res.json({
             success: true,
-            data: venues,
+            data: venuesWithOwners,
             pagination: {
                 page: numericPage,
                 limit: numericLimit,
