@@ -4,14 +4,19 @@
 import { Response } from 'express';
 import mongoose from 'mongoose';
 import User, { Role } from '../models/User';
-import Venue from '../models/Venue';
+import { getVenueModel } from '../models/Venue';
 import { AuthRequest } from '../middlewares/authMiddleware';
+import { RegionRequest } from '../middlewares/regionMiddleware';
+import { dbManager } from '../config/database';
+
+// Combined request type
+type CombinedRequest = AuthRequest & RegionRequest;
 
 /**
  * GET /api/admin/owners
  * Get list of users who can be venue owners (existing OWNER role + search all users)
  */
-export const getOwners = async (req: AuthRequest, res: Response) => {
+export const getOwners = async (req: CombinedRequest, res: Response) => {
     try {
         const { search = '', page = 1, limit = 20, includeAll = 'true' } = req.query;
 
@@ -68,9 +73,14 @@ export const getOwners = async (req: AuthRequest, res: Response) => {
  * GET /api/admin/venues/:venueId/owner
  * Get owner details for a specific venue
  */
-export const getVenueOwner = async (req: AuthRequest, res: Response) => {
+export const getVenueOwner = async (req: CombinedRequest, res: Response) => {
     try {
         const { venueId } = req.params;
+        const region = req.region || 'ae';
+
+        // Connect to regional database
+        await dbManager.connectRegion(region);
+        const Venue = getVenueModel(region);
 
         if (!mongoose.Types.ObjectId.isValid(venueId)) {
             return res.status(400).json({
@@ -113,10 +123,15 @@ export const getVenueOwner = async (req: AuthRequest, res: Response) => {
  * Assign an existing user as venue owner
  * Body: { userId: string, updateUserRole?: boolean }
  */
-export const assignOwner = async (req: AuthRequest, res: Response) => {
+export const assignOwner = async (req: CombinedRequest, res: Response) => {
     try {
         const { venueId } = req.params;
         const { userId, updateUserRole = true } = req.body;
+        const region = req.region || 'ae';
+
+        // Connect to regional database
+        await dbManager.connectRegion(region);
+        const Venue = getVenueModel(region);
 
         // Validate IDs
         if (!mongoose.Types.ObjectId.isValid(venueId)) {
@@ -190,10 +205,17 @@ export const assignOwner = async (req: AuthRequest, res: Response) => {
  * Create a new user with OWNER role and assign to venue
  * Body: { name: string, email?: string, phone?: string }
  */
-export const createAndAssignOwner = async (req: AuthRequest, res: Response) => {
+export const createAndAssignOwner = async (req: CombinedRequest, res: Response) => {
     try {
         const { venueId } = req.params;
         const { name, email, phone } = req.body;
+        const region = req.region || 'ae';
+
+        console.log(`🔍 createAndAssignOwner called for venueId: ${venueId}, region: ${region}`);
+
+        // Connect to regional database
+        await dbManager.connectRegion(region);
+        const Venue = getVenueModel(region);
 
         // Validate venue ID
         if (!mongoose.Types.ObjectId.isValid(venueId)) {
@@ -214,11 +236,14 @@ export const createAndAssignOwner = async (req: AuthRequest, res: Response) => {
         // Find venue
         const venue = await Venue.findById(venueId);
         if (!venue) {
+            console.log(`❌ Venue not found: ${venueId} in region ${region}`);
             return res.status(404).json({
                 success: false,
                 message: 'Venue not found'
             });
         }
+
+        console.log(`✅ Found venue: ${venue.AccountName}`);
 
         // Check if user already exists with same email or phone
         if (email) {
@@ -257,10 +282,11 @@ export const createAndAssignOwner = async (req: AuthRequest, res: Response) => {
             email: email ? email.toLowerCase() : undefined,
             phone,
             role: Role.OWNER,
-            region: venue.region || 'global'
+            region: venue.region || region
         });
 
         await newUser.save();
+        console.log(`✅ Created new user: ${newUser.name} (${newUser._id})`);
 
         // Assign to venue (use type assertion for ObjectId compatibility)
         (venue as any).ownerId = newUser._id;
@@ -304,9 +330,14 @@ export const createAndAssignOwner = async (req: AuthRequest, res: Response) => {
  * DELETE /api/admin/venues/:venueId/owner
  * Remove owner assignment from venue
  */
-export const removeOwner = async (req: AuthRequest, res: Response) => {
+export const removeOwner = async (req: CombinedRequest, res: Response) => {
     try {
         const { venueId } = req.params;
+        const region = req.region || 'ae';
+
+        // Connect to regional database
+        await dbManager.connectRegion(region);
+        const Venue = getVenueModel(region);
 
         if (!mongoose.Types.ObjectId.isValid(venueId)) {
             return res.status(400).json({
@@ -357,9 +388,14 @@ export const removeOwner = async (req: AuthRequest, res: Response) => {
  * GET /api/admin/venues/with-owners
  * Get all venues with their owner information populated
  */
-export const getVenuesWithOwners = async (req: AuthRequest, res: Response) => {
+export const getVenuesWithOwners = async (req: CombinedRequest, res: Response) => {
     try {
         const { page = 1, limit = 50, hasOwner } = req.query;
+        const region = req.region || 'ae';
+
+        // Connect to regional database
+        await dbManager.connectRegion(region);
+        const Venue = getVenueModel(region);
 
         const numericPage = parseInt(page.toString(), 10);
         const numericLimit = parseInt(limit.toString(), 10);
