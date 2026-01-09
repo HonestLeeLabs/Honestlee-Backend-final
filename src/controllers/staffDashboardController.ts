@@ -22,18 +22,45 @@ export const getDashboardOverview = async (req: StaffRequest, res: Response, nex
     const { venueId } = req.params;
     const region = (req.region || 'ae') as Region;
 
-    console.log(`📊 Dashboard request for venue: ${venueId}, region: ${region}`);
+    console.log(`📊 Dashboard request for venue: ${venueId}, user: ${req.user.userId}, region: ${region}`);
 
-    // Verify staff access
-    const roster = await VenueRoster.findOne({
+    // ✅ FIX: Use dbManager to get regional connection FIRST (needed for ownerId check)
+    await dbManager.connectRegion(region);
+    const regionalConnection = dbManager.getConnection(region);
+    const RegionalVenue = regionalConnection.model('Venue', Venue.schema);
+
+    // ✅ STEP 1: Check for roster access
+    let roster = await VenueRoster.findOne({
       staffUserId: req.user.userId,
       venueId,
       status: 'ACTIVE'
     });
 
+    // ✅ STEP 2: If no roster entry, check if user is the venue owner via ownerId
+    let isOwnerViaOwnerId = false;
+    let ownerRole = 'STAFF';
+
     if (!roster) {
+      console.log(`🔍 No roster entry found, checking ownerId...`);
+      const venueCheck = await RegionalVenue.findOne({
+        _id: venueId,
+        ownerId: new mongoose.Types.ObjectId(req.user.userId)
+      }).lean();
+
+      if (venueCheck) {
+        console.log(`✅ User is venue owner via ownerId field`);
+        isOwnerViaOwnerId = true;
+        ownerRole = 'OWNER';
+      }
+    }
+
+    // Access denied if neither roster entry nor owner
+    if (!roster && !isOwnerViaOwnerId) {
+      console.log(`❌ Access denied: No roster entry and not owner for venue ${venueId}`);
       return res.status(403).json({ message: 'Access denied to this venue' });
     }
+
+    const effectiveRole = roster?.role || ownerRole;
 
     // Get or create active session with proper type assertion
     let session = await StaffSession.findOne({
@@ -47,7 +74,7 @@ export const getDashboardOverview = async (req: StaffRequest, res: Response, nex
       session = new StaffSession({
         staffUserId: req.user.userId,
         venueId,
-        role: roster.role,
+        role: effectiveRole,
         deviceId: req.headers['x-device-id'] || 'unknown',
         deviceInfo: {
           userAgent: req.headers['user-agent'] || '',
@@ -63,10 +90,6 @@ export const getDashboardOverview = async (req: StaffRequest, res: Response, nex
 
     // Get 24h activity snapshot
     const last24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
-
-    // ✅ FIX: Use dbManager to get regional connection
-    const regionalConnection = dbManager.getConnection(region);
-    const RegionalVenue = regionalConnection.model('Venue', Venue.schema);
 
     const [
       venue,
