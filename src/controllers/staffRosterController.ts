@@ -29,6 +29,7 @@ interface EnrichedRosterEntry {
 }
 
 // ✅ ULTRA FIXED: GET /api/staff/roster/my-roster
+// Now also checks for venues where user is the ownerId (assigned via admin panel)
 export const getMyRosterEntries = async (req: StaffRequest, res: Response, next?: NextFunction) => {
   try {
     if (!req.user) {
@@ -38,21 +39,103 @@ export const getMyRosterEntries = async (req: StaffRequest, res: Response, next?
     const region = (req.region || 'ae') as Region;
     console.log(`🔍 Fetching roster for userId: ${req.user.userId}, region: ${region}`);
 
+    // ✅ STEP 1: Get roster entries from VenueRoster collection
     const allRosterEntries = await VenueRoster.find({
       staffUserId: req.user.userId
     }).lean();
 
-    console.log(`📊 Total roster entries: ${allRosterEntries.length}`);
+    console.log(`📊 VenueRoster entries: ${allRosterEntries.length}`);
 
-    const validRosterEntries = allRosterEntries.filter(entry => 
-      entry.status === 'ACTIVE' && 
-      entry.venueId && 
+    const validRosterEntries = allRosterEntries.filter(entry =>
+      entry.status === 'ACTIVE' &&
+      entry.venueId &&
       mongoose.Types.ObjectId.isValid(entry.venueId.toString())
     );
 
     console.log(`✅ Valid roster entries: ${validRosterEntries.length}`);
 
-    if (validRosterEntries.length === 0) {
+    // ✅ STEP 2: Check for venues where user is the ownerId (assigned via admin panel)
+    await dbManager.connectRegion(region);
+    const StreetVendor = getStreetVendorModel(region);
+    const regionalConnection = dbManager.getConnection(region);
+    const RegionalVenue = regionalConnection.model('Venue', Venue.schema);
+
+    // Find venues owned by this user
+    const ownedVenues = await RegionalVenue.find({
+      ownerId: new mongoose.Types.ObjectId(req.user.userId)
+    }).lean();
+
+    console.log(`📊 Owned venues (via ownerId): ${ownedVenues.length}`);
+
+    // ✅ STEP 3: Create enriched results
+    const enrichedRosters: EnrichedRosterEntry[] = [];
+
+    // Add roster entries (from VenueRoster)
+    for (const roster of validRosterEntries) {
+      const venueIdStr = roster.venueId.toString();
+
+      try {
+        // Try regular venue first
+        let venueData = await RegionalVenue.findById(venueIdStr).lean();
+
+        // If not found, try street vendor
+        if (!venueData) {
+          console.log(`🔍 Not found in venues, checking street_vendors for ${venueIdStr}`);
+          venueData = await StreetVendor.findById(venueIdStr).lean();
+          if (venueData) {
+            console.log(`✅ Found street vendor: ${venueData.vendorName}`);
+          }
+        }
+
+        if (venueData) {
+          enrichedRosters.push({
+            ...roster,
+            venueId: venueData,
+            source: 'roster' // Track the source for debugging
+          } as EnrichedRosterEntry);
+        } else {
+          console.warn(`⚠️ Venue/Vendor ${venueIdStr} not found in ${region}`);
+        }
+      } catch (error) {
+        console.error(`❌ Error fetching venue ${venueIdStr}:`, (error as any).message);
+      }
+    }
+
+    // ✅ STEP 4: Add owned venues (from ownerId field) - create virtual roster entries
+    for (const venue of ownedVenues) {
+      // Check if already exists in roster entries (avoid duplicates)
+      const alreadyInRoster = enrichedRosters.some(
+        r => r.venueId._id?.toString() === venue._id?.toString()
+      );
+
+      if (!alreadyInRoster) {
+        console.log(`➕ Adding owned venue: ${venue.AccountName}`);
+        enrichedRosters.push({
+          _id: venue._id,
+          staffUserId: new mongoose.Types.ObjectId(req.user.userId),
+          venueId: venue,
+          role: 'OWNER',
+          status: 'ACTIVE',
+          permissions: [
+            'VIEW_DASHBOARD',
+            'MANAGE_STAFF',
+            'VIEW_REDEMPTIONS',
+            'APPROVE_REDEMPTIONS'
+          ],
+          invitedBy: new mongoose.Types.ObjectId(req.user.userId),
+          invitedAt: new Date(),
+          joinedAt: new Date(),
+          activatedAt: new Date(),
+          createdAt: venue.createdAt || new Date(),
+          updatedAt: venue.updatedAt || new Date(),
+          source: 'ownerId' // Track that this came from ownerId
+        } as EnrichedRosterEntry);
+      }
+    }
+
+    console.log(`✅ Total enriched entries: ${enrichedRosters.length}`);
+
+    if (enrichedRosters.length === 0) {
       return res.json({
         success: true,
         data: [],
@@ -61,59 +144,10 @@ export const getMyRosterEntries = async (req: StaffRequest, res: Response, next?
       });
     }
 
-    // ✅ CRITICAL FIX: Use proper street vendor model
-    await dbManager.connectRegion(region);
-    const StreetVendor = getStreetVendorModel(region); // ✅ Proper model
-    const regionalConnection = dbManager.getConnection(region);
-    const RegionalVenue = regionalConnection.model('Venue', Venue.schema);
-
-    const enrichedRosters: EnrichedRosterEntry[] = await Promise.all(
-      validRosterEntries.map(async (roster): Promise<EnrichedRosterEntry> => {
-        const venueIdStr = roster.venueId.toString();
-        
-        try {
-          // ✅ Try regular venue first
-          let venueData = await RegionalVenue.findById(venueIdStr).lean();
-          
-          // ✅ If not found, try street vendor with PROPER MODEL
-          if (!venueData) {
-            console.log(`🔍 Not found in venues, checking street_vendors for ${venueIdStr}`);
-            venueData = await StreetVendor.findById(venueIdStr).lean();
-            if (venueData) {
-              console.log(`✅ Found street vendor: ${venueData.vendorName}`);
-            }
-          }
-
-          if (venueData) {
-            return {
-              ...roster,
-              venueId: venueData
-            } as EnrichedRosterEntry;
-          } else {
-            console.warn(`⚠️ Venue/Vendor ${venueIdStr} not found in ${region}`);
-            return {
-              ...roster,
-              venueId: null
-            } as EnrichedRosterEntry;
-          }
-        } catch (error) {
-          console.error(`❌ Error fetching venue ${venueIdStr}:`, (error as any).message);
-          return {
-            ...roster,
-            venueId: null
-          } as EnrichedRosterEntry;
-        }
-      })
-    );
-
-    const successfullyEnriched = enrichedRosters.filter(r => r.venueId !== null);
-
-    console.log(`✅ Successfully enriched ${successfullyEnriched.length} entries`);
-
     res.json({
       success: true,
-      data: successfullyEnriched,
-      count: successfullyEnriched.length
+      data: enrichedRosters,
+      count: enrichedRosters.length
     });
 
   } catch (error: any) {
@@ -155,10 +189,10 @@ export const testAddStaffToRoster = async (req: StaffRequest, res: Response, nex
     if (existing) {
       if (existing.status === 'ACTIVE') {
         console.log(`ℹ️ Already in roster`);
-        return res.json({ 
-          success: true, 
-          message: 'Already in roster', 
-          data: existing 
+        return res.json({
+          success: true,
+          message: 'Already in roster',
+          data: existing
         });
       } else {
         existing.status = 'ACTIVE';
@@ -178,28 +212,28 @@ export const testAddStaffToRoster = async (req: StaffRequest, res: Response, nex
     const StreetVendor = getStreetVendorModel(region); // ✅ Use proper model
     const regionalConnection = dbManager.getConnection(region);
     const RegionalVenue = regionalConnection.model('Venue', Venue.schema);
-    
+
     console.log(`🔍 Checking if ${venueId} exists in region ${region}...`);
-    
+
     // Try venue first
     let venue = await RegionalVenue.findById(venueId).lean();
     let entityType = 'venue';
-    
+
     // If not found, try street vendor
     if (!venue) {
       console.log(`🔍 Not found in venues, checking street_vendors...`);
       venue = await StreetVendor.findById(venueId).lean();
       entityType = 'street_vendor';
     }
-    
+
     if (!venue) {
       console.error(`❌ ${venueId} not found in EITHER venues or street_vendors in ${region}`);
-      return res.status(404).json({ 
-        success: false, 
+      return res.status(404).json({
+        success: false,
         message: `Venue/Vendor ${venueId} not found in region ${region}. Checked both venues and street_vendors collections.`
       });
     }
-    
+
     const name = venue.AccountName || venue.vendorName || 'Unknown';
     console.log(`✅ Found ${entityType}: ${name}`);
 
@@ -210,9 +244,9 @@ export const testAddStaffToRoster = async (req: StaffRequest, res: Response, nex
       role: 'OWNER',
       status: 'ACTIVE',
       permissions: [
-        'VIEW_DASHBOARD', 
-        'MANAGE_STAFF', 
-        'VIEW_REDEMPTIONS', 
+        'VIEW_DASHBOARD',
+        'MANAGE_STAFF',
+        'VIEW_REDEMPTIONS',
         'APPROVE_REDEMPTIONS'
       ],
       joinedAt: new Date(),
@@ -224,9 +258,9 @@ export const testAddStaffToRoster = async (req: StaffRequest, res: Response, nex
 
     console.log(`✅ Added ${entityType} to roster: ${roster._id}`);
 
-    res.json({ 
-      success: true, 
-      message: `Added ${entityType} to roster successfully`, 
+    res.json({
+      success: true,
+      message: `Added ${entityType} to roster successfully`,
       data: roster,
       entityType,
       entityName: name
@@ -234,10 +268,10 @@ export const testAddStaffToRoster = async (req: StaffRequest, res: Response, nex
 
   } catch (error: any) {
     console.error('❌ Error adding to roster:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Error adding to roster', 
-      error: error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Error adding to roster',
+      error: error.message
     });
   }
 };
@@ -331,10 +365,10 @@ export const getMyInvitations = async (req: StaffRequest, res: Response, next?: 
 
   } catch (error: any) {
     console.error('❌ Error fetching invitations:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Error fetching invitations', 
-      error: error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching invitations',
+      error: error.message
     });
   }
 };
@@ -383,10 +417,10 @@ export const acceptStaffInvitation = async (req: StaffRequest, res: Response, ne
 
   } catch (error: any) {
     console.error('❌ Error accepting invitation:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Error accepting invitation', 
-      error: error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Error accepting invitation',
+      error: error.message
     });
   }
 };
@@ -431,10 +465,10 @@ export const fixAndAddToRoster = async (req: StaffRequest, res: Response, next?:
 
     if (existing && existing.status === 'ACTIVE') {
       console.log(`ℹ️ User already in roster with this venue`);
-      return res.json({ 
-        success: true, 
-        message: 'Already in roster', 
-        data: existing 
+      return res.json({
+        success: true,
+        message: 'Already in roster',
+        data: existing
       });
     }
 
@@ -443,21 +477,21 @@ export const fixAndAddToRoster = async (req: StaffRequest, res: Response, next?:
       await dbManager.connectRegion(region);
       const regionalConnection = dbManager.getConnection(region);
       const RegionalVenue = regionalConnection.model('Venue', Venue.schema);
-      
+
       const venue = await RegionalVenue.findById(venueId);
       if (!venue) {
-        return res.status(404).json({ 
-          success: false, 
-          message: `Venue ${venueId} not found in region ${region}` 
+        return res.status(404).json({
+          success: false,
+          message: `Venue ${venueId} not found in region ${region}`
         });
       }
       console.log(`✅ Verified venue exists: ${venue.AccountName}`);
     } catch (error: any) {
       console.error(`❌ Error verifying venue:`, error);
-      return res.status(500).json({ 
-        success: false, 
-        message: 'Error verifying venue', 
-        error: error.message 
+      return res.status(500).json({
+        success: false,
+        message: 'Error verifying venue',
+        error: error.message
       });
     }
 
@@ -468,9 +502,9 @@ export const fixAndAddToRoster = async (req: StaffRequest, res: Response, next?:
       role: 'OWNER',
       status: 'ACTIVE',
       permissions: [
-        'VIEW_DASHBOARD', 
-        'MANAGE_STAFF', 
-        'VIEW_REDEMPTIONS', 
+        'VIEW_DASHBOARD',
+        'MANAGE_STAFF',
+        'VIEW_REDEMPTIONS',
         'APPROVE_REDEMPTIONS'
       ],
       joinedAt: new Date(),
@@ -482,18 +516,18 @@ export const fixAndAddToRoster = async (req: StaffRequest, res: Response, next?:
 
     console.log(`✅ Fixed and added to roster: ${roster._id}`);
 
-    res.json({ 
-      success: true, 
-      message: 'Fixed and added to roster successfully', 
-      data: roster 
+    res.json({
+      success: true,
+      message: 'Fixed and added to roster successfully',
+      data: roster
     });
 
   } catch (error: any) {
     console.error('❌ Error fixing roster:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Error fixing roster', 
-      error: error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Error fixing roster',
+      error: error.message
     });
   }
 };
@@ -542,10 +576,10 @@ export const getVenueRoster = async (req: StaffRequest, res: Response, next?: Ne
 
   } catch (error: any) {
     console.error('❌ Error fetching roster:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Error fetching roster', 
-      error: error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching roster',
+      error: error.message
     });
   }
 };
@@ -565,9 +599,9 @@ export const inviteStaffMember = async (req: StaffRequest, res: Response, next?:
     const user = await User.findOne({ $or: [{ email }, { phone }] });
 
     if (!user) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'User not found. They must create an account first.' 
+      return res.status(404).json({
+        success: false,
+        message: 'User not found. They must create an account first.'
       });
     }
 
@@ -577,9 +611,9 @@ export const inviteStaffMember = async (req: StaffRequest, res: Response, next?:
     });
 
     if (existing && existing.status === 'ACTIVE') {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'User already on venue staff' 
+      return res.status(400).json({
+        success: false,
+        message: 'User already on venue staff'
       });
     }
 
@@ -611,10 +645,10 @@ export const inviteStaffMember = async (req: StaffRequest, res: Response, next?:
 
   } catch (error: any) {
     console.error('❌ Error inviting staff:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Error inviting staff', 
-      error: error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Error inviting staff',
+      error: error.message
     });
   }
 };
@@ -651,10 +685,10 @@ export const updateStaffRole = async (req: StaffRequest, res: Response, next?: N
 
   } catch (error: any) {
     console.error('❌ Error updating role:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Error updating role', 
-      error: error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Error updating role',
+      error: error.message
     });
   }
 };
@@ -704,10 +738,10 @@ export const removeStaffMember = async (req: StaffRequest, res: Response, next?:
 
   } catch (error: any) {
     console.error('❌ Error removing staff:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Error removing staff', 
-      error: error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Error removing staff',
+      error: error.message
     });
   }
 };
@@ -757,10 +791,10 @@ export const suspendStaffMember = async (req: StaffRequest, res: Response, next?
 
   } catch (error: any) {
     console.error('❌ Error suspending staff:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Error suspending staff', 
-      error: error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Error suspending staff',
+      error: error.message
     });
   }
 };
