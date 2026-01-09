@@ -14,6 +14,7 @@ import {
 } from '../controllers/adminController';
 import { authenticate, AuthRequest } from '../middlewares/authMiddleware';
 import { authorizeRoles } from '../middlewares/roleMiddleware';
+import { RegionRequest } from '../middlewares/regionMiddleware';
 import * as adminAssignmentController from '../controllers/adminAssignmentController';
 import * as venueOwnerController from '../controllers/venueOwnerController';
 
@@ -25,6 +26,23 @@ function withAuthRequest(
 ) {
   return (req: Request, res: Response, next: NextFunction) =>
     handler(req as AuthRequest, res, next);
+}
+
+// ✅ Helper function for handlers that need both Auth and Region
+function withCombinedRequest(
+  handler: (req: AuthRequest & RegionRequest, res: Response, next: NextFunction) => any
+) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    // Extract region from headers
+    const regionReq = req as AuthRequest & RegionRequest;
+    const regionHeader = req.headers['x-region'] as string;
+    // Set region with proper type
+    regionReq.region = (regionHeader === 'th' || regionHeader === 'in' || regionHeader === 'global')
+      ? regionHeader
+      : 'ae';
+    regionReq.language = (req.headers['accept-language'] as string) || 'en';
+    return handler(regionReq, res, next);
+  };
 }
 
 // ✅ Apply authentication to ALL routes FIRST
@@ -57,12 +75,12 @@ router.get('/agents', adminAssignmentController.getAgents);
 router.get('/assignments/stats', adminAssignmentController.getAssignmentStats);
 
 // 🆕 VENUE OWNER ROUTES - Must come BEFORE /venues/:id
-router.get('/owners', withAuthRequest(venueOwnerController.getOwners));
-router.get('/venues/with-owners', withAuthRequest(venueOwnerController.getVenuesWithOwners));
-router.get('/venues/:venueId/owner', withAuthRequest(venueOwnerController.getVenueOwner));
-router.post('/venues/:venueId/owner', withAuthRequest(venueOwnerController.assignOwner));
-router.post('/venues/:venueId/owner/create', withAuthRequest(venueOwnerController.createAndAssignOwner));
-router.delete('/venues/:venueId/owner', withAuthRequest(venueOwnerController.removeOwner));
+router.get('/owners', withCombinedRequest(venueOwnerController.getOwners));
+router.get('/venues/with-owners', withCombinedRequest(venueOwnerController.getVenuesWithOwners));
+router.get('/venues/:venueId/owner', withCombinedRequest(venueOwnerController.getVenueOwner));
+router.post('/venues/:venueId/owner', withCombinedRequest(venueOwnerController.assignOwner));
+router.post('/venues/:venueId/owner/create', withCombinedRequest(venueOwnerController.createAndAssignOwner));
+router.delete('/venues/:venueId/owner', withCombinedRequest(venueOwnerController.removeOwner));
 
 // ✅ General venue routes (parameterized routes AFTER specific ones)
 router.post('/venues', withAuthRequest(createVenue));
@@ -72,3 +90,4 @@ router.put('/venues/:id', withAuthRequest(updateVenueById));
 router.delete('/venues/:id', withAuthRequest(deleteVenueById));
 
 export default router;
+
