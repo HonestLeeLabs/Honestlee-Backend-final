@@ -453,7 +453,7 @@ export const getVenuesWithOwners = async (req: CombinedRequest, res: Response) =
             const owners = await User.find({ _id: { $in: ownerIds } })
                 .select('_id name email phone role')
                 .lean();
-            owners.forEach(owner => {
+            owners.forEach((owner: any) => {
                 ownerMap.set(owner._id.toString(), owner);
             });
         }
