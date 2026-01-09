@@ -151,8 +151,8 @@ export const assignOwner = async (req: AuthRequest, res: Response) => {
             });
         }
 
-        // Update venue with owner
-        venue.ownerId = new mongoose.Types.ObjectId(userId);
+        // Update venue with owner (use type assertion for ObjectId compatibility)
+        (venue as any).ownerId = new mongoose.Types.ObjectId(userId);
         await venue.save();
 
         // Optionally update user role to OWNER
@@ -262,8 +262,8 @@ export const createAndAssignOwner = async (req: AuthRequest, res: Response) => {
 
         await newUser.save();
 
-        // Assign to venue
-        venue.ownerId = newUser._id;
+        // Assign to venue (use type assertion for ObjectId compatibility)
+        (venue as any).ownerId = newUser._id;
         await venue.save();
 
         // Fetch updated venue with populated owner
