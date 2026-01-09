@@ -15,6 +15,7 @@ import {
 import { authenticate, AuthRequest } from '../middlewares/authMiddleware';
 import { authorizeRoles } from '../middlewares/roleMiddleware';
 import * as adminAssignmentController from '../controllers/adminAssignmentController';
+import * as venueOwnerController from '../controllers/venueOwnerController';
 
 const router = express.Router();
 
@@ -54,6 +55,14 @@ router.delete('/venues/:tempVenueId/assignment', adminAssignmentController.unass
 // 🆕 AGENT & STATS ROUTES
 router.get('/agents', adminAssignmentController.getAgents);
 router.get('/assignments/stats', adminAssignmentController.getAssignmentStats);
+
+// 🆕 VENUE OWNER ROUTES - Must come BEFORE /venues/:id
+router.get('/owners', withAuthRequest(venueOwnerController.getOwners));
+router.get('/venues/with-owners', withAuthRequest(venueOwnerController.getVenuesWithOwners));
+router.get('/venues/:venueId/owner', withAuthRequest(venueOwnerController.getVenueOwner));
+router.post('/venues/:venueId/owner', withAuthRequest(venueOwnerController.assignOwner));
+router.post('/venues/:venueId/owner/create', withAuthRequest(venueOwnerController.createAndAssignOwner));
+router.delete('/venues/:venueId/owner', withAuthRequest(venueOwnerController.removeOwner));
 
 // ✅ General venue routes (parameterized routes AFTER specific ones)
 router.post('/venues', withAuthRequest(createVenue));
