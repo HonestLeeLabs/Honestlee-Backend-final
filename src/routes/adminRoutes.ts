@@ -17,6 +17,7 @@ import { authorizeRoles } from '../middlewares/roleMiddleware';
 import { RegionRequest } from '../middlewares/regionMiddleware';
 import * as adminAssignmentController from '../controllers/adminAssignmentController';
 import * as venueOwnerController from '../controllers/venueOwnerController';
+import * as roleController from '../controllers/roleController';
 
 const router = express.Router();
 
@@ -56,7 +57,14 @@ router.get('/users', withAuthRequest(getUsers));
 router.get('/users/:id', withAuthRequest(getUserById));
 router.put('/users/:id', withAuthRequest(updateUserById));
 router.delete('/users/:id', withAuthRequest(deleteUserById));
+
+// ===== Role Routes (ADMIN only) =====
+router.get('/roles', withAuthRequest(roleController.getAvailableRoles));
+
 // DELETE venue - Must come BEFORE /venues/:id
+router.delete('/venues/:tempVenueId', (req: Request, res: Response, next: NextFunction) =>
+  adminAssignmentController.deleteVenue(req as any, res).catch(next)
+);
 router.delete('/venues/:tempVenueId', (req: Request, res: Response, next: NextFunction) =>
   adminAssignmentController.deleteVenue(req as any, res).catch(next)
 );
