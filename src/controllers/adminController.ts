@@ -87,7 +87,7 @@ export const updateUserById = async (req: AuthRequest, res: Response) => {
       }
     }
 
-    const allowedFields = ["name", "email", "role", "address", "profileImage", "referralCode", "referredBy", "phone", "isActive"];
+    const allowedFields = ["name", "email", "role", "address", "profileImage", "referralCode", "referredBy", "phone", "isActive", "region"];
     const updateData: any = {};
     allowedFields.forEach(field => {
       if (input[field] !== undefined) {
