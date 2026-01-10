@@ -43,36 +43,87 @@ export const getUserById = async (req: AuthRequest, res: Response) => {
 
 export const updateUserById = async (req: AuthRequest, res: Response) => {
   const input = req.body;
+  const targetUserId = req.params.id;
+  const currentAdminId = req.user?.userId;
 
+  // Validate role if provided
   if (input.role && !Object.values(Role).includes(input.role)) {
-    return res.status(400).json({ message: 'Invalid role. Allowed roles: ' + Object.values(Role).join(', ') });
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid role. Allowed roles: ' + Object.values(Role).join(', ')
+    });
   }
 
-  const allowedFields = ["name", "email", "role", "address", "profileImage", "referralCode", "referredBy", "phone"];
-  const updateData: any = {};
-  allowedFields.forEach(field => {
-    if (input[field] !== undefined) {
-      updateData[field] = input[field];
-    }
-  });
-
   try {
-    const updatedUser = await User.findByIdAndUpdate(req.params.id, updateData, { new: true, runValidators: true })
+    // Fetch the target user first to get current role
+    const targetUser = await User.findById(targetUserId);
+    if (!targetUser) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    const oldRole = targetUser.role;
+    const newRole = input.role;
+    const isRoleChange = newRole && newRole !== oldRole;
+
+    // ===== SECURITY: Prevent self-demotion from ADMIN =====
+    if (isRoleChange && targetUserId === currentAdminId) {
+      if (oldRole === Role.ADMIN && newRole !== Role.ADMIN) {
+        console.warn(`⚠️ BLOCKED: Admin ${currentAdminId} attempted to demote themselves from ADMIN to ${newRole}`);
+        return res.status(403).json({
+          success: false,
+          message: 'Cannot demote yourself from ADMIN role. Ask another admin to change your role.'
+        });
+      }
+    }
+
+    // ===== SECURITY: Only ADMIN can change roles to ADMIN =====
+    if (isRoleChange && newRole === Role.ADMIN) {
+      if (req.user?.role !== Role.ADMIN) {
+        console.warn(`⚠️ BLOCKED: Non-admin ${currentAdminId} attempted to create an ADMIN`);
+        return res.status(403).json({
+          success: false,
+          message: 'Only ADMIN can promote users to ADMIN role.'
+        });
+      }
+    }
+
+    const allowedFields = ["name", "email", "role", "address", "profileImage", "referralCode", "referredBy", "phone", "isActive"];
+    const updateData: any = {};
+    allowedFields.forEach(field => {
+      if (input[field] !== undefined) {
+        updateData[field] = input[field];
+      }
+    });
+
+    const updatedUser = await User.findByIdAndUpdate(targetUserId, updateData, { new: true, runValidators: true })
       .select('-otpCode -otpExpiresAt');
 
     if (!updatedUser) {
-      return res.status(404).json({ message: 'User not found' });
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    // ===== AUDIT LOGGING for role changes =====
+    if (isRoleChange) {
+      console.log(`🔐 ROLE CHANGE: User ${targetUser.email || targetUser.phone || targetUserId}`);
+      console.log(`   └── Changed from ${oldRole} → ${newRole}`);
+      console.log(`   └── Changed by: Admin ID ${currentAdminId}`);
+      console.log(`   └── Timestamp: ${new Date().toISOString()}`);
     }
 
     res.json({
-      message: 'User updated successfully',
-      user: updatedUser
+      success: true,
+      message: isRoleChange
+        ? `User role changed from ${oldRole} to ${newRole} successfully`
+        : 'User updated successfully',
+      user: updatedUser,
+      roleChange: isRoleChange ? { oldRole, newRole } : null
     });
   } catch (error: any) {
+    console.error('❌ Error updating user:', error);
     if (error.code === 11000) {
-      return res.status(400).json({ message: 'Duplicate field value error.' });
+      return res.status(400).json({ success: false, message: 'Duplicate field value error.' });
     }
-    res.status(400).json({ message: 'Update failed', error: error.message });
+    res.status(400).json({ success: false, message: 'Update failed', error: error.message });
   }
 };
 
