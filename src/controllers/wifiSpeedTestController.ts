@@ -3,6 +3,9 @@ import { v4 as uuidv4 } from 'uuid';
 import mongoose from 'mongoose';
 import WifiSpeedTest from '../models/WifiSpeedTest';
 import AgentVenueTemp from '../models/AgentVenueTemp';
+import VenueDubai from '../models/VenueDubai';
+import { getVenueModel } from '../models/Venue';
+import { Region } from '../config/database';
 import { AuthRequest } from '../middlewares/authMiddleware';
 
 export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
@@ -594,13 +597,19 @@ export const deleteSpeedTest = async (req: AuthRequest, res: Response) => {
 
 /**
  * Get available SSIDs for a venue
- * Returns SSIDs from wifiData.ssids array and falls back to legacy fields
+ * ✅ ENHANCED: Searches across multiple venue collections and falls back to WifiSpeedTest history
+ * Returns SSIDs from:
+ * 1. AgentVenueTemp.wifiData
+ * 2. VenueDubai.wifiData
+ * 3. Regional Venue models
+ * 4. Historical WifiSpeedTest records (fallback)
  */
 export const getVenueSSIDs = async (req: AuthRequest, res: Response) => {
   try {
     const { venueId } = req.params;
+    const region = (req.headers['x-region'] as string) || 'th';
 
-    console.log('📶 Fetching SSIDs for venue:', venueId);
+    console.log('📶 Fetching SSIDs for venue:', venueId, 'region:', region);
 
     // Check if venueId is a valid ObjectId
     const isValidObjectId = mongoose.Types.ObjectId.isValid(venueId);
@@ -616,23 +625,8 @@ export const getVenueSSIDs = async (req: AuthRequest, res: Response) => {
       }
       : { tempVenueId: venueId };
 
-    // Find venue in AgentVenueTemp
-    const venue = await AgentVenueTemp.findOne(query).lean();
-
-    if (!venue) {
-      console.log('⚠️ Venue not found, returning empty SSIDs');
-      return res.json({
-        success: true,
-        data: {
-          ssids: [],
-          venueId,
-          source: 'not_found'
-        }
-      });
-    }
-
-    // Collect SSIDs from various sources
-    const ssids: Array<{
+    // Collect SSIDs from various sources - use Map for deduplication
+    const ssidMap = new Map<string, {
       ssid: string;
       isGuest?: boolean;
       isPrimary?: boolean;
@@ -643,55 +637,238 @@ export const getVenueSSIDs = async (req: AuthRequest, res: Response) => {
       lastTested?: Date;
       testCount?: number;
       source: string;
-    }> = [];
+    }>();
 
-    // Source 1: wifiData.ssids array (most comprehensive)
-    if (venue.wifiData?.ssids && Array.isArray(venue.wifiData.ssids)) {
-      venue.wifiData.ssids.forEach((ssidEntry: any) => {
-        if (ssidEntry.ssid) {
-          ssids.push({
-            ssid: ssidEntry.ssid,
-            isGuest: ssidEntry.isGuest || false,
-            isPrimary: ssidEntry.isPrimary || false,
-            hasPassword: ssidEntry.hasPassword ?? ssidEntry.hasWifiPassword ?? true,
-            password: ssidEntry.password || undefined,
-            isWifiFree: ssidEntry.isWifiFree,
-            notes: ssidEntry.notes,
-            lastTested: ssidEntry.lastTested,
-            testCount: ssidEntry.testCount || 0,
-            source: 'wifiData.ssids'
-          });
+    // Helper to add/merge SSID into map
+    const addOrMergeSSID = (data: {
+      ssid: string;
+      isGuest?: boolean;
+      isPrimary?: boolean;
+      hasPassword?: boolean;
+      password?: string;
+      isWifiFree?: boolean;
+      notes?: string;
+      lastTested?: Date;
+      testCount?: number;
+      source: string;
+    }) => {
+      const existing = ssidMap.get(data.ssid);
+      if (existing) {
+        // Merge: prefer data with password, update lastTested, accumulate testCount
+        ssidMap.set(data.ssid, {
+          ...existing,
+          // Prefer password if available
+          hasPassword: existing.hasPassword || data.hasPassword,
+          password: existing.password || data.password,
+          // Prefer isWifiFree if defined
+          isWifiFree: existing.isWifiFree ?? data.isWifiFree,
+          // Keep notes if existing
+          notes: existing.notes || data.notes,
+          // Update lastTested to most recent
+          lastTested: (data.lastTested && existing.lastTested)
+            ? (new Date(data.lastTested) > new Date(existing.lastTested) ? data.lastTested : existing.lastTested)
+            : (data.lastTested || existing.lastTested),
+          // Accumulate test count
+          testCount: (existing.testCount || 0) + (data.testCount || 0),
+          // Keep isPrimary if set
+          isPrimary: existing.isPrimary || data.isPrimary,
+          // Update source if this one has password and existing doesn't
+          source: (data.password && !existing.password) ? data.source : existing.source,
+        });
+      } else {
+        ssidMap.set(data.ssid, data);
+      }
+    };
+
+    let venue: any = null;
+    let venueSource = 'not_found';
+    let venueName = '';
+
+    // ===== SOURCE 1: AgentVenueTemp (onboarding/temporary venues) =====
+    try {
+      venue = await AgentVenueTemp.findOne(query).lean();
+      if (venue) {
+        venueSource = 'agent_venue_temp';
+        venueName = venue.name || '';
+        console.log('📍 Found venue in AgentVenueTemp:', venue.name);
+      }
+    } catch (err) {
+      console.warn('⚠️ AgentVenueTemp query failed:', err);
+    }
+
+    // ===== SOURCE 2: VenueDubai (Dubai production venues) =====
+    if (!venue && isValidObjectId) {
+      try {
+        venue = await VenueDubai.findOne({
+          $or: [{ _id: venueId }, { venueId: venueId }]
+        }).lean();
+        if (venue) {
+          venueSource = 'venue_dubai';
+          venueName = venue.name || venue.AccountName || venue.Account_Name || '';
+          console.log('📍 Found venue in VenueDubai:', venueName);
+        }
+      } catch (err) {
+        console.warn('⚠️ VenueDubai query failed:', err);
+      }
+    }
+
+    // ===== SOURCE 3: Regional Venue models (TH, AE, IN) =====
+    if (!venue && isValidObjectId) {
+      try {
+        const VenueModel = getVenueModel(region as Region);
+        venue = await VenueModel.findOne({
+          $or: [{ _id: venueId }, { venueId: venueId }]
+        }).lean();
+        if (venue) {
+          venueSource = `venue_${region}`;
+          venueName = venue.name || venue.AccountName || venue.Account_Name || '';
+          console.log(`📍 Found venue in Venue (${region}):`, venueName);
+        }
+      } catch (err) {
+        console.warn('⚠️ Regional Venue query failed:', err);
+      }
+    }
+
+    // ===== Extract SSIDs from venue document if found =====
+    if (venue) {
+      // Source A: wifiData.ssids array (most comprehensive)
+      if (venue.wifiData?.ssids && Array.isArray(venue.wifiData.ssids)) {
+        venue.wifiData.ssids.forEach((ssidEntry: any) => {
+          if (ssidEntry.ssid) {
+            addOrMergeSSID({
+              ssid: ssidEntry.ssid,
+              isGuest: ssidEntry.isGuest || false,
+              isPrimary: ssidEntry.isPrimary || false,
+              hasPassword: ssidEntry.hasPassword ?? ssidEntry.hasWifiPassword ?? !!ssidEntry.password,
+              password: ssidEntry.password || undefined,
+              isWifiFree: ssidEntry.isWifiFree,
+              notes: ssidEntry.notes,
+              lastTested: ssidEntry.lastTested,
+              testCount: ssidEntry.testCount || 0,
+              source: 'wifiData.ssids'
+            });
+          }
+        });
+      }
+
+      // Source B: wifiData.ssid (single SSID field)
+      const wifiDataAny = venue.wifiData as any;
+      if (wifiDataAny?.ssid) {
+        addOrMergeSSID({
+          ssid: wifiDataAny.ssid,
+          hasPassword: !!wifiDataAny.password,
+          password: wifiDataAny.password || undefined,
+          isWifiFree: wifiDataAny.isWifiFree,
+          notes: wifiDataAny.note,
+          isPrimary: true,
+          testCount: 0,
+          source: 'wifiData.ssid'
+        });
+      }
+
+      // Source C: wifiData.latestSpeedTest.ssid
+      const latestTest = venue.wifiData?.latestSpeedTest as any;
+      if (latestTest?.ssid) {
+        addOrMergeSSID({
+          ssid: latestTest.ssid,
+          hasPassword: latestTest.hasWifiPassword || !!latestTest.wifiPassword,
+          isWifiFree: latestTest.isWifiFree,
+          lastTested: latestTest.testedAt,
+          testCount: 1,
+          source: 'latestSpeedTest'
+        });
+      }
+    }
+
+    // ===== SOURCE 4: Historical WifiSpeedTest records =====
+    // ALWAYS check WifiSpeedTest history for additional SSIDs (not just as fallback)
+    console.log('🔍 Checking WifiSpeedTest history for SSIDs...');
+    try {
+      // Build query that checks both string and ObjectId formats
+      const speedTestQuery: any = {
+        $or: [
+          { venueId: venueId },
+          { tempVenueId: venueId },
+        ]
+      };
+
+      // If venueId is a valid ObjectId, also check ObjectId version
+      if (isValidObjectId) {
+        speedTestQuery.$or.push(
+          { venueId: new mongoose.Types.ObjectId(venueId) },
+          { _id: venueId } // For speed tests linked directly
+        );
+      }
+
+      console.log('📋 WifiSpeedTest query:', JSON.stringify(speedTestQuery));
+
+      // Find all unique SSIDs from speed tests for this venue
+      const speedTestsWithSSID = await WifiSpeedTest.find({
+        ...speedTestQuery,
+        ssid: { $exists: true, $nin: [null, ''] }
+      })
+        .sort({ timestamp: -1 })
+        .limit(100)
+        .lean();
+
+      // Aggregate SSIDs with test counts from speed tests
+      const speedTestSSIDMap = new Map<string, {
+        ssid: string;
+        testCount: number;
+        lastTested: Date;
+        hasPassword: boolean;
+        password?: string;
+        isWifiFree?: boolean;
+      }>();
+
+      speedTestsWithSSID.forEach((test: any) => {
+        if (test.ssid) {
+          const existing = speedTestSSIDMap.get(test.ssid);
+          if (existing) {
+            existing.testCount++;
+            if (new Date(test.timestamp) > new Date(existing.lastTested)) {
+              existing.lastTested = test.timestamp;
+              // Update with most recent data
+              if (test.wifiPassword) existing.password = test.wifiPassword;
+              if (typeof test.isWifiFree === 'boolean') existing.isWifiFree = test.isWifiFree;
+            }
+          } else {
+            speedTestSSIDMap.set(test.ssid, {
+              ssid: test.ssid,
+              testCount: 1,
+              lastTested: test.timestamp,
+              hasPassword: !!test.wifiPassword,
+              password: test.wifiPassword || undefined,
+              isWifiFree: test.isWifiFree
+            });
+          }
         }
       });
-    }
 
-    // Source 2: wifiData.ssid (single SSID field) - cast to any for dynamic fields
-    const wifiDataAny = venue.wifiData as any;
-    if (wifiDataAny?.ssid && !ssids.some(s => s.ssid === wifiDataAny?.ssid)) {
-      ssids.push({
-        ssid: wifiDataAny.ssid,
-        hasPassword: !!wifiDataAny.password,
-        password: wifiDataAny.password || undefined,
-        isWifiFree: wifiDataAny.isWifiFree,
-        notes: wifiDataAny.note,
-        isPrimary: true,
-        source: 'wifiData.ssid'
+      // Merge speed test SSIDs into main map
+      speedTestSSIDMap.forEach((data) => {
+        addOrMergeSSID({
+          ssid: data.ssid,
+          hasPassword: data.hasPassword,
+          password: data.password,
+          isWifiFree: data.isWifiFree,
+          lastTested: data.lastTested,
+          testCount: data.testCount,
+          source: 'wifi_speed_tests'
+        });
       });
+
+      if (speedTestSSIDMap.size > 0) {
+        console.log(`📶 Merged ${speedTestSSIDMap.size} SSIDs from WifiSpeedTest history`);
+      }
+    } catch (err) {
+      console.warn('⚠️ WifiSpeedTest query failed:', err);
     }
 
-    // Source 3: wifiData.latestSpeedTest.ssid - cast to any for dynamic fields
-    const latestTest = venue.wifiData?.latestSpeedTest as any;
-    if (latestTest?.ssid && !ssids.some(s => s.ssid === latestTest?.ssid)) {
-      ssids.push({
-        ssid: latestTest.ssid,
-        hasPassword: latestTest.hasWifiPassword || false,
-        isWifiFree: latestTest.isWifiFree,
-        lastTested: latestTest.testedAt,
-        source: 'latestSpeedTest'
-      });
-    }
+    // Convert Map to array
+    const ssids = Array.from(ssidMap.values());
 
-    // Mark primary SSID if not already marked
+    // ===== Mark primary SSID if not already marked =====
     if (ssids.length > 0 && !ssids.some(s => s.isPrimary)) {
       // Prefer SSIDs with password or most recently tested
       const sortedSSIDs = [...ssids].sort((a, b) => {
@@ -701,19 +878,22 @@ export const getVenueSSIDs = async (req: AuthRequest, res: Response) => {
         return 0;
       });
       sortedSSIDs[0].isPrimary = true;
+      // Update original array
+      const primaryIdx = ssids.findIndex(s => s.ssid === sortedSSIDs[0].ssid);
+      if (primaryIdx >= 0) ssids[primaryIdx].isPrimary = true;
     }
 
-    console.log(`✅ Found ${ssids.length} SSIDs for venue:`, ssids.map(s => s.ssid));
+    console.log(`✅ Found ${ssids.length} SSIDs for venue (source: ${venueSource}):`, ssids.map(s => s.ssid));
 
     return res.json({
       success: true,
       data: {
         ssids,
         venueId,
-        venueName: venue.name,
-        hasWifiData: !!venue.wifiData,
+        venueName,
+        hasWifiData: ssids.length > 0,
         totalSSIDs: ssids.length,
-        source: 'agent_venue_temp'
+        source: venueSource
       }
     });
   } catch (error: any) {
