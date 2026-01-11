@@ -316,28 +316,32 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
 
     await speedTest.save();
 
-    // ✅✅✅ COMBINED: Update venue wifiData with BOTH password AND ssids array
-    if ((tempVenueId || finalVenueId) && finalSsid && !hasNoWifi) {
-      try {
-        // Determine which ID to use
-        const updateQuery: any = tempVenueId
-          ? { tempVenueId }
-          : { venueId: finalVenueId };
+    // ✅ PRODUCTION: Track credential sync status
+    let credentialsSynced = false;
+    let syncError: string | null = null;
 
-        // Use aggregation pipeline to do everything in ONE update
-        await AgentVenueTemp.findOneAndUpdate(
-          updateQuery,
-          [
-            // Stage 1: Initialize wifiData if null
+    // ✅✅✅ PRODUCTION: Update venue wifiData with retry logic
+    if ((tempVenueId || finalVenueId) && finalSsid && !hasNoWifi) {
+      // Determine which ID to use
+      const updateQuery: any = tempVenueId
+        ? { tempVenueId }
+        : { venueId: finalVenueId };
+
+      const venueIdentifier = tempVenueId || finalVenueId;
+
+      // ✅ PRODUCTION: Retry configuration
+      const MAX_RETRIES = 3;
+      const INITIAL_DELAY_MS = 500;
+
+      for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        try {
+          console.log(`🔄 Venue wifiData update attempt ${attempt}/${MAX_RETRIES} for venue: ${venueIdentifier}`);
+
+          // ✅ STEP 1: Update basic wifiData fields (simpler operation, more reliable)
+          const basicUpdateResult = await AgentVenueTemp.findOneAndUpdate(
+            updateQuery,
             {
               $set: {
-                wifiData: { $ifNull: ['$wifiData', {}] },
-              },
-            },
-            // Stage 2: Set all wifiData fields including password
-            {
-              $set: {
-                // ✅ Root-level wifiData fields (including password!)
                 'wifiData.ssid': finalSsid,
                 'wifiData.password': wifiPassword || null,
                 'wifiData.security': wifiPassword ? (wifiSecurity || 'WPA2') : null,
@@ -348,8 +352,6 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
                 'wifiData.hasSpeedTest': true,
                 'wifiData.latestQualityScore': qualityScore,
                 'wifiData.latestCategory': category,
-
-                // ✅ Latest speed test info
                 'wifiData.latestSpeedTest': {
                   downloadMbps: parsedDownload,
                   uploadMbps: parsedUpload,
@@ -371,112 +373,113 @@ export const submitSpeedTest = async (req: AuthRequest, res: Response) => {
                   hasNoWifi: !!hasNoWifi,
                   mobileNetworkInfo: mobileNetworkInfo || undefined,
                 },
-
-                // ✅ SSIDs array (track multiple networks)
-                'wifiData.ssids': {
-                  $let: {
-                    vars: {
-                      existing: { $ifNull: ['$wifiData.ssids', []] },
-                    },
-                    in: {
-                      $cond: {
-                        // Does SSID already exist?
-                        if: {
-                          $gt: [
-                            {
-                              $size: {
-                                $filter: {
-                                  input: '$$existing',
-                                  as: 's',
-                                  cond: { $eq: ['$$s.ssid', finalSsid] },
-                                },
-                              },
-                            },
-                            0,
-                          ],
-                        },
-                        // Update existing SSID
-                        then: {
-                          $map: {
-                            input: '$$existing',
-                            as: 's',
-                            in: {
-                              $cond: [
-                                { $eq: ['$$s.ssid', finalSsid] },
-                                {
-                                  ssid: '$$s.ssid',
-                                  isVenueWifi: isVenueWifi,
-                                  lastTested: new Date(),
-                                  testCount: { $add: ['$$s.testCount', 1] },
-                                  isWifiFree: !!isWifiFree,
-                                  hasWifiPassword: !!wifiPassword,
-                                  displayMethod: displayMethod || 'unknown',
-                                  displayLocation,
-                                  peopleCount: parsedPeopleCount,
-                                  zoneInfo: finalZoneInfo,
-                                  zoneId: finalZoneId,
-                                  zoneName: finalZoneName,
-                                  hasNoWifi: !!hasNoWifi,
-                                  mobileNetworkInfo: mobileNetworkInfo || undefined,
-                                },
-                                '$$s',
-                              ],
-                            },
-                          },
-                        },
-                        // Add new SSID
-                        else: {
-                          $concatArrays: [
-                            '$$existing',
-                            [
-                              {
-                                ssid: finalSsid,
-                                isVenueWifi: isVenueWifi,
-                                lastTested: new Date(),
-                                testCount: 1,
-                                isWifiFree: !!isWifiFree,
-                                hasWifiPassword: !!wifiPassword,
-                                displayMethod: displayMethod || 'unknown',
-                                displayLocation,
-                                peopleCount: parsedPeopleCount,
-                                zoneInfo: finalZoneInfo,
-                                zoneId: finalZoneId,
-                                zoneName: finalZoneName,
-                                hasNoWifi: !!hasNoWifi,
-                                mobileNetworkInfo: mobileNetworkInfo || undefined,
-                              },
-                            ],
-                          ],
-                        },
-                      },
-                    },
-                  },
-                },
               },
             },
-          ]
-        );
+            {
+              new: true,
+              upsert: false,
+              runValidators: false // Skip validation for speed
+            }
+          );
 
-        console.log('✅✅✅ WiFi credentials saved to venue document:', {
-          venueId: tempVenueId || finalVenueId,
-          ssid: finalSsid,
-          hasPassword: !!wifiPassword,
-          isWifiFree,
-          password: wifiPassword ? '***' : 'none',
-          qualityScore,
-          category
-        });
-      } catch (venueUpdateError) {
-        console.error('⚠️ Failed to update venue with WiFi credentials:', venueUpdateError);
-        // Continue anyway - speed test is already saved
+          if (!basicUpdateResult) {
+            throw new Error(`Venue not found: ${venueIdentifier}`);
+          }
+
+          // ✅ STEP 2: Update SSIDs array (separate operation for reliability)
+          const existingSsids = basicUpdateResult.wifiData?.ssids || [];
+          const ssidIndex = existingSsids.findIndex((s: any) => s.ssid === finalSsid);
+
+          // Get existing test count (cast to any since testCount may not be in type definition)
+          const existingTestCount = ssidIndex >= 0 ? ((existingSsids[ssidIndex] as any).testCount || 0) : 0;
+
+          const newSsidEntry = {
+            ssid: finalSsid,
+            isVenueWifi: isVenueWifi,
+            lastTested: new Date(),
+            testCount: existingTestCount + 1,
+            isWifiFree: !!isWifiFree,
+            hasWifiPassword: !!wifiPassword,
+            displayMethod: displayMethod || 'unknown',
+            displayLocation,
+            peopleCount: parsedPeopleCount,
+            zoneInfo: finalZoneInfo,
+            zoneId: finalZoneId,
+            zoneName: finalZoneName,
+            hasNoWifi: !!hasNoWifi,
+            mobileNetworkInfo: mobileNetworkInfo || undefined,
+          };
+
+          let ssidUpdateOperation;
+          if (ssidIndex >= 0) {
+            // Update existing SSID entry
+            ssidUpdateOperation = {
+              $set: { [`wifiData.ssids.${ssidIndex}`]: newSsidEntry }
+            };
+          } else {
+            // Add new SSID entry
+            ssidUpdateOperation = {
+              $push: { 'wifiData.ssids': newSsidEntry }
+            };
+          }
+
+          await AgentVenueTemp.findOneAndUpdate(
+            updateQuery,
+            ssidUpdateOperation,
+            { runValidators: false }
+          );
+
+          credentialsSynced = true;
+          console.log('✅✅✅ WiFi credentials saved to venue document:', {
+            venueId: venueIdentifier,
+            ssid: finalSsid,
+            hasPassword: !!wifiPassword,
+            isWifiFree,
+            password: wifiPassword ? '***' : 'none',
+            qualityScore,
+            category,
+            attempt
+          });
+
+          // Success - exit retry loop
+          break;
+
+        } catch (venueUpdateError: any) {
+          syncError = venueUpdateError.message || 'Unknown error';
+          console.error(`⚠️ Venue update attempt ${attempt}/${MAX_RETRIES} failed:`, {
+            venueId: venueIdentifier,
+            ssid: finalSsid,
+            error: syncError,
+            errorCode: venueUpdateError.code,
+          });
+
+          if (attempt < MAX_RETRIES) {
+            // Exponential backoff: 500ms, 1000ms, 2000ms
+            const delayMs = INITIAL_DELAY_MS * Math.pow(2, attempt - 1);
+            console.log(`⏳ Retrying in ${delayMs}ms...`);
+            await new Promise(resolve => setTimeout(resolve, delayMs));
+          } else {
+            console.error('❌ All venue update attempts failed:', {
+              venueId: venueIdentifier,
+              ssid: finalSsid,
+              totalAttempts: MAX_RETRIES,
+              lastError: syncError
+            });
+          }
+        }
       }
     }
 
-    console.log(`✅ WiFi speed test saved: ${speedTest.testId}, SSID: ${finalSsid}, Zone: ${finalZoneName || 'None'}, Mobile Network: ${mobileNetworkInfo?.carrier || 'None'}, Quality Score: ${qualityScore} (${category})`);
+    console.log(`✅ WiFi speed test saved: ${speedTest.testId}, SSID: ${finalSsid}, Zone: ${finalZoneName || 'None'}, Mobile Network: ${mobileNetworkInfo?.carrier || 'None'}, Quality Score: ${qualityScore} (${category}), Credentials Synced: ${credentialsSynced}`);
 
+    // ✅ PRODUCTION: Return detailed status including credential sync result
     return res.status(201).json({
       success: true,
-      message: 'Speed test submitted successfully',
+      message: credentialsSynced
+        ? 'Speed test submitted and credentials saved successfully'
+        : 'Speed test submitted but credential sync failed',
+      credentialsSynced,
+      syncError: credentialsSynced ? null : syncError,
       data: speedTest
     });
   } catch (error: any) {
