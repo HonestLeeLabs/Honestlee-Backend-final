@@ -109,10 +109,9 @@ export const getAllEvents = async (req: StaffRequest, res: Response, next?: Next
     const limitNum = parseInt(limit as string);
     const skip = (pageNum - 1) * limitNum;
 
-    // Execute query with pagination
-    const [events, totalCount] = await Promise.all([
+    // Execute query with pagination (removed bad populate)
+    const [eventsRaw, totalCount] = await Promise.all([
       Event.find(query)
-        .populate('venueId', 'AccountName BillingStreet BillingCity BillingDistrict geometry venuecategory')
         .populate('createdBy', 'name email')
         .sort({ [sortBy as string]: 1 })
         .skip(skip)
@@ -120,6 +119,31 @@ export const getAllEvents = async (req: StaffRequest, res: Response, next?: Next
         .lean(),
       Event.countDocuments(query)
     ]);
+
+    // ✅ NEW: Manually populate venue details from regional database
+    const regionalConnection = dbManager.getConnection(region);
+    const RegionalVenue = regionalConnection.model('Venue', Venue.schema);
+
+    // Extract venue IDs
+    const venueIds = eventsRaw
+      .map(e => e.venueId)
+      .filter(id => id && mongoose.Types.ObjectId.isValid(id.toString()));
+
+    // Fetch venues
+    const venues = await RegionalVenue.find({ _id: { $in: venueIds } })
+      .select('AccountName BillingStreet BillingCity BillingDistrict geometry venuecategory')
+      .lean();
+
+    // Create map for O(1) lookup
+    const venueMap = new Map(venues.map(v => [v._id.toString(), v]));
+
+    // Attach venue details to events
+    const events = eventsRaw.map((event: any) => {
+      if (event.venueId && venueMap.has(event.venueId.toString())) {
+        event.venueId = venueMap.get(event.venueId.toString());
+      }
+      return event;
+    });
 
     console.log(`✅ Found ${events.length} events (total: ${totalCount}) in region ${region}`);
 
@@ -161,28 +185,28 @@ export const getEventsByVenue = async (req: StaffRequest, res: Response, next?: 
 
     // ✅ FIXED: Try to find venue by ID first, then by name
     let venue;
-    
+
     // Check if venueId is a valid MongoDB ObjectId
     if (mongoose.Types.ObjectId.isValid(venueId)) {
       venue = await RegionalVenue.findById(venueId);
       console.log(`🔍 Searching by ObjectId: ${venueId}`);
     }
-    
+
     // If not found by ID, try searching by name
     if (!venue) {
       console.log(`🔍 Searching by name: ${venueId}`);
-      venue = await RegionalVenue.findOne({ 
+      venue = await RegionalVenue.findOne({
         AccountName: { $regex: new RegExp(`^${venueId}$`, 'i') }
       });
     }
 
     if (!venue) {
       console.log('❌ Venue not found:', venueId);
-      return res.json({ 
-        success: true, 
-        data: { 
-          events: [], 
-          eventCount: 0 
+      return res.json({
+        success: true,
+        data: {
+          events: [],
+          eventCount: 0
         },
         message: 'Venue not found',
         region
@@ -192,11 +216,19 @@ export const getEventsByVenue = async (req: StaffRequest, res: Response, next?: 
     console.log(`✅ Venue found: ${venue._id} (${venue.AccountName})`);
 
     // Build query using venue's ObjectId
-    const query: any = { 
-      venueId: venue._id,
-      region
+    // Build query using venue's ObjectId
+    const query: any = {
+      region,
+      $or: [
+        { venueId: venue._id }
+      ]
     };
-    
+
+    // ✅ Include events created by owner but missing venueId (fallback)
+    if (venue.ownerId) {
+      query.$or.push({ venueId: null, createdBy: venue.ownerId });
+    }
+
     if (activeOnly === 'true') {
       query.isActive = true;
     }
@@ -214,10 +246,10 @@ export const getEventsByVenue = async (req: StaffRequest, res: Response, next?: 
 
     console.log(`✅ Found ${events.length} events for venue ${venue.AccountName}`);
 
-    res.json({ 
-      success: true, 
-      data: { 
-        events, 
+    res.json({
+      success: true,
+      data: {
+        events,
         eventCount: events.length,
         venue: {
           id: venue._id,
@@ -229,10 +261,10 @@ export const getEventsByVenue = async (req: StaffRequest, res: Response, next?: 
 
   } catch (error: any) {
     console.error('❌ Error fetching venue events:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Error fetching venue events', 
-      error: error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching venue events',
+      error: error.message
     });
   }
 };
@@ -245,12 +277,27 @@ export const getEventById = async (req: StaffRequest, res: Response, next?: Next
 
     console.log(`📋 Fetching event ${id} from region ${region}`);
 
-    const event = await Event.findById(id)
-      .populate('venueId')
-      .populate('createdBy', 'name email');
-      
-    if (!event) {
+    const eventRaw = await Event.findById(id)
+      .populate('createdBy', 'name email')
+      .lean();
+
+    if (!eventRaw) {
       return res.status(404).json({ success: false, message: 'Event not found' });
+    }
+
+    // ✅ NEW: Manually populate venue
+    const event = eventRaw as any;
+    if (event.venueId) {
+      const regionalConnection = dbManager.getConnection(region);
+      const RegionalVenue = regionalConnection.model('Venue', Venue.schema);
+
+      const venue = await RegionalVenue.findById(event.venueId)
+        .select('AccountName BillingStreet BillingCity BillingDistrict geometry venuecategory')
+        .lean();
+
+      if (venue) {
+        event.venueId = venue;
+      }
     }
 
     res.json({ success: true, data: event, region });
@@ -273,7 +320,7 @@ export const getUpcomingEvents = async (req: StaffRequest, res: Response, next?:
     const RegionalVenue = regionalConnection.model('Venue', Venue.schema);
 
     let venueQuery: any = { isActive: true };
-    
+
     // Find venues within radius if location provided
     if (lat && lng) {
       venueQuery.geometry = {
@@ -314,11 +361,30 @@ export const getUpcomingEvents = async (req: StaffRequest, res: Response, next?:
     if (startDate) eventQuery.eventStartsAt = { $gte: new Date(startDate as string) };
     if (endDate) eventQuery.eventEndsAt = { $lte: new Date(endDate as string) };
 
-    const events = await Event.find(eventQuery)
-      .populate('venueId', 'AccountName BillingStreet BillingCity geometry venuecategory')
+    const eventsRaw = await Event.find(eventQuery)
       .populate('createdBy', 'name')
       .sort({ eventStartsAt: 1 })
-      .limit(50);
+      .limit(50)
+      .lean();
+
+    // ✅ NEW: Manually populate venues for upcoming events
+    // We already have venueIds from the initial location search, but let's fetch only the ones actually used
+    const usedVenueIds = eventsRaw
+      .map(e => e.venueId)
+      .filter(id => id && mongoose.Types.ObjectId.isValid(id.toString()));
+
+    const usedVenues = await RegionalVenue.find({ _id: { $in: usedVenueIds } })
+      .select('AccountName BillingStreet BillingCity geometry venuecategory')
+      .lean();
+
+    const venueMap = new Map(usedVenues.map(v => [v._id.toString(), v]));
+
+    const events = eventsRaw.map((event: any) => {
+      if (event.venueId && venueMap.has(event.venueId.toString())) {
+        event.venueId = venueMap.get(event.venueId.toString());
+      }
+      return event;
+    });
 
     console.log(`✅ Found ${events.length} upcoming events`);
 
@@ -331,10 +397,10 @@ export const getUpcomingEvents = async (req: StaffRequest, res: Response, next?:
 
   } catch (error: any) {
     console.error('❌ Error fetching upcoming events:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Error fetching events', 
-      error: error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching events',
+      error: error.message
     });
   }
 };
@@ -350,9 +416,9 @@ export const createEvent = async (req: StaffRequest, res: Response, next?: NextF
     const region = (req.region || 'ae') as Region;
     const eventData = req.body;
 
-    console.log(`✏️ Creating event (region: ${region}):`, { 
-      venueId: eventData.venueId, 
-      eventName: eventData.eventName 
+    console.log(`✏️ Creating event (region: ${region}):`, {
+      venueId: eventData.venueId,
+      eventName: eventData.eventName
     });
 
     // ✅ Handle images from multer S3 upload
@@ -372,9 +438,9 @@ export const createEvent = async (req: StaffRequest, res: Response, next?: NextF
           if (key) await deleteFileFromS3(key);
         }
       }
-      return res.status(404).json({ 
+      return res.status(404).json({
         success: false,
-        message: `Venue not found in region ${region}` 
+        message: `Venue not found in region ${region}`
       });
     }
 
@@ -390,7 +456,7 @@ export const createEvent = async (req: StaffRequest, res: Response, next?: NextF
 
     eventData.region = region;
     eventData.images = images.length > 0 ? images : []; // ✅ Add images array
-    
+
     // Keep first image as imageUrl for backward compatibility
     if (images.length > 0 && !eventData.imageUrl) {
       eventData.imageUrl = images[0];
@@ -408,7 +474,7 @@ export const createEvent = async (req: StaffRequest, res: Response, next?: NextF
 
   } catch (error: any) {
     console.error('❌ Error creating event:', error);
-    
+
     // ✅ Clean up uploaded images on error
     const files = (req as any).files;
     if (files && files.length > 0) {
@@ -417,11 +483,11 @@ export const createEvent = async (req: StaffRequest, res: Response, next?: NextF
         if (key) await deleteFileFromS3(key);
       }
     }
-    
-    res.status(400).json({ 
-      success: false, 
-      message: 'Error creating event', 
-      error: error.message 
+
+    res.status(400).json({
+      success: false,
+      message: 'Error creating event',
+      error: error.message
     });
   }
 };
@@ -441,7 +507,7 @@ export const updateEvent = async (req: StaffRequest, res: Response, next?: NextF
 
     // ✅ Handle new images from multer
     const newImages = (req as any).files?.map((file: any) => file.location) || [];
-    
+
     // Recalculate duration if dates changed
     if (updates.eventStartsAt && updates.eventEndsAt) {
       const start = new Date(updates.eventStartsAt);
@@ -475,8 +541,8 @@ export const updateEvent = async (req: StaffRequest, res: Response, next?: NextF
     }
 
     const updatedEvent = await Event.findByIdAndUpdate(
-      id, 
-      updates, 
+      id,
+      updates,
       { new: true, runValidators: true }
     );
 
@@ -486,10 +552,10 @@ export const updateEvent = async (req: StaffRequest, res: Response, next?: NextF
 
   } catch (error: any) {
     console.error('❌ Error updating event:', error);
-    res.status(400).json({ 
-      success: false, 
-      message: 'Error updating event', 
-      error: error.message 
+    res.status(400).json({
+      success: false,
+      message: 'Error updating event',
+      error: error.message
     });
   }
 };
@@ -507,7 +573,7 @@ export const deleteEvent = async (req: StaffRequest, res: Response, next?: NextF
     console.log(`🗑️ Deactivating event ${id} in region ${region}`);
 
     const event = await Event.findById(id);
-    
+
     if (!event) {
       return res.status(404).json({ success: false, message: 'Event not found' });
     }
@@ -535,10 +601,10 @@ export const deleteEvent = async (req: StaffRequest, res: Response, next?: NextF
 
   } catch (error: any) {
     console.error('❌ Error deleting event:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Error deleting event', 
-      error: error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Error deleting event',
+      error: error.message
     });
   }
 };
@@ -574,8 +640,8 @@ export const registerForEvent = async (req: StaffRequest, res: Response, next?: 
 
     console.log(`✅ User registered for event: ${id}`);
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       message: 'Successfully registered for event',
       data: event,
       region
