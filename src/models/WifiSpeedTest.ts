@@ -64,7 +64,7 @@ export interface IWifiSpeedTest extends Document {
   region: string;
 
   // NEW contextual fields
-  displayMethod?: 'signage' | 'tablets' | 'pamphlets' | 'verbal' | 'none' | 'other' | 'unknown';
+  displayMethod?: 'signage' | 'tablets' | 'pamphlets' | 'verbal' | 'none' | 'other' | 'unknown' | 'credentials_only';
   displayLocation?: string;
   peopleCount?: number;
   zoneInfo?: {
@@ -163,7 +163,7 @@ const WifiSpeedTestSchema = new Schema<IWifiSpeedTest>({
   // NEW contextual fields
   displayMethod: {
     type: String,
-    enum: ['signage', 'tablets', 'pamphlets', 'verbal', 'none', 'other', 'unknown'],
+    enum: ['signage', 'tablets', 'pamphlets', 'verbal', 'none', 'other', 'unknown', 'credentials_only'],
     default: 'unknown'
   },
   displayLocation: String,
