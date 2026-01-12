@@ -15,7 +15,7 @@ export interface IWifiSpeedTest extends Document {
   packetLoss?: number;
 
   // Connection Info
-  connectionType?: 'wifi' | '4g' | '5g' | 'ethernet' | 'credentials_save' | 'unknown';
+  connectionType?: 'wifi' | '4g' | '5g' | 'ethernet' | 'cellular' | 'bluetooth' | 'none' | 'wimax' | 'other' | 'mixed' | 'credentials_save' | 'unknown';
   ssid?: string;
   bssid?: string;
   signalStrength?: number; // dBm
@@ -105,7 +105,7 @@ const WifiSpeedTestSchema = new Schema<IWifiSpeedTest>({
 
   connectionType: {
     type: String,
-    enum: ['wifi', '4g', '5g', 'ethernet', 'credentials_save', 'unknown'],
+    enum: ['wifi', '4g', '5g', 'ethernet', 'cellular', 'bluetooth', 'none', 'wimax', 'other', 'mixed', 'credentials_save', 'unknown'],
     default: 'unknown'
   },
   ssid: String,
