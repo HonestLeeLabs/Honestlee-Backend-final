@@ -371,7 +371,10 @@ export const generateWiFiToken = async (req: AuthRequest, res: Response) => {
     });
 
     // Generate deep link
-    const deepLink = `honestlee://wifi/join?token=${token}`;
+    // Generate deep link (App Link for Instant App support)
+    // ✅ Use th.honestlee.app for Thailand region (matches assetlinks.json)
+    const host = region === 'th' ? 'th.honestlee.app' : 'honestlee.app';
+    const deepLink = `https://${host}/wifi/join?token=${token}`;
 
     console.log('✅ WiFi token generated successfully:', {
       venueName: venueName,
