@@ -13,6 +13,7 @@ import mongoose from 'mongoose';
 import { v4 as uuidv4 } from 'uuid';
 import { AuthRequest } from '../middlewares/authMiddleware';
 import Venue from '../models/Venue';
+import Event from '../models/Event'; // ✅ Add Event model import
 
 const router = Router();
 
@@ -24,15 +25,15 @@ router.use(detectRegion);
 // ✅ Add CloudFront URL transformation helper function
 const getCloudFrontUrl = (s3Url: string): string => {
   if (!s3Url) return '';
-  
+
   const cloudFrontDomain = process.env.CLOUDFRONT_DOMAIN || 'd2j8mu1uew5u3d.cloudfront.net';
   const s3BucketDomain = process.env.S3_BUCKET_NAME || 'honestlee-user-upload';
-  
+
   // Replace S3 URL with CloudFront URL
   if (s3Url.includes('.s3.') || s3Url.includes('.amazonaws.com')) {
     // Extract the S3 key (path after bucket name)
     const s3Key = s3Url.split('.com/')[1] || s3Url.split(`${s3BucketDomain}/`)[1];
-    
+
     if (s3Key) {
       const cloudFrontUrl = `https://${cloudFrontDomain}/${s3Key}`;
       console.log(`🔄 Transformed S3 URL to CloudFront:`, {
@@ -42,7 +43,7 @@ const getCloudFrontUrl = (s3Url: string): string => {
       return cloudFrontUrl;
     }
   }
-  
+
   // Already a CloudFront URL or unknown format
   return s3Url;
 };
@@ -59,15 +60,15 @@ router.post('/events/upload-photo', uploadVenueMediaDirect.single('eventPhoto'),
 
     // ✅ FIX: Remove duplicate https:// prefix
     let cloudFrontUrl = file.location;
-    
+
     // If it's an S3 URL, transform it to CloudFront
     if (cloudFrontUrl && cloudFrontUrl.includes('.s3.')) {
       const cloudFrontDomain = process.env.CLOUDFRONT_DOMAIN || 'dedllwce1iasg.cloudfront.net';
       const s3BucketDomain = process.env.S3_BUCKET_NAME || 'honestlee-user-upload';
-      
+
       // Extract the S3 key (path after bucket name)
       const s3Key = cloudFrontUrl.split('.com/')[1] || cloudFrontUrl.split(`${s3BucketDomain}/`)[1];
-      
+
       if (s3Key) {
         cloudFrontUrl = `https://${cloudFrontDomain}/${s3Key}`;
       }
@@ -118,7 +119,7 @@ router.post(
 
 
       const file = req.file as any;
-      
+
       // ✅ Transform S3 URL to CloudFront URL
       const cloudFrontUrl = getCloudFrontUrl(file.location);
 
@@ -130,7 +131,7 @@ router.post(
         size: `${(file.size / 1024).toFixed(2)} KB`,
         mimetype: file.mimetype,
       });
-      
+
       return res.json({
         success: true,
         data: {
@@ -321,9 +322,9 @@ const getVenueZonesWithCloudFront = async (req: any, res: Response) => {
 
 
     // Override res.json to intercept the response
-    res.json = function(data: any) {
+    res.json = function (data: any) {
       responseData = data;
-      
+
       if (responseData.success && responseData.data) {
         // ✅ Transform all zone photo URLs to CloudFront
         if (Array.isArray(responseData.data)) {
@@ -336,15 +337,15 @@ const getVenueZonesWithCloudFront = async (req: any, res: Response) => {
             }
             return zone;
           });
-          
+
           responseData.data = zonesWithCloudFront;
           responseData.count = zonesWithCloudFront.length;
         }
       }
-      
+
       return originalSend.call(this, responseData);
     };
-    
+
     await agentController.getVenueZones(req, res);
   } catch (error: any) {
     console.error("Error fetching zones with CloudFront transformation:", error);
@@ -433,7 +434,7 @@ router.get('/public/venues/:venueId/events', async (req: Request, res: Response)
     console.log('📡 [PUBLIC] Fetching events for venue:', venueId);
 
     // Find the venue in AgentVenueTemp to get the actual venue ID
-    const tempVenue = await AgentVenueTemp.findOne({ 
+    const tempVenue = await AgentVenueTemp.findOne({
       $or: [
         { tempVenueId: venueId },
         { venueId: new mongoose.Types.ObjectId(venueId) }
@@ -450,14 +451,14 @@ router.get('/public/venues/:venueId/events', async (req: Request, res: Response)
     } else {
       // Try to find venue in regional database
       console.log('⚠️ No temp venue found, searching in regional databases');
-      
+
       // Try each region
       for (const reg of ['th', 'ae', 'in']) {
         try {
           const regionalConnection = dbManager.getConnection(reg as any);
-          const RegionalVenue = regionalConnection.models.Venue || 
-                               regionalConnection.model('Venue', Venue.schema);
-          
+          const RegionalVenue = regionalConnection.models.Venue ||
+            regionalConnection.model('Venue', Venue.schema);
+
           const venue = await RegionalVenue.findById(venueId);
           if (venue) {
             region = reg;
@@ -472,16 +473,16 @@ router.get('/public/venues/:venueId/events', async (req: Request, res: Response)
 
     // Get regional connection
     const regionalConnection = dbManager.getConnection(region);
-    const Event = regionalConnection.models.Event || 
-                  regionalConnection.model('Event', mongoose.model('Event').schema);
+    const Event = regionalConnection.models.Event ||
+      regionalConnection.model('Event', mongoose.model('Event').schema);
 
     // Build query
     const query: any = { venueId: new mongoose.Types.ObjectId(actualVenueId) };
-    
+
     if (upcoming === 'true') {
       query.eventStartsAt = { $gte: new Date() };
     }
-    
+
     if (isActive === 'true') {
       query.isActive = true;
     }
@@ -539,11 +540,11 @@ router.get('/venues/:tempVenueId/events', async (req: AuthRequest, res: Response
     // Connect to regional DB
     const regionalConnection = dbManager.getConnection(region);
 
-    // Get Event model from regional DB
-    const Event = regionalConnection.model('Event');
+    // ✅ FIXED: Get Event model from regional DB with proper schema registration
+    const RegionalEvent = regionalConnection.models.Event || regionalConnection.model('Event', Event.schema);
 
     // Fetch events for this venue
-    const events = await Event.find({ venueId: venueId })
+    const events = await RegionalEvent.find({ venueId: venueId })
       .sort({ eventStartsAt: 1 })
       .lean();
 
@@ -595,7 +596,7 @@ router.post('/venues/:tempVenueId/events', async (req: AuthRequest, res: Respons
       const region = (tempVenue.region || 'th') as any;
       const regionalConnection = dbManager.getConnection(region);
       const RegionalVenue = regionalConnection.models.Venue || regionalConnection.model('Venue', Venue.schema);
-      
+
       const newVenue = new RegionalVenue({
         globalId: tempVenue.tempVenueId,
         AccountName: tempVenue.name,
@@ -614,7 +615,7 @@ router.post('/venues/:tempVenueId/events', async (req: AuthRequest, res: Respons
         isVerified: false,
         ownerId: req.user.userId ? new mongoose.Types.ObjectId(req.user.userId) : undefined
       });
-      
+
       await newVenue.save();
       venueId = newVenue._id as mongoose.Types.ObjectId;
       tempVenue.venueId = venueId;
@@ -634,11 +635,11 @@ router.post('/venues/:tempVenueId/events', async (req: AuthRequest, res: Respons
 
     let timeSlots = eventData.timeSlots;
     if (typeof timeSlots === 'string') {
-      try { 
-        timeSlots = JSON.parse(timeSlots); 
-      } catch (e) { 
+      try {
+        timeSlots = JSON.parse(timeSlots);
+      } catch (e) {
         console.warn('⚠️ Invalid timeSlots JSON:', e);
-        timeSlots = undefined; 
+        timeSlots = undefined;
       }
     }
 
@@ -662,7 +663,7 @@ router.post('/venues/:tempVenueId/events', async (req: AuthRequest, res: Respons
       eventType: eventData.eventType || 'ETC1_entertainment',
       eventTypeSlug: eventData.eventTypeSlug,
       eventCategory: eventData.eventCategory,
-      
+
       // Source & Origin
       sourceEventId: eventData.sourceEventId,
       sourceName: eventData.sourceName,
@@ -670,7 +671,7 @@ router.post('/venues/:tempVenueId/events', async (req: AuthRequest, res: Respons
       venueSourceId: eventData.venueSourceId,
       eventOriginType: eventData.eventOriginType || 'MANUAL',
       eventExclusivity: eventData.eventExclusivity,
-      
+
       // DateTime
       eventStartsAt: new Date(eventData.eventStartsAt),
       eventEndsAt: new Date(eventData.eventEndsAt),
@@ -678,7 +679,7 @@ router.post('/venues/:tempVenueId/events', async (req: AuthRequest, res: Respons
       eventTimezone: eventData.eventTimezone || 'Asia/Bangkok',
       allDay: eventData.allDay || false,
       doorsOpenAt: eventData.doorsOpenAt ? new Date(eventData.doorsOpenAt) : undefined,
-      
+
       // Recurrence
       eventRecurrence: eventData.eventRecurrence || 'NONE',
       recurrenceText: eventData.recurrenceText,
@@ -687,22 +688,22 @@ router.post('/venues/:tempVenueId/events', async (req: AuthRequest, res: Respons
       isException: eventData.isException || false,
       daysOfWeek: daysOfWeek,
       timeSlots: timeSlots,
-      
+
       // Participation
       participationModePrimary: eventData.participationModePrimary || 'DO',
       participationModesSecondary: participationModesSecondary,
-      
+
       // Audience
       eventGender: eventData.eventGender,
       ageMin: eventData.ageMin ? parseInt(eventData.ageMin) : undefined,
       ageMax: eventData.ageMax ? parseInt(eventData.ageMax) : undefined,
       eventFamilyFriendly: eventData.eventFamilyFriendly || false,
       eventAgeRestriction: eventData.eventAgeRestriction,
-      
+
       // Skill & Intensity
       eventSkillLevel: eventData.eventSkillLevel,
       eventIntensity: eventData.eventIntensity,
-      
+
       // Location
       eventIndoorOutdoor: eventData.eventIndoorOutdoor || 'INDOOR',
       accessibilityNotes: eventData.accessibilityNotes,
@@ -715,19 +716,19 @@ router.post('/venues/:tempVenueId/events', async (req: AuthRequest, res: Respons
       lat: eventData.lat ? parseFloat(eventData.lat) : undefined,
       lng: eventData.lng ? parseFloat(eventData.lng) : undefined,
       eventLocationDirections: eventData.eventLocationDirections,
-      
+
       // Pricing
       priceType: eventData.priceType || 'FREE',
       eventPriceFrom: eventData.eventPriceFrom ? parseFloat(eventData.eventPriceFrom) : 0,
       eventPriceMax: eventData.eventPriceMax ? parseFloat(eventData.eventPriceMax) : undefined,
       eventCurrency: eventData.eventCurrency || 'THB',
       priceNotes: eventData.priceNotes, // ✅ "Includes 1 drink", "Early bird", etc.
-      
+
       // Capacity
       capacity: eventData.capacity ? parseInt(eventData.capacity) : undefined,
       ticketsAvailable: eventData.ticketsAvailable ? parseInt(eventData.ticketsAvailable) : 0,
       currentAttendees: 0,
-      
+
       // RSVP/Booking
       rsvpRequired: eventData.rsvpRequired || false,
       rsvpMethod: eventData.rsvpMethod, // ✅ "Walk-in", "WhatsApp", "LINE", etc.
@@ -735,25 +736,25 @@ router.post('/venues/:tempVenueId/events', async (req: AuthRequest, res: Respons
       bookingUrl: eventData.bookingUrl,
       ticketUrl: eventData.ticketUrl,
       ticketProvider: eventData.ticketProvider,
-      
+
       // Team/Players
       playersPerSide: eventData.playersPerSide ? parseInt(eventData.playersPerSide) : undefined,
       teamSizeTotal: eventData.teamSizeTotal ? parseInt(eventData.teamSizeTotal) : undefined,
       minPlayers: eventData.minPlayers ? parseInt(eventData.minPlayers) : undefined,
       maxPlayers: eventData.maxPlayers ? parseInt(eventData.maxPlayers) : undefined,
       formatNotes: eventData.formatNotes,
-      
+
       // Status
       status: eventData.status || 'SCHEDULED',
       visibility: eventData.visibility || 'PUBLIC',
       isActive: eventData.isActive !== undefined ? eventData.isActive : true,
       cancellationReason: eventData.cancellationReason, // ✅ "Weather", "Low signups", etc.
       cancelledAt: eventData.cancelledAt ? new Date(eventData.cancelledAt) : undefined, // ✅
-      
+
       // Weather
       weatherSensitive: eventData.weatherSensitive || false,
       badWeatherPolicy: eventData.badWeatherPolicy,
-      
+
       // Organizer
       organizerName: eventData.organizerName,
       organizerType: eventData.organizerType,
@@ -762,27 +763,27 @@ router.post('/venues/:tempVenueId/events', async (req: AuthRequest, res: Respons
       organizerLine: eventData.organizerLine,
       organizerInstagram: eventData.organizerInstagram,
       organizerEmail: eventData.organizerEmail,
-      
+
       // Media
       imageUrl: eventData.imageUrl,
       images: eventData.images || [],
       coverPhotoUrl: eventData.coverPhotoUrl,
       eventPhotoUrl: eventData.eventPhotoUrl,
       eventPhotoS3Key: eventData.eventPhotoS3Key,
-      
+
       // Gear
       eventsGear: eventData.eventsGear,
-      
+
       // Check-in
       checkInMethod: eventData.checkInMethod,
       onPremiseRequired: eventData.onPremiseRequired || false,
-      
+
       // Verification
       lastVerifiedAt: eventData.lastVerifiedAt ? new Date(eventData.lastVerifiedAt) : undefined,
       verifiedBy: eventData.verifiedBy,
       confidenceScore: eventData.confidenceScore ? parseFloat(eventData.confidenceScore) : 0,
       notesInternal: eventData.notesInternal,
-      
+
       // Meta
       tags: tags || [],
       language: eventData.language || 'en',
@@ -804,17 +805,17 @@ router.post('/venues/:tempVenueId/events', async (req: AuthRequest, res: Respons
       meta: { tempVenueId, eventId: newEvent._id.toString(), eventName: eventData.eventName }
     });
 
-    res.status(201).json({ 
-      success: true, 
-      data: newEvent, 
-      message: 'Event created successfully' 
+    res.status(201).json({
+      success: true,
+      data: newEvent,
+      message: 'Event created successfully'
     });
   } catch (error: any) {
     console.error('❌ Error creating event:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to create event', 
-      error: error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Failed to create event',
+      error: error.message
     });
   }
 });
@@ -873,7 +874,7 @@ router.put('/venues/:tempVenueId/events/:eventId', async (req: AuthRequest, res:
       eventType: eventData.eventType,
       eventTypeSlug: eventData.eventTypeSlug,
       eventCategory: eventData.eventCategory,
-      
+
       // Source & Origin
       sourceEventId: eventData.sourceEventId,
       sourceName: eventData.sourceName,
@@ -881,7 +882,7 @@ router.put('/venues/:tempVenueId/events/:eventId', async (req: AuthRequest, res:
       venueSourceId: eventData.venueSourceId,
       eventOriginType: eventData.eventOriginType,
       eventExclusivity: eventData.eventExclusivity,
-      
+
       // DateTime
       eventStartsAt: new Date(eventData.eventStartsAt),
       eventEndsAt: new Date(eventData.eventEndsAt),
@@ -889,7 +890,7 @@ router.put('/venues/:tempVenueId/events/:eventId', async (req: AuthRequest, res:
       eventTimezone: eventData.eventTimezone,
       allDay: eventData.allDay,
       doorsOpenAt: eventData.doorsOpenAt ? new Date(eventData.doorsOpenAt) : undefined,
-      
+
       // Recurrence
       eventRecurrence: eventData.eventRecurrence,
       recurrenceText: eventData.recurrenceText,
@@ -898,22 +899,22 @@ router.put('/venues/:tempVenueId/events/:eventId', async (req: AuthRequest, res:
       isException: eventData.isException,
       daysOfWeek: daysOfWeek,
       timeSlots: timeSlots,
-      
+
       // Participation
       participationModePrimary: eventData.participationModePrimary,
       participationModesSecondary: participationModesSecondary,
-      
+
       // Audience
       eventGender: eventData.eventGender,
       ageMin: eventData.ageMin ? parseInt(eventData.ageMin) : undefined,
       ageMax: eventData.ageMax ? parseInt(eventData.ageMax) : undefined,
       eventFamilyFriendly: eventData.eventFamilyFriendly,
       eventAgeRestriction: eventData.eventAgeRestriction,
-      
+
       // Skill & Intensity
       eventSkillLevel: eventData.eventSkillLevel,
       eventIntensity: eventData.eventIntensity,
-      
+
       // Location
       eventIndoorOutdoor: eventData.eventIndoorOutdoor,
       accessibilityNotes: eventData.accessibilityNotes,
@@ -926,18 +927,18 @@ router.put('/venues/:tempVenueId/events/:eventId', async (req: AuthRequest, res:
       lat: eventData.lat ? parseFloat(eventData.lat) : undefined,
       lng: eventData.lng ? parseFloat(eventData.lng) : undefined,
       eventLocationDirections: eventData.eventLocationDirections,
-      
+
       // Pricing
       priceType: eventData.priceType,
       eventPriceFrom: eventData.eventPriceFrom ? parseFloat(eventData.eventPriceFrom) : 0,
       eventPriceMax: eventData.eventPriceMax ? parseFloat(eventData.eventPriceMax) : undefined,
       eventCurrency: eventData.eventCurrency,
       priceNotes: eventData.priceNotes, // ✅
-      
+
       // Capacity
       capacity: eventData.capacity ? parseInt(eventData.capacity) : undefined,
       ticketsAvailable: eventData.ticketsAvailable ? parseInt(eventData.ticketsAvailable) : undefined,
-      
+
       // RSVP/Booking
       rsvpRequired: eventData.rsvpRequired,
       rsvpMethod: eventData.rsvpMethod, // ✅
@@ -945,25 +946,25 @@ router.put('/venues/:tempVenueId/events/:eventId', async (req: AuthRequest, res:
       bookingUrl: eventData.bookingUrl,
       ticketUrl: eventData.ticketUrl,
       ticketProvider: eventData.ticketProvider,
-      
+
       // Team/Players
       playersPerSide: eventData.playersPerSide ? parseInt(eventData.playersPerSide) : undefined,
       teamSizeTotal: eventData.teamSizeTotal ? parseInt(eventData.teamSizeTotal) : undefined,
       minPlayers: eventData.minPlayers ? parseInt(eventData.minPlayers) : undefined,
       maxPlayers: eventData.maxPlayers ? parseInt(eventData.maxPlayers) : undefined,
       formatNotes: eventData.formatNotes,
-      
+
       // Status
       status: eventData.status,
       visibility: eventData.visibility,
       isActive: eventData.isActive,
       cancellationReason: eventData.cancellationReason, // ✅
       cancelledAt: eventData.cancelledAt ? new Date(eventData.cancelledAt) : undefined, // ✅
-      
+
       // Weather
       weatherSensitive: eventData.weatherSensitive,
       badWeatherPolicy: eventData.badWeatherPolicy,
-      
+
       // Organizer
       organizerName: eventData.organizerName,
       organizerType: eventData.organizerType,
@@ -972,32 +973,32 @@ router.put('/venues/:tempVenueId/events/:eventId', async (req: AuthRequest, res:
       organizerLine: eventData.organizerLine,
       organizerInstagram: eventData.organizerInstagram,
       organizerEmail: eventData.organizerEmail,
-      
+
       // Media
       imageUrl: eventData.imageUrl,
       images: eventData.images,
       coverPhotoUrl: eventData.coverPhotoUrl,
       eventPhotoUrl: eventData.eventPhotoUrl,
       eventPhotoS3Key: eventData.eventPhotoS3Key,
-      
+
       // Gear
       eventsGear: eventData.eventsGear,
-      
+
       // Check-in
       checkInMethod: eventData.checkInMethod,
       onPremiseRequired: eventData.onPremiseRequired,
-      
+
       // Verification
       lastVerifiedAt: eventData.lastVerifiedAt ? new Date(eventData.lastVerifiedAt) : undefined,
       verifiedBy: eventData.verifiedBy,
       confidenceScore: eventData.confidenceScore ? parseFloat(eventData.confidenceScore) : undefined,
       notesInternal: eventData.notesInternal,
-      
+
       // Meta
       tags: tags,
       language: eventData.language,
       conditions: eventData.conditions,
-      
+
       // Timestamp
       updatedAt: new Date()
     };
@@ -1167,9 +1168,9 @@ const getVenueMediaWithCloudFront = async (req: any, res: Response) => {
     let responseData: any;
 
 
-    res.json = function(data: any) {
+    res.json = function (data: any) {
       responseData = data;
-      
+
       if (responseData.success && responseData.data) {
         // ✅ Transform media URLs to CloudFront
         if (Array.isArray(responseData.data)) {
@@ -1177,7 +1178,7 @@ const getVenueMediaWithCloudFront = async (req: any, res: Response) => {
             // Note: The mediaController now returns only thumbnailUrl and mediumUrl, not fileUrl
             const thumbnailUrl = media.thumbnailUrl ? getCloudFrontUrl(media.thumbnailUrl) : null;
             const mediumUrl = media.mediumUrl ? getCloudFrontUrl(media.mediumUrl) : null;
-            
+
             return {
               ...media,
               thumbnailUrl,
@@ -1185,14 +1186,14 @@ const getVenueMediaWithCloudFront = async (req: any, res: Response) => {
               // fileUrl is not included in response anymore
             };
           });
-          
+
           responseData.data = mediaWithCloudFront;
         }
       }
-      
+
       return originalSend.call(this, responseData);
     };
-    
+
     await mediaController.getVenueMedia(req, res);
   } catch (error: any) {
     console.error("Error fetching media with CloudFront transformation:", error);
@@ -1254,9 +1255,9 @@ const getVenuePhotosWithCloudFront = async (req: any, res: Response) => {
     let responseData: any;
 
 
-    res.json = function(data: any) {
+    res.json = function (data: any) {
       responseData = data;
-      
+
       if (responseData.success && responseData.data) {
         // ✅ Transform photo URLs to CloudFront
         if (Array.isArray(responseData.data)) {
@@ -1269,14 +1270,14 @@ const getVenuePhotosWithCloudFront = async (req: any, res: Response) => {
             }
             return photo;
           });
-          
+
           responseData.data = photosWithCloudFront;
         }
       }
-      
+
       return originalSend.call(this, responseData);
     };
-    
+
     await agentController.getVenuePhotos(req, res);
   } catch (error: any) {
     console.error("Error fetching photos with CloudFront transformation:", error);
