@@ -3,6 +3,7 @@ import { Response, NextFunction } from 'express';
 import Event, { IEvent } from '../models/Event';
 import User from '../models/User';
 import Venue from '../models/Venue';
+import AgentVenueTemp from '../models/AgentVenueTemp'; // ✅ Import AgentVenueTemp
 import { AuthRequest } from '../middlewares/authMiddleware';
 import { RegionRequest } from '../middlewares/regionMiddleware';
 import { dbManager, Region } from '../config/database';
@@ -109,25 +110,32 @@ export const getAllEvents = async (req: StaffRequest, res: Response, next?: Next
     const limitNum = parseInt(limit as string);
     const skip = (pageNum - 1) * limitNum;
 
-    // Execute query with pagination (removed bad populate)
+    // ✅ NEW: Get regional event model
+    const regionalConnection = dbManager.getConnection(region);
+
+    // Register User model on regional connection if not exists (for population)
+    if (!regionalConnection.models.User) {
+      regionalConnection.model('User', User.schema);
+    }
+
+    const RegionalEvent = regionalConnection.models.Event || regionalConnection.model('Event', Event.schema);
+    const RegionalVenue = regionalConnection.models.Venue || regionalConnection.model('Venue', Venue.schema);
+
+    // Execute query with pagination
     const [eventsRaw, totalCount] = await Promise.all([
-      Event.find(query)
+      RegionalEvent.find(query)
         .populate('createdBy', 'name email')
         .sort({ [sortBy as string]: 1 })
         .skip(skip)
         .limit(limitNum)
         .lean(),
-      Event.countDocuments(query)
+      RegionalEvent.countDocuments(query)
     ]);
-
-    // ✅ NEW: Manually populate venue details from regional database
-    const regionalConnection = dbManager.getConnection(region);
-    const RegionalVenue = regionalConnection.model('Venue', Venue.schema);
 
     // Extract venue IDs
     const venueIds = eventsRaw
-      .map(e => e.venueId)
-      .filter(id => id && mongoose.Types.ObjectId.isValid(id.toString()));
+      .map((e: any) => e.venueId)
+      .filter((id: any) => id && mongoose.Types.ObjectId.isValid(id.toString()));
 
     // Fetch venues
     const venues = await RegionalVenue.find({ _id: { $in: venueIds } })
@@ -135,7 +143,7 @@ export const getAllEvents = async (req: StaffRequest, res: Response, next?: Next
       .lean();
 
     // Create map for O(1) lookup
-    const venueMap = new Map(venues.map(v => [v._id.toString(), v]));
+    const venueMap = new Map(venues.map((v: any) => [v._id.toString(), v]));
 
     // Attach venue details to events
     const events = eventsRaw.map((event: any) => {
@@ -181,7 +189,13 @@ export const getEventsByVenue = async (req: StaffRequest, res: Response, next?: 
 
     // ✅ NEW: Get regional venue connection
     const regionalConnection = dbManager.getConnection(region);
-    const RegionalVenue = regionalConnection.model('Venue', Venue.schema);
+
+    // Register User model on regional connection if not exists (for population)
+    if (!regionalConnection.models.User) {
+      regionalConnection.model('User', User.schema);
+    }
+
+    const RegionalVenue = regionalConnection.models.Venue || regionalConnection.model('Venue', Venue.schema);
 
     // ✅ FIXED: Try to find venue by ID first, then by name
     let venue;
@@ -215,14 +229,37 @@ export const getEventsByVenue = async (req: StaffRequest, res: Response, next?: 
 
     console.log(`✅ Venue found: ${venue._id} (${venue.AccountName})`);
 
-    // Build query using venue's ObjectId
-    // Build query using venue's ObjectId
+    // Build query using venue's ObjectId and string ID
     const query: any = {
       region,
       $or: [
-        { venueId: venue._id }
+        { venueId: venue._id },
+        { venueId: venue._id.toString() }
       ]
     };
+
+    // If venue has tempVenueId, match against venueSourceId (for agent venues)
+    // If venue has tempVenueId, match against venueSourceId (for agent venues)
+    if (venue.tempVenueId) {
+      query.$or.push({ venueSourceId: venue.tempVenueId });
+    } else {
+      // ✅ Fallback: Try to find tempVenueId from AgentVenueTemp if missing in RegionalVenue
+      try {
+        const agentVenue = await AgentVenueTemp.findOne({
+          $or: [{ venueId: venue._id }, { venueId: venue._id.toString() }]
+        }).select('tempVenueId');
+
+        if (agentVenue && agentVenue.tempVenueId) {
+          console.log(`🔗 Found linked tempVenueId: ${agentVenue.tempVenueId}`);
+          query.$or.push({ venueSourceId: agentVenue.tempVenueId });
+        }
+      } catch (err) {
+        // Ignore lookup error
+      }
+    }
+
+    // Also match venueSourceId against the venue ID itself (fallback)
+    query.$or.push({ venueSourceId: venue._id.toString() });
 
     // ✅ Include events created by owner but missing venueId (fallback)
     if (venue.ownerId) {
@@ -234,12 +271,24 @@ export const getEventsByVenue = async (req: StaffRequest, res: Response, next?: 
     }
 
     if (upcoming === 'true') {
-      query.eventStartsAt = { $gte: new Date() };
+      // ✅ FIXED: Include ongoing events (Starts >= Now OR Ends >= Now)
+      // We use $and because $or is already being used for venue matching
+      // We want: (Venue matches) AND (Time matches)
+      const now = new Date();
+      if (!query.$and) query.$and = [];
+      query.$and.push({
+        $or: [
+          { eventStartsAt: { $gte: now } },
+          { eventEndsAt: { $gte: now } }
+        ]
+      });
     }
 
     console.log('📋 Event query:', JSON.stringify(query, null, 2));
 
-    const events = await Event.find(query)
+    const RegionalEvent = regionalConnection.models.Event || regionalConnection.model('Event', Event.schema);
+
+    const events = await RegionalEvent.find(query)
       .populate('createdBy', 'name email')
       .sort({ eventStartsAt: 1 })
       .lean();
@@ -277,7 +326,16 @@ export const getEventById = async (req: StaffRequest, res: Response, next?: Next
 
     console.log(`📋 Fetching event ${id} from region ${region}`);
 
-    const eventRaw = await Event.findById(id)
+    const regionalConnection = dbManager.getConnection(region);
+
+    // Register User model on regional connection if not exists (for population)
+    if (!regionalConnection.models.User) {
+      regionalConnection.model('User', User.schema);
+    }
+
+    const RegionalEvent = regionalConnection.models.Event || regionalConnection.model('Event', Event.schema);
+
+    const eventRaw = await RegionalEvent.findById(id)
       .populate('createdBy', 'name email')
       .lean();
 
@@ -289,7 +347,7 @@ export const getEventById = async (req: StaffRequest, res: Response, next?: Next
     const event = eventRaw as any;
     if (event.venueId) {
       const regionalConnection = dbManager.getConnection(region);
-      const RegionalVenue = regionalConnection.model('Venue', Venue.schema);
+      const RegionalVenue = regionalConnection.models.Venue || regionalConnection.model('Venue', Venue.schema);
 
       const venue = await RegionalVenue.findById(event.venueId)
         .select('AccountName BillingStreet BillingCity BillingDistrict geometry venuecategory')
@@ -317,7 +375,13 @@ export const getUpcomingEvents = async (req: StaffRequest, res: Response, next?:
 
     // ✅ NEW: Get regional venue connection
     const regionalConnection = dbManager.getConnection(region);
-    const RegionalVenue = regionalConnection.model('Venue', Venue.schema);
+
+    // Register User model on regional connection if not exists (for population)
+    if (!regionalConnection.models.User) {
+      regionalConnection.model('User', User.schema);
+    }
+
+    const RegionalVenue = regionalConnection.models.Venue || regionalConnection.model('Venue', Venue.schema);
 
     let venueQuery: any = { isActive: true };
 
@@ -361,7 +425,9 @@ export const getUpcomingEvents = async (req: StaffRequest, res: Response, next?:
     if (startDate) eventQuery.eventStartsAt = { $gte: new Date(startDate as string) };
     if (endDate) eventQuery.eventEndsAt = { $lte: new Date(endDate as string) };
 
-    const eventsRaw = await Event.find(eventQuery)
+    const RegionalEvent = regionalConnection.models.Event || regionalConnection.model('Event', Event.schema);
+
+    const eventsRaw = await RegionalEvent.find(eventQuery)
       .populate('createdBy', 'name')
       .sort({ eventStartsAt: 1 })
       .limit(50)
@@ -377,7 +443,7 @@ export const getUpcomingEvents = async (req: StaffRequest, res: Response, next?:
       .select('AccountName BillingStreet BillingCity geometry venuecategory')
       .lean();
 
-    const venueMap = new Map(usedVenues.map(v => [v._id.toString(), v]));
+    const venueMap = new Map(usedVenues.map((v: any) => [v._id.toString(), v]));
 
     const events = eventsRaw.map((event: any) => {
       if (event.venueId && venueMap.has(event.venueId.toString())) {
@@ -427,7 +493,7 @@ export const createEvent = async (req: StaffRequest, res: Response, next?: NextF
 
     // Verify venue exists in regional database
     const regionalConnection = dbManager.getConnection(region);
-    const RegionalVenue = regionalConnection.model('Venue', Venue.schema);
+    const RegionalVenue = regionalConnection.models.Venue || regionalConnection.model('Venue', Venue.schema);
 
     const venue = await RegionalVenue.findById(eventData.venueId);
     if (!venue) {
@@ -462,13 +528,16 @@ export const createEvent = async (req: StaffRequest, res: Response, next?: NextF
       eventData.imageUrl = images[0];
     }
 
-    const newEvent = new Event({
+    // const regionalConnection = dbManager.getConnection(region); // Reuse existing connection
+    const RegionalEvent = regionalConnection.models.Event || regionalConnection.model('Event', Event.schema);
+
+    const newEvent = new RegionalEvent({
       ...eventData,
       createdBy: req.user.userId
     });
 
     await newEvent.save();
-    console.log(`✅ Event created with ${images.length} images: ${newEvent._id}`);
+    console.log(`✅ Event created with ${images.length} images: ${newEvent._id} (Region: ${region})`);
 
     res.status(201).json({ success: true, data: newEvent });
 
@@ -518,8 +587,11 @@ export const updateEvent = async (req: StaffRequest, res: Response, next?: NextF
       updates.eventDuration = `${hours}h ${minutes}m`;
     }
 
+    const regionalConnection = dbManager.getConnection(region);
+    const RegionalEvent = regionalConnection.models.Event || regionalConnection.model('Event', Event.schema);
+
     // ✅ Get existing event to append new images
-    const existingEvent = await Event.findById(id);
+    const existingEvent = await RegionalEvent.findById(id);
     if (!existingEvent) {
       // Clean up uploaded images
       if (newImages.length > 0) {
@@ -540,7 +612,7 @@ export const updateEvent = async (req: StaffRequest, res: Response, next?: NextF
       }
     }
 
-    const updatedEvent = await Event.findByIdAndUpdate(
+    const updatedEvent = await RegionalEvent.findByIdAndUpdate(
       id,
       updates,
       { new: true, runValidators: true }
@@ -572,7 +644,10 @@ export const deleteEvent = async (req: StaffRequest, res: Response, next?: NextF
 
     console.log(`🗑️ Deactivating event ${id} in region ${region}`);
 
-    const event = await Event.findById(id);
+    const regionalConnection = dbManager.getConnection(region);
+    const RegionalEvent = regionalConnection.models.Event || regionalConnection.model('Event', Event.schema);
+
+    const event = await RegionalEvent.findById(id);
 
     if (!event) {
       return res.status(404).json({ success: false, message: 'Event not found' });
@@ -621,7 +696,10 @@ export const registerForEvent = async (req: StaffRequest, res: Response, next?: 
 
     console.log(`📝 Registering user for event ${id}`);
 
-    const event = await Event.findById(id);
+    const regionalConnection = dbManager.getConnection(region);
+    const RegionalEvent = regionalConnection.models.Event || regionalConnection.model('Event', Event.schema);
+
+    const event = (await RegionalEvent.findById(id)) as any;
     if (!event) {
       return res.status(404).json({ success: false, message: 'Event not found' });
     }

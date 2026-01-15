@@ -783,10 +783,24 @@ export const getVenueSSIDs = async (req: AuthRequest, res: Response) => {
       }
     }
 
-    // ===== SOURCE 4: Historical WifiSpeedTest records =====
+    // ===== SOURCE 4: Historical WifiSpeedTest records from REGIONAL DB =====
     // ALWAYS check WifiSpeedTest history for additional SSIDs (not just as fallback)
-    console.log('🔍 Checking WifiSpeedTest history for SSIDs...');
+    console.log(`🔍 Checking WifiSpeedTest history for SSIDs (Region: ${region})...`);
     try {
+      // ✅ NEW: Get regional connection and model
+      const { dbManager } = require('../config/database');
+      // Import WifiSpeedTest schema to register it on regional connection if needed
+      const WifiSpeedTestSchema = require('../models/WifiSpeedTest').default.schema;
+
+      const regionalConnection = dbManager.getConnection(region);
+
+      // Register WifiSpeedTest model on regional connection if not exists
+      if (!regionalConnection.models.WifiSpeedTest) {
+        regionalConnection.model('WifiSpeedTest', WifiSpeedTestSchema);
+      }
+
+      const RegionalWifiSpeedTest = regionalConnection.models.WifiSpeedTest;
+
       // Build query that checks both string and ObjectId formats
       const speedTestQuery: any = {
         $or: [
@@ -797,76 +811,47 @@ export const getVenueSSIDs = async (req: AuthRequest, res: Response) => {
 
       // If venueId is a valid ObjectId, also check ObjectId version
       if (isValidObjectId) {
-        speedTestQuery.$or.push(
-          { venueId: new mongoose.Types.ObjectId(venueId) },
-          { _id: venueId } // For speed tests linked directly
-        );
+        speedTestQuery.$or.push({ venueId: new mongoose.Types.ObjectId(venueId) });
+        // Also check _id field just in case
+        speedTestQuery.$or.push({ _id: new mongoose.Types.ObjectId(venueId) });
       }
 
       console.log('📋 WifiSpeedTest query:', JSON.stringify(speedTestQuery));
 
-      // Find all unique SSIDs from speed tests for this venue
-      const speedTestsWithSSID = await WifiSpeedTest.find({
-        ...speedTestQuery,
-        ssid: { $exists: true, $nin: [null, ''] }
-      })
+      // Use the REGIONAL model to find tests
+      const historicalTests = await RegionalWifiSpeedTest.find(speedTestQuery)
+        .select('ssid wifiPassword isWifiFree timestamp notes testId')
         .sort({ timestamp: -1 })
-        .limit(100)
         .lean();
 
-      // Aggregate SSIDs with test counts from speed tests
-      const speedTestSSIDMap = new Map<string, {
-        ssid: string;
-        testCount: number;
-        lastTested: Date;
-        hasPassword: boolean;
-        password?: string;
-        isWifiFree?: boolean;
-      }>();
+      if (historicalTests && historicalTests.length > 0) {
+        console.log(`✅ Found ${historicalTests.length} historical tests with SSIDs`);
 
-      speedTestsWithSSID.forEach((test: any) => {
-        if (test.ssid) {
-          const existing = speedTestSSIDMap.get(test.ssid);
-          if (existing) {
-            existing.testCount++;
-            if (new Date(test.timestamp) > new Date(existing.lastTested)) {
-              existing.lastTested = test.timestamp;
-              // Update with most recent data
-              if (test.wifiPassword) existing.password = test.wifiPassword;
-              if (typeof test.isWifiFree === 'boolean') existing.isWifiFree = test.isWifiFree;
-            }
-          } else {
-            speedTestSSIDMap.set(test.ssid, {
+        historicalTests.forEach((test: any) => {
+          if (test.ssid) {
+            addOrMergeSSID({
               ssid: test.ssid,
-              testCount: 1,
-              lastTested: test.timestamp,
               hasPassword: !!test.wifiPassword,
               password: test.wifiPassword || undefined,
-              isWifiFree: test.isWifiFree
+              isWifiFree: test.isWifiFree,
+              notes: test.notes,
+              lastTested: test.timestamp,
+              testCount: 1,
+              source: 'regional_speed_test_history'
             });
           }
-        }
-      });
-
-      // Merge speed test SSIDs into main map
-      speedTestSSIDMap.forEach((data) => {
-        addOrMergeSSID({
-          ssid: data.ssid,
-          hasPassword: data.hasPassword,
-          password: data.password,
-          isWifiFree: data.isWifiFree,
-          lastTested: data.lastTested,
-          testCount: data.testCount,
-          source: 'wifi_speed_tests'
         });
-      });
-
-      if (speedTestSSIDMap.size > 0) {
-        console.log(`📶 Merged ${speedTestSSIDMap.size} SSIDs from WifiSpeedTest history`);
+      } else {
+        console.log('⚠️ No WifiSpeedTest history found in this region');
       }
+
     } catch (err) {
-      console.warn('⚠️ WifiSpeedTest query failed:', err);
+      console.warn('⚠️ WifiSpeedTest history query failed:', err);
     }
+
+
+
+
 
     // Convert Map to array
     const ssids = Array.from(ssidMap.values());
