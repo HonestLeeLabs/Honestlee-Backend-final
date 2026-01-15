@@ -49,16 +49,42 @@ export const getAllEvents = async (req: StaffRequest, res: Response, next?: Next
 
     // Date filters
     if (upcoming === 'true') {
-      query.eventStartsAt = { $gte: new Date() };
+      // ✅ FIXED: Include ongoing events (started but not ended yet)
+      // Check: eventStartsAt >= Now (future) OR eventEndsAt >= Now (ongoing)
+      const now = new Date();
+      query.$and = [
+        ...(query.$and || []),
+        {
+          $or: [
+            { eventStartsAt: { $gte: now } },
+            { eventEndsAt: { $gte: now } }
+          ]
+        }
+      ];
     } else if (startDate || endDate) {
-      query.eventStartsAt = {};
+      // Date range filter - also check ongoing events
+      const dateConditions: any[] = [];
+
       if (startDate) {
-        query.eventStartsAt.$gte = new Date(startDate as string);
+        const startDateTime = new Date(startDate as string);
+        // Events that start on or after startDate, OR events that are ongoing during startDate
+        dateConditions.push({
+          $or: [
+            { eventStartsAt: { $gte: startDateTime } },
+            { eventEndsAt: { $gte: startDateTime } }
+          ]
+        });
       }
+
       if (endDate) {
         const endDateTime = new Date(endDate as string);
         endDateTime.setHours(23, 59, 59, 999);
-        query.eventStartsAt.$lte = endDateTime;
+        // Events that start before or on endDate
+        dateConditions.push({ eventStartsAt: { $lte: endDateTime } });
+      }
+
+      if (dateConditions.length > 0) {
+        query.$and = [...(query.$and || []), ...dateConditions];
       }
     }
 
