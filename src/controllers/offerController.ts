@@ -26,10 +26,10 @@ export const getEligibleOffers = async (req: StaffRequest, res: Response, next?:
 
     // ✅ FIX: Check if user exists, if not create a minimal user record
     let user = await User.findById(req.user.userId);
-    
+
     if (!user) {
       console.log(`⚠️ User ${req.user.userId} not found in database, creating minimal record`);
-      
+
       user = new User({
         _id: req.user.userId,
         email: `user_${req.user.userId}@honestlee.${region}`,
@@ -37,7 +37,7 @@ export const getEligibleOffers = async (req: StaffRequest, res: Response, next?:
         loginMethod: 'OTP',
         region: region
       });
-      
+
       await user.save();
       console.log('✅ Created minimal user record');
     }
@@ -51,7 +51,7 @@ export const getEligibleOffers = async (req: StaffRequest, res: Response, next?:
 
     // Find venues within radius
     let venueQuery: any = { isActive: true };
-    
+
     if (lat && lng) {
       venueQuery.geometry = {
         $near: {
@@ -95,9 +95,8 @@ export const getEligibleOffers = async (req: StaffRequest, res: Response, next?:
       minOTL: { $lte: userOTL }
     };
 
-    const offers = await Offer.find(offerQuery)
-      .populate('venueId', 'AccountName BillingStreet BillingCity geometry venuecategory')
-      .lean();
+    // ✅ FIX: Don't use .populate() as Offer is in global DB but venues are in regional DB
+    const offers = await Offer.find(offerQuery).lean();
 
     console.log(`✅ Found ${offers.length} active offers`);
 
@@ -111,9 +110,31 @@ export const getEligibleOffers = async (req: StaffRequest, res: Response, next?:
       });
     }
 
+    // ✅ FIX: Manually populate venue data from regional database
+    const venueDataMap = new Map();
+    const offerVenueIds = [...new Set(offers.map(o => o.venueId?.toString()).filter(Boolean))];
+
+    if (offerVenueIds.length > 0) {
+      const venuesData = await RegionalVenue.find({
+        _id: { $in: offerVenueIds }
+      }).select('AccountName BillingStreet BillingCity geometry venuecategory name address').lean();
+
+      venuesData.forEach((v: any) => {
+        venueDataMap.set(v._id.toString(), v);
+      });
+    }
+
+    // Enrich offers with venue data
+    const enrichedOffers = offers.map(offer => ({
+      ...offer,
+      venue: offer.venueId ? venueDataMap.get(offer.venueId.toString()) || null : null
+    }));
+
     // Check eligibility for each offer
+
     const eligibilityChecks = await Promise.all(
-      offers.map(async (offer) => {
+      enrichedOffers.map(async (offer) => {
+
         // Check if user is new to this venue
         const userVenueHistory = await Redemption.findOne({
           userId: user!._id,
@@ -169,8 +190,8 @@ export const getEligibleOffers = async (req: StaffRequest, res: Response, next?:
 
     // Rank offers
     const rankedOffers = calculateOfferRanking(
-      eligibilityChecks, 
-      user, 
+      eligibilityChecks,
+      user,
       { lat: lat as string, lng: lng as string }
     );
 
@@ -186,10 +207,10 @@ export const getEligibleOffers = async (req: StaffRequest, res: Response, next?:
 
   } catch (error: any) {
     console.error('❌ Error fetching eligible offers:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Error fetching offers', 
-      error: error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching offers',
+      error: error.message
     });
   }
 };
@@ -203,7 +224,7 @@ export const getOfferById = async (req: StaffRequest, res: Response, next?: Next
     console.log(`📋 Fetching offer ${id} from region ${region}`);
 
     const offer = await Offer.findById(id).populate('venueId');
-    
+
     if (!offer) {
       return res.status(404).json({ success: false, message: 'Offer not found' });
     }
@@ -234,9 +255,9 @@ export const createOffer = async (req: StaffRequest, res: Response, next?: NextF
 
     const venue = await RegionalVenue.findById(offerData.venueId);
     if (!venue) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         success: false,
-        message: `Venue not found in region ${region}` 
+        message: `Venue not found in region ${region}`
       });
     }
 
@@ -328,9 +349,9 @@ export const getOffersByVenue = async (req: StaffRequest, res: Response, next?: 
 
     const venue = await RegionalVenue.findById(venueId);
     if (!venue) {
-      return res.status(404).json({ 
-        success: false, 
-        message: `Venue not found in region ${region}` 
+      return res.status(404).json({
+        success: false,
+        message: `Venue not found in region ${region}`
       });
     }
 
@@ -343,9 +364,9 @@ export const getOffersByVenue = async (req: StaffRequest, res: Response, next?: 
 
     console.log(`✅ Found ${offers.length} offers for venue ${venueId}`);
 
-    res.json({ 
-      success: true, 
-      data: offers, 
+    res.json({
+      success: true,
+      data: offers,
       count: offers.length,
       region
     });
