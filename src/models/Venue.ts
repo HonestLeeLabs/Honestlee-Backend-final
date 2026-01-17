@@ -21,7 +21,7 @@ export interface IVenue extends Document {
     type: 'Point';
     coordinates: [number, number]; // [longitude, latitude]
   };
-  
+
   // Backward compatibility fields (NOT geo-indexed)
   LatitudeMapslytextsingleLine?: number;
   LongitudeMapslytextsingleLine?: number;
@@ -172,7 +172,33 @@ export interface IStreetVendor extends Document {
   // VENDOR SPECIFIC
   vendorName: string;
   vendorType: 'static' | 'mobile';
-  
+
+  // AUTHENTICATION
+  email: string;
+  password: string;
+  phone?: string;
+  vendorPhoneNumber?: string;
+
+  // PROFILE
+  description?: string;
+  profileImage?: string;
+  coverImage?: string;
+
+  // MENU ITEMS
+  menuItems?: Array<{
+    itemId: string;
+    name: string;
+    description?: string;
+    price: number;
+    currency: string;
+    image?: string;
+    category?: string;
+    isAvailable: boolean;
+    preparationTime?: number; // in minutes
+    createdAt: Date;
+    updatedAt: Date;
+  }>;
+
   // Live Location Tracking (VENDOR ONLY)
   currentLocation: {
     type: 'Point';
@@ -183,7 +209,18 @@ export interface IStreetVendor extends Document {
 
   // Availability
   isOperational: boolean;
-  
+
+  // OPERATING HOURS
+  operatingHours?: {
+    monday?: { open: string; close: string; isClosed?: boolean };
+    tuesday?: { open: string; close: string; isClosed?: boolean };
+    wednesday?: { open: string; close: string; isClosed?: boolean };
+    thursday?: { open: string; close: string; isClosed?: boolean };
+    friday?: { open: string; close: string; isClosed?: boolean };
+    saturday?: { open: string; close: string; isClosed?: boolean };
+    sunday?: { open: string; close: string; isClosed?: boolean };
+  };
+
   // Service Area
   serviceRadius?: number;
   serviceArea?: {
@@ -198,22 +235,30 @@ export interface IStreetVendor extends Document {
     accuracy?: number;
   }>;
 
-  // Contact
-  vendorPhoneNumber?: string;
-  hotspot?: boolean;
+  // RATINGS & STATISTICS
+  rating?: number;
+  totalRatings?: number;
+  totalOrders?: number;
+
+  // ADMIN APPROVAL
+  approvalStatus: 'pending' | 'approved' | 'rejected' | 'suspended';
+  approvalNote?: string;
+  approvedAt?: Date;
+  approvedBy?: mongoose.Schema.Types.ObjectId;
 
   // Shared fields with venues (for compatibility)
   globalId?: string;
   AccountName?: string;
-  phone?: string;
   Cuisine_Tags?: string;
   'Payment types'?: string;
   BudgetFriendly?: string;
-  
+  hotspot?: boolean;
+
   // System
   region: string;
   isActive?: boolean;
   ownerId?: mongoose.Schema.Types.ObjectId;
+  lastLoginAt?: Date;
   createdAt?: Date;
   updatedAt?: Date;
 
@@ -284,7 +329,7 @@ const VenueSchema = new mongoose.Schema<IVenue>(
       sparse: true,
       index: true
     },
-    
+
     AccountName: {
       type: String,
       required: [true, 'AccountName is required'],
@@ -426,7 +471,7 @@ const VenueSchema = new mongoose.Schema<IVenue>(
       sunday: String,
       _id: false
     },
-    
+
     socialLinks: {
       instagram: String,
       facebook: String,
@@ -541,9 +586,9 @@ VenueSchema.methods.getDistance = function (this: IVenue, longitude: number, lat
   const a =
     Math.sin(dLat / 2) * Math.sin(dLat / 2) +
     Math.cos((latitude * Math.PI) / 180) *
-      Math.cos((venueLat * Math.PI) / 180) *
-      Math.sin(dLng / 2) *
-      Math.sin(dLng / 2);
+    Math.cos((venueLat * Math.PI) / 180) *
+    Math.sin(dLng / 2) *
+    Math.sin(dLng / 2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
 };
@@ -566,12 +611,12 @@ VenueSchema.methods.isFamilyFriendly = function (this: IVenue): boolean {
 // ───── VENUE PRE-SAVE MIDDLEWARE ─────
 VenueSchema.pre<IVenue>('save', function (next) {
   // Sync geometry from individual coordinates if provided
-  if ((this.LatitudeMapslytextsingleLine || this.Latitude_Mapsly_text_singleLine) && 
-      (this.LongitudeMapslytextsingleLine || this.Longitude_Mapsly_text_singleLine)) {
-    
+  if ((this.LatitudeMapslytextsingleLine || this.Latitude_Mapsly_text_singleLine) &&
+    (this.LongitudeMapslytextsingleLine || this.Longitude_Mapsly_text_singleLine)) {
+
     const lat = this.LatitudeMapslytextsingleLine || this.Latitude_Mapsly_text_singleLine;
     const lng = this.LongitudeMapslytextsingleLine || this.Longitude_Mapsly_text_singleLine;
-    
+
     if (lat && lng) {
       this.geometry = {
         type: 'Point',
@@ -594,7 +639,9 @@ const StreetVendorSchema = new mongoose.Schema<IStreetVendor>(
     // VENDOR IDENTIFIERS
     vendorName: {
       type: String,
-      required: [true, 'vendorName is required']
+      required: [true, 'vendorName is required'],
+      trim: true,
+      maxlength: [100, 'Vendor name cannot exceed 100 characters']
     },
 
     vendorType: {
@@ -603,6 +650,86 @@ const StreetVendorSchema = new mongoose.Schema<IStreetVendor>(
       required: true,
       index: true
     },
+
+    // AUTHENTICATION
+    email: {
+      type: String,
+      required: [true, 'Email is required'],
+      unique: true,
+      lowercase: true,
+      trim: true,
+      match: [/^\S+@\S+\.\S+$/, 'Please provide a valid email']
+    },
+    password: {
+      type: String,
+      required: [true, 'Password is required'],
+      minlength: [6, 'Password must be at least 6 characters'],
+      select: false // Don't include password in queries by default
+    },
+    phone: {
+      type: String,
+      trim: true
+    },
+    vendorPhoneNumber: String,
+
+    // PROFILE
+    description: {
+      type: String,
+      maxlength: [500, 'Description cannot exceed 500 characters']
+    },
+    profileImage: String,
+    coverImage: String,
+
+    // MENU ITEMS
+    menuItems: [{
+      itemId: {
+        type: String,
+        required: true,
+        default: () => new mongoose.Types.ObjectId().toString()
+      },
+      name: {
+        type: String,
+        required: [true, 'Menu item name is required'],
+        trim: true,
+        maxlength: [100, 'Item name cannot exceed 100 characters']
+      },
+      description: {
+        type: String,
+        maxlength: [300, 'Item description cannot exceed 300 characters']
+      },
+      price: {
+        type: Number,
+        required: [true, 'Price is required'],
+        min: [0, 'Price cannot be negative']
+      },
+      currency: {
+        type: String,
+        default: 'THB',
+        enum: ['THB', 'USD', 'AED', 'EUR', 'GBP']
+      },
+      image: String,
+      category: {
+        type: String,
+        trim: true
+      },
+      isAvailable: {
+        type: Boolean,
+        default: true
+      },
+      preparationTime: {
+        type: Number,
+        min: [0, 'Preparation time cannot be negative']
+      },
+      createdAt: {
+        type: Date,
+        default: Date.now
+      },
+      updatedAt: {
+        type: Date,
+        default: Date.now
+      },
+      _id: false
+    }],
 
     // LIVE LOCATION (VENDOR ONLY)
     currentLocation: {
@@ -615,8 +742,8 @@ const StreetVendorSchema = new mongoose.Schema<IStreetVendor>(
         type: [Number],
         required: [true, 'Current location coordinates are required'],
         validate: {
-          validator: function(coords: number[]) {
-            return coords.length === 2 && 
+          validator: function (coords: number[]) {
+            return coords.length === 2 &&
               coords[0] >= -180 && coords[0] <= 180 &&
               coords[1] >= -90 && coords[1] <= 90;
           },
@@ -637,10 +764,24 @@ const StreetVendorSchema = new mongoose.Schema<IStreetVendor>(
       index: true
     },
 
+    // OPERATING HOURS
+    operatingHours: {
+      monday: { open: String, close: String, isClosed: { type: Boolean, default: false } },
+      tuesday: { open: String, close: String, isClosed: { type: Boolean, default: false } },
+      wednesday: { open: String, close: String, isClosed: { type: Boolean, default: false } },
+      thursday: { open: String, close: String, isClosed: { type: Boolean, default: false } },
+      friday: { open: String, close: String, isClosed: { type: Boolean, default: false } },
+      saturday: { open: String, close: String, isClosed: { type: Boolean, default: false } },
+      sunday: { open: String, close: String, isClosed: { type: Boolean, default: false } },
+      _id: false
+    },
+
     // SERVICE AREA
     serviceRadius: {
       type: Number,
-      default: 500
+      default: 500,
+      min: [50, 'Service radius must be at least 50 meters'],
+      max: [10000, 'Service radius cannot exceed 10km']
     },
 
     serviceArea: polygonSchema,
@@ -653,10 +794,32 @@ const StreetVendorSchema = new mongoose.Schema<IStreetVendor>(
       _id: false
     }],
 
-    // VENDOR CONTACT
-    vendorPhoneNumber: String,
-    phone: String,
-    hotspot: Boolean,
+    // RATINGS & STATISTICS
+    rating: {
+      type: Number,
+      min: 0,
+      max: 5,
+      default: 0
+    },
+    totalRatings: {
+      type: Number,
+      default: 0
+    },
+    totalOrders: {
+      type: Number,
+      default: 0
+    },
+
+    // ADMIN APPROVAL
+    approvalStatus: {
+      type: String,
+      enum: ['pending', 'approved', 'rejected', 'suspended'],
+      default: 'pending',
+      index: true
+    },
+    approvalNote: String,
+    approvedAt: Date,
+    approvedBy: { type: Schema.Types.ObjectId, ref: 'User' },
 
     // SHARED FIELDS
     globalId: String,
@@ -664,11 +827,13 @@ const StreetVendorSchema = new mongoose.Schema<IStreetVendor>(
     Cuisine_Tags: String,
     'Payment types': String,
     BudgetFriendly: String,
+    hotspot: Boolean,
 
     // SYSTEM
     region: { type: String, required: true, index: true },
     isActive: { type: Boolean, default: true, index: true },
     ownerId: { type: Schema.Types.ObjectId, ref: 'User' },
+    lastLoginAt: Date,
   },
   {
     timestamps: true,
@@ -682,6 +847,10 @@ StreetVendorSchema.index({ 'currentLocation': '2dsphere' });
 StreetVendorSchema.index({ isOperational: 1, vendorType: 1 });
 StreetVendorSchema.index({ 'currentLocation.timestamp': -1 });
 StreetVendorSchema.index({ region: 1, isActive: 1 });
+StreetVendorSchema.index({ email: 1 }, { unique: true, sparse: true });
+StreetVendorSchema.index({ approvalStatus: 1, region: 1 });
+StreetVendorSchema.index({ vendorName: 'text', description: 'text' });
+
 
 // ───── REGION HELPER ─────
 export const getVenueModel = (region: Region) => {
